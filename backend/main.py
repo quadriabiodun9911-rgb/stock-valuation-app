@@ -1,0 +1,2666 @@
+"""
+Stock Valuation API Backend
+Comprehensive stock analysis and valuation platform
+"""
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import List, Optional, Dict, Any
+import yfinance as yf
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
+from pathlib import Path
+import requests
+import logging
+from dataclasses import dataclass
+import json
+import os
+from dotenv import load_dotenv
+from alpha_vantage_provider import AlphaVantageProvider
+from twelve_data_provider import TwelveDataProvider
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Load environment variables
+load_dotenv()
+
+# Initialize data providers
+alpha_vantage = AlphaVantageProvider()
+twelve_data = TwelveDataProvider()
+
+app = FastAPI(
+    title="Stock Valuation API",
+    description="Comprehensive stock analysis and valuation platform with fundamental and technical analysis",
+    version="1.0.0"
+)
+
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Pydantic models
+class StockSymbol(BaseModel):
+    symbol: str
+
+class DCFParams(BaseModel):
+    symbol: str
+    growth_rate: float = 0.05  # 5% default
+    discount_rate: float = 0.10  # 10% default
+    terminal_growth_rate: float = 0.03  # 3% default
+
+class ComparisonParams(BaseModel):
+    symbols: List[str]
+    metrics: List[str] = ["P/E", "P/B", "EV/EBITDA", "P/S"]
+
+class UserFinancialData(BaseModel):
+    symbol: str
+    revenue: Optional[float] = None
+    operating_income: Optional[float] = None
+    net_income: Optional[float] = None
+    total_assets: Optional[float] = None
+    total_debt: Optional[float] = None
+    cash_and_equivalents: Optional[float] = None
+    shares_outstanding: Optional[float] = None
+    capex: Optional[float] = None
+    working_capital_change: Optional[float] = None
+    tax_rate: Optional[float] = None
+    depreciation: Optional[float] = None
+
+class FCFValuationParams(BaseModel):
+    symbol: str
+    years_to_project: int = 5
+    growth_rate: float = 0.05
+    discount_rate: float = 0.10
+    terminal_growth_rate: float = 0.03
+    use_custom_data: bool = False
+    custom_data: Optional[UserFinancialData] = None
+
+class PortfolioPosition(BaseModel):
+    symbol: str
+    shares: float
+    cost_basis: float
+
+class PortfolioData(BaseModel):
+    positions: List[PortfolioPosition]
+    cash: float = 0.0
+    last_updated: Optional[str] = None
+
+PORTFOLIO_PATH = Path(__file__).parent / "data" / "portfolio.json"
+
+def _load_portfolio_data() -> PortfolioData:
+    if not PORTFOLIO_PATH.exists():
+        return PortfolioData(positions=[], cash=0.0, last_updated=datetime.now().isoformat())
+
+    with PORTFOLIO_PATH.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    return PortfolioData(**payload)
+
+def _save_portfolio_data(data: PortfolioData) -> None:
+    PORTFOLIO_PATH.parent.mkdir(parents=True, exist_ok=True)
+    payload = data.dict()
+    payload["last_updated"] = datetime.now().isoformat()
+    with PORTFOLIO_PATH.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2)
+
+def _get_price_on_or_after(history: pd.DataFrame, target_date: datetime) -> Optional[float]:
+    if history is None or history.empty:
+        return None
+    index = history.index
+    timestamp = pd.Timestamp(target_date)
+
+    if hasattr(index, "tz"):
+        if index.tz is not None:
+            if timestamp.tzinfo is None:
+                timestamp = timestamp.tz_localize(index.tz)
+            else:
+                timestamp = timestamp.tz_convert(index.tz)
+        elif timestamp.tzinfo is not None:
+            timestamp = timestamp.tz_convert(None)
+
+    filtered = history[index >= timestamp]
+    if filtered.empty:
+        return None
+    return float(filtered["Close"].iloc[0])
+
+def _calculate_risk_score(volatility: Optional[float]) -> float:
+    if volatility is None:
+        return 0.0
+    score = min(10.0, max(0.0, (volatility / 0.4) * 10))
+    return round(score, 1)
+
+DEFAULT_NGX_SYMBOLS = [
+    "DANGCEM.NG",
+    "BUACEMENT.NG",
+    "GTCO.NG",
+    "MTNN.NG",
+    "ZENITHBANK.NG",
+    "NB.NG",
+    "SEPLAT.NG",
+    "AIRTELAFRI.NG",
+    "FBNH.NG",
+    "ACCESSCORP.NG",
+]
+
+def _normalize_ngx_symbol(symbol: str) -> str:
+    raw = symbol.strip().upper()
+    if "." in raw:
+        return raw
+    return f"{raw}.NG"
+
+def _get_market_snapshot(symbols: List[str]) -> List[Dict[str, Any]]:
+    snapshots = []
+    for symbol in symbols:
+        data = valuation_service.get_stock_data(symbol, period="1mo")
+        info = data.get("info", {})
+        history = data.get("history")
+
+        current_price = info.get("regularMarketPrice") or info.get("currentPrice")
+        change_pct = info.get("regularMarketChangePercent")
+        volume = info.get("regularMarketVolume") or info.get("volume")
+
+        if history is not None and not history.empty:
+            current_price = current_price or float(history["Close"].iloc[-1])
+            if change_pct is None and len(history) >= 2:
+                prev_close = float(history["Close"].iloc[-2])
+                if prev_close > 0:
+                    change_pct = (float(current_price) - prev_close) / prev_close * 100
+
+        snapshots.append({
+            "symbol": symbol,
+            "name": info.get("shortName") or info.get("longName") or symbol,
+            "price": float(current_price or 0),
+            "change_pct": float(change_pct or 0),
+            "volume": int(volume or 0),
+            "sector": info.get("sector", "Unknown") or "Unknown",
+        })
+    return snapshots
+
+def _get_ngx_index() -> Optional[Dict[str, Any]]:
+    try:
+        symbol = "^NGSE"
+        data = valuation_service.get_stock_data(symbol, period="1mo")
+        info = data.get("info", {})
+        history = data.get("history")
+
+        current_price = info.get("regularMarketPrice") or info.get("currentPrice")
+        change_pct = info.get("regularMarketChangePercent")
+
+        if history is not None and not history.empty:
+            current_price = current_price or float(history["Close"].iloc[-1])
+            if change_pct is None and len(history) >= 2:
+                prev_close = float(history["Close"].iloc[-2])
+                if prev_close > 0:
+                    change_pct = (float(current_price) - prev_close) / prev_close * 100
+
+        return {
+            "symbol": symbol,
+            "name": info.get("shortName") or "NGX All-Share Index",
+            "price": float(current_price or 0),
+            "change_pct": float(change_pct or 0),
+        }
+    except Exception as exc:
+        logger.warning(f"Failed to fetch NGX index: {exc}")
+        return None
+
+def _calculate_intrinsic_value(symbol: str) -> Dict[str, Any]:
+    try:
+        dcf = valuation_service.calculate_dcf_valuation(symbol)
+        current_price = dcf.get("current_price") or 0
+        intrinsic_value = dcf.get("intrinsic_value") or 0
+        margin_of_safety = ((intrinsic_value - current_price) / intrinsic_value * 100) if intrinsic_value else 0
+        signal = "Undervalued" if margin_of_safety >= 20 else "Fairly Valued" if margin_of_safety >= -10 else "Overvalued"
+        return {
+            "symbol": symbol,
+            "market_price": current_price,
+            "intrinsic_value": intrinsic_value,
+            "margin_of_safety": margin_of_safety,
+            "signal": signal,
+        }
+    except HTTPException as exc:
+        logger.warning(f"DCF unavailable for {symbol}: {exc.detail}")
+        data = valuation_service.get_stock_data(symbol, period="1y")
+        info = data.get("info", {})
+        current_price = info.get("currentPrice") or info.get("regularMarketPrice") or 0
+        return {
+            "symbol": symbol,
+            "market_price": current_price,
+            "intrinsic_value": current_price,
+            "margin_of_safety": 0,
+            "signal": "Insufficient data",
+        }
+
+def _build_alerts(symbols: List[str]) -> List[Dict[str, Any]]:
+    alerts: List[Dict[str, Any]] = []
+    for symbol in symbols:
+        try:
+            tech = valuation_service.calculate_technical_indicators(symbol, period="6mo")
+            info = valuation_service.get_stock_data(symbol, period="6mo").get("info", {})
+            current_price = tech.get("current_price", 0)
+            resistance = tech["support_resistance"]["resistance"]
+            support = tech["support_resistance"]["support"]
+            avg_volume = info.get("averageVolume") or info.get("averageVolume10days") or 0
+            volume = info.get("volume") or info.get("regularMarketVolume") or 0
+            change_pct = info.get("regularMarketChangePercent") or 0
+
+            if current_price and resistance and current_price > resistance:
+                alerts.append({
+                    "symbol": symbol,
+                    "type": "price_breakout",
+                    "message": "Price broke above resistance",
+                    "value": current_price,
+                })
+
+            if change_pct and abs(change_pct) >= 5:
+                alerts.append({
+                    "symbol": symbol,
+                    "type": "unusual_jump",
+                    "message": "Unusual price move",
+                    "value": change_pct,
+                })
+
+            if avg_volume and volume and volume > avg_volume * 1.8:
+                alerts.append({
+                    "symbol": symbol,
+                    "type": "volume_spike",
+                    "message": "Volume spike detected",
+                    "value": volume,
+                })
+
+            sma_20 = tech["moving_averages"]["sma_20"]
+            sma_50 = tech["moving_averages"]["sma_50"]
+            if sma_20 and sma_50 and sma_20 > sma_50 and current_price > support:
+                alerts.append({
+                    "symbol": symbol,
+                    "type": "trend_reversal",
+                    "message": "Potential trend reversal",
+                    "value": sma_20 - sma_50,
+                })
+        except Exception as exc:
+            logger.warning(f"Alert evaluation failed for {symbol}: {exc}")
+            continue
+    return alerts
+
+def _rank_symbols(symbols: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+    momentum_scores = []
+    dividend_scores = []
+    value_scores = []
+
+    for symbol in symbols:
+        try:
+            data = valuation_service.get_stock_data(symbol, period="6mo")
+            info = data.get("info", {})
+            history = data.get("history")
+            momentum = 0.0
+            if history is not None and len(history) >= 20:
+                start_price = float(history["Close"].iloc[0])
+                end_price = float(history["Close"].iloc[-1])
+                if start_price > 0:
+                    momentum = (end_price - start_price) / start_price * 100
+
+            dividend_yield = (info.get("dividendYield") or 0) * 100
+            pe_ratio = info.get("trailingPE") or info.get("forwardPE") or 0
+            value_score = 1 / pe_ratio if pe_ratio else 0
+
+            momentum_scores.append({"symbol": symbol, "score": momentum})
+            dividend_scores.append({"symbol": symbol, "score": dividend_yield})
+            value_scores.append({"symbol": symbol, "score": value_score})
+        except Exception as exc:
+            logger.warning(f"Ranking evaluation failed for {symbol}: {exc}")
+            continue
+
+    momentum_scores.sort(key=lambda item: item["score"], reverse=True)
+    dividend_scores.sort(key=lambda item: item["score"], reverse=True)
+    value_scores.sort(key=lambda item: item["score"], reverse=True)
+
+    return {
+        "momentum": momentum_scores[:10],
+        "dividend": dividend_scores[:10],
+        "value": value_scores[:10],
+    }
+
+def _calculate_screener_score(metrics: Dict[str, Any]) -> float:
+    momentum = metrics.get("momentum", 0)
+    dividend = metrics.get("dividend_yield", 0)
+    value = metrics.get("value_score", 0)
+    volatility = metrics.get("volatility", 0) or 0
+
+    score = (momentum * 0.4) + (dividend * 0.3) + (value * 0.3)
+    score -= volatility * 5
+    return round(score, 2)
+
+def _get_screener_snapshot(symbols: List[str]) -> List[Dict[str, Any]]:
+    results = []
+    for symbol in symbols:
+        try:
+            data = valuation_service.get_stock_data(symbol, period="6mo")
+            info = data.get("info", {})
+            history = data.get("history")
+
+            current_price = info.get("regularMarketPrice") or info.get("currentPrice")
+            change_pct = info.get("regularMarketChangePercent") or 0
+            volume = info.get("regularMarketVolume") or info.get("volume") or 0
+            dividend_yield = (info.get("dividendYield") or 0) * 100
+            pe_ratio = info.get("trailingPE") or info.get("forwardPE") or 0
+
+            momentum = 0.0
+            volatility = 0.0
+            if history is not None and not history.empty:
+                current_price = current_price or float(history["Close"].iloc[-1])
+                start_price = float(history["Close"].iloc[0])
+                if start_price > 0:
+                    momentum = (float(current_price) - start_price) / start_price * 100
+                returns = history["Close"].pct_change().dropna()
+                if not returns.empty:
+                    volatility = float(returns.std() * np.sqrt(252))
+
+            value_score = (1 / pe_ratio * 100) if pe_ratio else 0
+
+            metrics = {
+                "symbol": symbol,
+                "name": info.get("shortName") or info.get("longName") or symbol,
+                "price": float(current_price or 0),
+                "change_pct": float(change_pct or 0),
+                "volume": int(volume or 0),
+                "sector": info.get("sector", "Unknown") or "Unknown",
+                "dividend_yield": float(dividend_yield or 0),
+                "pe_ratio": float(pe_ratio or 0),
+                "momentum": float(momentum or 0),
+                "volatility": float(volatility or 0),
+                "value_score": float(value_score or 0),
+            }
+            metrics["ai_score"] = _calculate_screener_score(metrics)
+            metrics["signal"] = "Buy" if metrics["ai_score"] >= 8 else "Watch" if metrics["ai_score"] >= 4 else "Avoid"
+            results.append(metrics)
+        except Exception as exc:
+            logger.warning(f"Screener snapshot failed for {symbol}: {exc}")
+            continue
+    return results
+
+@dataclass
+class ValuationResult:
+    symbol: str
+    current_price: float
+    intrinsic_value: float
+    upside_percentage: float
+    valuation_method: str
+    confidence_level: str
+
+class StockValuationService:
+    def __init__(self):
+        self.cache = {}
+        self.cache_duration = 300  # 5 minutes
+    
+    def get_stock_data(self, symbol: str, period: str = "1y"):
+        """Get stock data with caching"""
+        cache_key = f"{symbol}_{period}"
+        current_time = datetime.now()
+        
+        if cache_key in self.cache:
+            cached_data, cached_time = self.cache[cache_key]
+            if (current_time - cached_time).seconds < self.cache_duration:
+                return cached_data
+        
+        try:
+            stock = yf.Ticker(symbol)
+            data = {
+                'info': stock.info,
+                'history': stock.history(period=period),
+                'financials': stock.financials,
+                'balance_sheet': stock.balance_sheet,
+                'cashflow': stock.cashflow,
+                'calendar': stock.calendar,
+                'recommendations': stock.recommendations,
+                'major_holders': stock.major_holders,
+                'institutional_holders': stock.institutional_holders
+            }
+            
+            self.cache[cache_key] = (data, current_time)
+            return data
+        except Exception as e:
+            logger.error(f"Error fetching data for {symbol}: {e}")
+            raise HTTPException(status_code=400, detail=f"Error fetching stock data: {str(e)}")
+    
+    def calculate_dcf_valuation(self, symbol: str, growth_rate: float = 0.05, 
+                               discount_rate: float = 0.10, terminal_growth_rate: float = 0.03):
+        """Discounted Cash Flow valuation"""
+        try:
+            data = self.get_stock_data(symbol)
+            cashflow = data['cashflow']
+            info = data['info']
+            
+            if cashflow.empty:
+                raise ValueError("No cash flow data available")
+            
+            # Get free cash flow (most recent year)
+            try:
+                # Try different possible cash flow columns
+                if 'Free Cash Flow' in cashflow.index:
+                    current_fcf = cashflow.loc['Free Cash Flow'].iloc[0]
+                elif 'Operating Cash Flow' in cashflow.index:
+                    operating_cf = cashflow.loc['Operating Cash Flow'].iloc[0]
+                    capex = cashflow.loc['Capital Expenditures'].iloc[0] if 'Capital Expenditures' in cashflow.index else 0
+                    current_fcf = operating_cf + capex  # CapEx is usually negative
+                else:
+                    # Fallback calculation
+                    current_fcf = cashflow.iloc[0, 0]  # First row, first column
+            except:
+                current_fcf = 1000000000  # Default 1B if no data
+            
+            # Project cash flows for 5 years
+            projected_fcf = []
+            for year in range(1, 6):
+                fcf = current_fcf * ((1 + growth_rate) ** year)
+                projected_fcf.append(fcf)
+            
+            # Calculate terminal value
+            terminal_fcf = projected_fcf[-1] * (1 + terminal_growth_rate)
+            terminal_value = terminal_fcf / (discount_rate - terminal_growth_rate)
+            
+            # Discount all cash flows to present value
+            pv_fcf = []
+            for year, fcf in enumerate(projected_fcf, 1):
+                pv = fcf / ((1 + discount_rate) ** year)
+                pv_fcf.append(pv)
+            
+            pv_terminal = terminal_value / ((1 + discount_rate) ** 5)
+            
+            # Enterprise value
+            enterprise_value = sum(pv_fcf) + pv_terminal
+            
+            # Calculate equity value
+            total_cash = info.get('totalCash', 0) or 0
+            total_debt = info.get('totalDebt', 0) or 0
+            equity_value = enterprise_value + total_cash - total_debt
+            
+            # Per share value
+            shares_outstanding = info.get('sharesOutstanding', 0) or info.get('impliedSharesOutstanding', 1)
+            intrinsic_value = equity_value / shares_outstanding
+            
+            current_price = info.get('currentPrice', 0) or info.get('regularMarketPrice', 0)
+            upside = ((intrinsic_value - current_price) / current_price) * 100 if current_price > 0 else 0
+            
+            return {
+                'symbol': symbol,
+                'current_price': current_price,
+                'intrinsic_value': intrinsic_value,
+                'upside_percentage': upside,
+                'enterprise_value': enterprise_value,
+                'equity_value': equity_value,
+                'terminal_value': terminal_value,
+                'projected_fcf': projected_fcf,
+                'pv_fcf': pv_fcf,
+                'assumptions': {
+                    'growth_rate': growth_rate,
+                    'discount_rate': discount_rate,
+                    'terminal_growth_rate': terminal_growth_rate
+                },
+                'confidence_level': self._get_confidence_level(upside)
+            }
+            
+        except Exception as e:
+            logger.error(f"DCF calculation error for {symbol}: {e}")
+            raise HTTPException(status_code=500, detail=f"DCF calculation failed: {str(e)}")
+    
+    def calculate_comparable_analysis(self, symbol: str, peer_symbols: List[str] = None):
+        """Comparable company analysis"""
+        try:
+            if not peer_symbols:
+                # Get sector peers (simplified - in real app, use sector API)
+                data = self.get_stock_data(symbol)
+                sector = data['info'].get('sector', '')
+                # For demo, use some common stocks as peers
+                peer_symbols = ['AAPL', 'MSFT', 'GOOGL', 'AMZN'] if symbol not in ['AAPL', 'MSFT', 'GOOGL', 'AMZN'] else ['SPY', 'QQQ', 'IWM']
+            
+            # Get data for all companies
+            all_symbols = [symbol] + peer_symbols
+            company_data = {}
+            
+            for sym in all_symbols:
+                try:
+                    data = self.get_stock_data(sym)
+                    info = data['info']
+                    
+                    company_data[sym] = {
+                        'market_cap': info.get('marketCap', 0),
+                        'pe_ratio': info.get('trailingPE', 0),
+                        'pb_ratio': info.get('priceToBook', 0),
+                        'ps_ratio': info.get('priceToSalesTrailing12Months', 0),
+                        'ev_ebitda': info.get('enterpriseToEbitda', 0),
+                        'current_price': info.get('currentPrice', 0),
+                        'revenue': info.get('totalRevenue', 0),
+                        'net_income': info.get('netIncomeToCommon', 0),
+                        'book_value': info.get('bookValue', 0),
+                        'enterprise_value': info.get('enterpriseValue', 0)
+                    }
+                except:
+                    continue
+            
+            # Calculate peer averages
+            peer_data = {k: v for k, v in company_data.items() if k != symbol}
+            
+            if not peer_data:
+                raise ValueError("No peer data available")
+            
+            peer_averages = {}
+            for metric in ['pe_ratio', 'pb_ratio', 'ps_ratio', 'ev_ebitda']:
+                values = [data[metric] for data in peer_data.values() if data[metric] and data[metric] > 0]
+                peer_averages[metric] = np.mean(values) if values else 0
+            
+            # Calculate implied valuations
+            target_data = company_data[symbol]
+            valuations = {}
+            
+            # P/E valuation
+            if target_data['net_income'] and peer_averages['pe_ratio']:
+                eps = target_data['net_income'] / (target_data['market_cap'] / target_data['current_price']) if target_data['current_price'] else 0
+                valuations['pe_valuation'] = eps * peer_averages['pe_ratio']
+            
+            # P/B valuation
+            if target_data['book_value'] and peer_averages['pb_ratio']:
+                valuations['pb_valuation'] = target_data['book_value'] * peer_averages['pb_ratio']
+            
+            # P/S valuation
+            if target_data['revenue'] and peer_averages['ps_ratio']:
+                revenue_per_share = target_data['revenue'] / (target_data['market_cap'] / target_data['current_price']) if target_data['current_price'] else 0
+                valuations['ps_valuation'] = revenue_per_share * peer_averages['ps_ratio']
+            
+            # Calculate average valuation
+            valid_valuations = [v for v in valuations.values() if v > 0]
+            avg_valuation = np.mean(valid_valuations) if valid_valuations else target_data['current_price']
+            
+            upside = ((avg_valuation - target_data['current_price']) / target_data['current_price']) * 100 if target_data['current_price'] > 0 else 0
+            
+            return {
+                'symbol': symbol,
+                'current_price': target_data['current_price'],
+                'implied_valuations': valuations,
+                'average_valuation': avg_valuation,
+                'upside_percentage': upside,
+                'peer_averages': peer_averages,
+                'peer_symbols': peer_symbols,
+                'target_metrics': {
+                    'pe_ratio': target_data['pe_ratio'],
+                    'pb_ratio': target_data['pb_ratio'],
+                    'ps_ratio': target_data['ps_ratio'],
+                    'ev_ebitda': target_data['ev_ebitda']
+                },
+                'confidence_level': self._get_confidence_level(upside)
+            }
+            
+        except Exception as e:
+            logger.error(f"Comparable analysis error for {symbol}: {e}")
+            raise HTTPException(status_code=500, detail=f"Comparable analysis failed: {str(e)}")
+    
+    def calculate_technical_indicators(self, symbol: str, period: str = "1y"):
+        """Calculate technical indicators"""
+        try:
+            data = self.get_stock_data(symbol, period)
+            history = data['history']
+            
+            if history.empty:
+                raise ValueError("No price history available")
+            
+            # Calculate technical indicators
+            close_prices = history['Close']
+            high_prices = history['High']
+            low_prices = history['Low']
+            volumes = history['Volume']
+            
+            # Simple Moving Averages
+            sma_20 = close_prices.rolling(window=20).mean().iloc[-1]
+            sma_50 = close_prices.rolling(window=50).mean().iloc[-1]
+            sma_200 = close_prices.rolling(window=200).mean().iloc[-1]
+            
+            # Exponential Moving Averages
+            ema_12 = close_prices.ewm(span=12).mean().iloc[-1]
+            ema_26 = close_prices.ewm(span=26).mean().iloc[-1]
+            
+            # MACD
+            macd = ema_12 - ema_26
+            macd_signal = pd.Series([macd]).ewm(span=9).mean().iloc[0]
+            macd_histogram = macd - macd_signal
+            
+            # RSI
+            delta = close_prices.diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+            rs = gain / loss
+            rsi = 100 - (100 / (1 + rs)).iloc[-1]
+            
+            # Bollinger Bands
+            bb_middle = close_prices.rolling(window=20).mean().iloc[-1]
+            bb_std = close_prices.rolling(window=20).std().iloc[-1]
+            bb_upper = bb_middle + (bb_std * 2)
+            bb_lower = bb_middle - (bb_std * 2)
+            
+            current_price = close_prices.iloc[-1]
+            
+            # Support and Resistance levels
+            recent_highs = high_prices.rolling(window=20).max()
+            recent_lows = low_prices.rolling(window=20).min()
+            resistance = recent_highs.iloc[-20:].max()
+            support = recent_lows.iloc[-20:].min()
+            
+            return {
+                'symbol': symbol,
+                'current_price': current_price,
+                'moving_averages': {
+                    'sma_20': sma_20,
+                    'sma_50': sma_50,
+                    'sma_200': sma_200,
+                    'ema_12': ema_12,
+                    'ema_26': ema_26
+                },
+                'momentum_indicators': {
+                    'rsi': rsi,
+                    'macd': macd,
+                    'macd_signal': macd_signal,
+                    'macd_histogram': macd_histogram
+                },
+                'volatility_indicators': {
+                    'bollinger_upper': bb_upper,
+                    'bollinger_middle': bb_middle,
+                    'bollinger_lower': bb_lower
+                },
+                'support_resistance': {
+                    'resistance': resistance,
+                    'support': support
+                },
+                'signals': self._generate_technical_signals(current_price, sma_20, sma_50, rsi, macd, bb_upper, bb_lower)
+            }
+            
+        except Exception as e:
+            logger.error(f"Technical analysis error for {symbol}: {e}")
+            raise HTTPException(status_code=500, detail=f"Technical analysis failed: {str(e)}")
+
+    def get_price_eps_series(self, symbol: str, period: str = "1y"):
+        """Get aligned daily price and EPS series for visualization"""
+        try:
+            data = self.get_stock_data(symbol, period)
+            history = data['history']
+            info = data['info']
+
+            if history.empty:
+                raise ValueError("No price history available")
+
+            prices = history['Close']
+            price_index = prices.index
+
+            # Compute daily EPS from PE ratio so EPS moves with price
+            pe_ratio = info.get('trailingPE') or info.get('forwardPE')
+            eps_series = None
+            if pe_ratio and pe_ratio > 0:
+                eps_daily = prices / pe_ratio
+            else:
+                # Get quarterly EPS from income statement or earnings (fallback)
+                ticker = yf.Ticker(symbol)
+                shares = info.get('sharesOutstanding', 0) or info.get('impliedSharesOutstanding', 0)
+
+                try:
+                    income_stmt = ticker.quarterly_income_stmt
+                except Exception:
+                    income_stmt = None
+
+                if income_stmt is not None and not income_stmt.empty and shares:
+                    net_income_row = None
+                    for key in [
+                        'Net Income',
+                        'Net Income Common Stockholders',
+                        'Net Income Applicable To Common Shares'
+                    ]:
+                        if key in income_stmt.index:
+                            net_income_row = income_stmt.loc[key]
+                            break
+
+                    if net_income_row is not None:
+                        eps_series = net_income_row / shares
+                        eps_series.index = pd.to_datetime(eps_series.index)
+
+                if eps_series is None or eps_series.empty:
+                    quarterly_earnings = ticker.quarterly_earnings
+                    if quarterly_earnings is not None and not quarterly_earnings.empty and shares:
+                        eps_series = quarterly_earnings['Earnings'] / shares
+                        eps_series.index = pd.to_datetime(eps_series.index)
+
+                if eps_series is None or eps_series.empty:
+                    trailing_eps = info.get('trailingEps') or info.get('forwardEps')
+                    if trailing_eps is not None:
+                        eps_series = pd.Series([trailing_eps], index=[price_index[0]])
+
+                # Forward fill EPS values to daily frequency
+                if eps_series is not None and not eps_series.empty:
+                    eps_daily = eps_series.reindex(price_index, method='ffill')
+                else:
+                    eps_daily = pd.Series([None] * len(price_index), index=price_index)
+
+            points = []
+            for date, price in prices.items():
+                eps_value = eps_daily.loc[date]
+                points.append({
+                    "date": date.strftime('%Y-%m-%d'),
+                    "price": float(price) if price is not None else None,
+                    "eps": float(eps_value) if eps_value is not None and not pd.isna(eps_value) else None
+                })
+
+            return {
+                "symbol": symbol,
+                "period": period,
+                "points": points
+            }
+
+        except Exception as e:
+            logger.error(f"Price/EPS series error for {symbol}: {e}")
+            raise HTTPException(status_code=500, detail=f"Price/EPS series failed: {str(e)}")
+
+    def get_financial_growth_metrics(self, symbol: str, period: str = "1y"):
+        """Get growth metrics for revenue, earnings, price, and debt to equity"""
+        try:
+            data = self.get_stock_data(symbol, period)
+            info = data['info']
+            history = data['history']
+            financials = data['financials']
+            balance_sheet = data['balance_sheet']
+
+            # Price growth over period
+            price_growth = None
+            if history is not None and not history.empty:
+                start_price = history['Close'].iloc[0]
+                end_price = history['Close'].iloc[-1]
+                if start_price:
+                    price_growth = ((end_price - start_price) / start_price) * 100
+
+            # Revenue and earnings growth (YoY from financials)
+            revenue_growth = info.get('revenueGrowth')
+            earnings_growth = info.get('earningsGrowth')
+
+            if revenue_growth is None and financials is not None and not financials.empty:
+                if 'Total Revenue' in financials.index and financials.shape[1] >= 2:
+                    latest = financials.loc['Total Revenue'].iloc[0]
+                    prev = financials.loc['Total Revenue'].iloc[1]
+                    if prev:
+                        revenue_growth = (latest - prev) / prev
+
+            if earnings_growth is None and financials is not None and not financials.empty:
+                if 'Net Income' in financials.index and financials.shape[1] >= 2:
+                    latest = financials.loc['Net Income'].iloc[0]
+                    prev = financials.loc['Net Income'].iloc[1]
+                    if prev:
+                        earnings_growth = (latest - prev) / prev
+
+            # Debt to equity growth (YoY)
+            debt_to_equity_growth = None
+            if balance_sheet is not None and not balance_sheet.empty and balance_sheet.shape[1] >= 2:
+                total_assets_latest = balance_sheet.loc['Total Assets'].iloc[0] if 'Total Assets' in balance_sheet.index else None
+                total_assets_prev = balance_sheet.loc['Total Assets'].iloc[1] if 'Total Assets' in balance_sheet.index else None
+                total_debt_latest = info.get('totalDebt')
+                total_debt_prev = info.get('totalDebt')
+
+                if total_assets_latest is not None and total_assets_prev is not None:
+                    equity_latest = total_assets_latest - (total_debt_latest or 0)
+                    equity_prev = total_assets_prev - (total_debt_prev or 0)
+                    if equity_latest and equity_prev:
+                        dte_latest = (total_debt_latest or 0) / equity_latest
+                        dte_prev = (total_debt_prev or 0) / equity_prev
+                        if dte_prev:
+                            debt_to_equity_growth = ((dte_latest - dte_prev) / dte_prev) * 100
+
+            # EPS growth (quarterly)
+            eps_growth = None
+            quarterly_earnings = yf.Ticker(symbol).quarterly_earnings
+            shares = info.get('sharesOutstanding', 0) or info.get('impliedSharesOutstanding', 1)
+            if quarterly_earnings is not None and not quarterly_earnings.empty and shares:
+                if quarterly_earnings.shape[0] >= 2:
+                    latest_eps = quarterly_earnings['Earnings'].iloc[0] / shares
+                    prev_eps = quarterly_earnings['Earnings'].iloc[1] / shares
+                    if prev_eps:
+                        eps_growth = ((latest_eps - prev_eps) / abs(prev_eps)) * 100
+
+            return {
+                "symbol": symbol,
+                "period": period,
+                "growth": {
+                    "revenue_growth": (revenue_growth * 100) if revenue_growth is not None else None,
+                    "earnings_growth": (earnings_growth * 100) if earnings_growth is not None else None,
+                    "price_growth": price_growth,
+                    "debt_to_equity_growth": debt_to_equity_growth,
+                    "eps_growth": eps_growth
+                }
+            }
+        except Exception as e:
+            logger.error(f"Financial growth metrics error for {symbol}: {e}")
+            raise HTTPException(status_code=500, detail=f"Financial growth metrics failed: {str(e)}")
+    
+    def _get_confidence_level(self, upside_percentage: float) -> str:
+        """Determine confidence level based on upside percentage"""
+        abs_upside = abs(upside_percentage)
+        if abs_upside < 10:
+            return "Low"
+        elif abs_upside < 25:
+            return "Medium"
+        else:
+            return "High"
+    
+    def calculate_fcf_valuation(self, symbol: str, years_to_project: int = 5, 
+                               growth_rate: float = 0.05, discount_rate: float = 0.10,
+                               terminal_growth_rate: float = 0.03, custom_data: UserFinancialData = None):
+        """Enhanced Free Cash Flow valuation with user-customizable inputs"""
+        try:
+            data = self.get_stock_data(symbol)
+            info = data['info']
+            
+            # Use custom data if provided, otherwise get from Yahoo Finance
+            if custom_data:
+                # Calculate FCF from user inputs
+                operating_cash_flow = custom_data.net_income or 0
+                if custom_data.depreciation:
+                    operating_cash_flow += custom_data.depreciation
+                if custom_data.working_capital_change:
+                    operating_cash_flow -= custom_data.working_capital_change
+                
+                current_fcf = operating_cash_flow - (custom_data.capex or 0)
+                shares_outstanding = custom_data.shares_outstanding or 1
+                total_cash = custom_data.cash_and_equivalents or 0
+                total_debt = custom_data.total_debt or 0
+                current_price = info.get('currentPrice', 0) or info.get('regularMarketPrice', 0)
+            else:
+                # Get from Yahoo Finance
+                cashflow = data['cashflow']
+                if cashflow.empty:
+                    raise ValueError("No cash flow data available")
+                
+                # Calculate FCF
+                try:
+                    if 'Free Cash Flow' in cashflow.index:
+                        current_fcf = cashflow.loc['Free Cash Flow'].iloc[0]
+                    elif 'Operating Cash Flow' in cashflow.index:
+                        operating_cf = cashflow.loc['Operating Cash Flow'].iloc[0]
+                        capex = cashflow.loc['Capital Expenditures'].iloc[0] if 'Capital Expenditures' in cashflow.index else 0
+                        current_fcf = operating_cf + capex  # CapEx is usually negative
+                    else:
+                        current_fcf = cashflow.iloc[0, 0]
+                except:
+                    current_fcf = 1000000000
+                
+                shares_outstanding = info.get('sharesOutstanding', 0) or info.get('impliedSharesOutstanding', 1)
+                total_cash = info.get('totalCash', 0) or 0
+                total_debt = info.get('totalDebt', 0) or 0
+                current_price = info.get('currentPrice', 0) or info.get('regularMarketPrice', 0)
+            
+            # Project FCF for specified years
+            projected_fcf = []
+            growth_rates = []
+            
+            for year in range(1, years_to_project + 1):
+                # Declining growth rate over time (more realistic)
+                year_growth = growth_rate * (0.9 ** (year - 1))
+                growth_rates.append(year_growth)
+                fcf = current_fcf * ((1 + year_growth) ** year)
+                projected_fcf.append(fcf)
+            
+            # Terminal value calculation
+            terminal_fcf = projected_fcf[-1] * (1 + terminal_growth_rate)
+            terminal_value = terminal_fcf / (discount_rate - terminal_growth_rate)
+            
+            # Discount to present value
+            pv_fcf = []
+            for year, fcf in enumerate(projected_fcf, 1):
+                pv = fcf / ((1 + discount_rate) ** year)
+                pv_fcf.append(pv)
+            
+            pv_terminal = terminal_value / ((1 + discount_rate) ** years_to_project)
+            
+            # Enterprise and equity value
+            enterprise_value = sum(pv_fcf) + pv_terminal
+            equity_value = enterprise_value + total_cash - total_debt
+            intrinsic_value_per_share = equity_value / shares_outstanding
+            
+            # Calculate margins and ratios
+            fcf_margin = (current_fcf / (custom_data.revenue if custom_data and custom_data.revenue else info.get('totalRevenue', current_fcf))) * 100 if (custom_data and custom_data.revenue) or info.get('totalRevenue') else 0
+            fcf_yield = (current_fcf / info.get('marketCap', enterprise_value)) * 100 if info.get('marketCap') else 0
+            
+            upside = ((intrinsic_value_per_share - current_price) / current_price) * 100 if current_price > 0 else 0
+            
+            return {
+                'symbol': symbol,
+                'valuation_method': 'Free Cash Flow (FCF)',
+                'current_price': current_price,
+                'intrinsic_value': intrinsic_value_per_share,
+                'upside_percentage': upside,
+                'enterprise_value': enterprise_value,
+                'equity_value': equity_value,
+                'terminal_value': terminal_value,
+                'current_fcf': current_fcf,
+                'projected_fcf': projected_fcf,
+                'pv_fcf': pv_fcf,
+                'pv_terminal': pv_terminal,
+                'fcf_margin': fcf_margin,
+                'fcf_yield': fcf_yield,
+                'growth_rates_used': growth_rates,
+                'assumptions': {
+                    'years_projected': years_to_project,
+                    'initial_growth_rate': growth_rate,
+                    'discount_rate': discount_rate,
+                    'terminal_growth_rate': terminal_growth_rate,
+                    'shares_outstanding': shares_outstanding,
+                    'total_cash': total_cash,
+                    'total_debt': total_debt
+                },
+                'confidence_level': self._get_confidence_level(upside),
+                'data_source': 'custom' if custom_data else 'yahoo_finance'
+            }
+            
+        except Exception as e:
+            logger.error(f"FCF valuation error for {symbol}: {e}")
+            raise HTTPException(status_code=500, detail=f"FCF valuation failed: {str(e)}")
+    
+    def get_financial_data_template(self, symbol: str):
+        """Get financial data template with current values for user editing"""
+        try:
+            data = self.get_stock_data(symbol)
+            info = data['info']
+            financials = data['financials']
+            balance_sheet = data['balance_sheet']
+            cashflow = data['cashflow']
+            
+            # Extract current financial data
+            template = {
+                'symbol': symbol,
+                'revenue': info.get('totalRevenue'),
+                'operating_income': financials.loc['Operating Income'].iloc[0] if not financials.empty and 'Operating Income' in financials.index else None,
+                'net_income': info.get('netIncomeToCommon'),
+                'total_assets': balance_sheet.loc['Total Assets'].iloc[0] if not balance_sheet.empty and 'Total Assets' in balance_sheet.index else None,
+                'total_debt': info.get('totalDebt'),
+                'cash_and_equivalents': info.get('totalCash'),
+                'shares_outstanding': info.get('sharesOutstanding') or info.get('impliedSharesOutstanding'),
+                'capex': cashflow.loc['Capital Expenditures'].iloc[0] if not cashflow.empty and 'Capital Expenditures' in cashflow.index else None,
+                'working_capital_change': None,  # Calculated field
+                'tax_rate': info.get('effectiveForwardTaxRate', 0.21),  # Default 21%
+                'depreciation': cashflow.loc['Depreciation'].iloc[0] if not cashflow.empty and 'Depreciation' in cashflow.index else None
+            }
+            
+            # Remove None values and format
+            formatted_template = {}
+            for key, value in template.items():
+                if value is not None:
+                    if isinstance(value, (int, float)) and key != 'symbol':
+                        formatted_template[key] = float(value)
+                    else:
+                        formatted_template[key] = value
+                else:
+                    formatted_template[key] = None
+            
+            return formatted_template
+            
+        except Exception as e:
+            logger.error(f"Error getting financial template for {symbol}: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to get financial template: {str(e)}")
+    
+    def calculate_financial_ratios(self, symbol: str, fcf_result: dict, custom_data: UserFinancialData = None):
+        """Calculate comprehensive financial ratios"""
+        try:
+            data = self.get_stock_data(symbol)
+            info = data['info']
+            
+            # Use custom data if provided, otherwise get from Yahoo Finance
+            if custom_data:
+                revenue = custom_data.revenue or 0
+                net_income = custom_data.net_income or 0
+                total_assets = custom_data.total_assets or 0
+                total_debt = custom_data.total_debt or 0
+                cash = custom_data.cash_and_equivalents or 0
+                shares = custom_data.shares_outstanding or 1
+            else:
+                revenue = info.get('totalRevenue', 0)
+                net_income = info.get('netIncomeToCommon', 0)
+                total_assets = info.get('totalAssets', 0)
+                total_debt = info.get('totalDebt', 0)
+                cash = info.get('totalCash', 0)
+                shares = info.get('sharesOutstanding', 1) or info.get('impliedSharesOutstanding', 1)
+            
+            # Basic calculations
+            market_cap = fcf_result['current_price'] * shares
+            book_value = total_assets - total_debt
+            current_fcf = fcf_result['current_fcf']
+            enterprise_value = fcf_result['enterprise_value']
+            
+            # Financial Ratios
+            ratios = {
+                'profitability_ratios': {
+                    'roe': (net_income / book_value) * 100 if book_value > 0 else 0,  # Return on Equity
+                    'roa': (net_income / total_assets) * 100 if total_assets > 0 else 0,  # Return on Assets
+                    'fcf_margin': (current_fcf / revenue) * 100 if revenue > 0 else 0,  # FCF Margin
+                    'net_margin': (net_income / revenue) * 100 if revenue > 0 else 0  # Net Profit Margin
+                },
+                'leverage_ratios': {
+                    'debt_to_equity': total_debt / book_value if book_value > 0 else 0,
+                    'debt_to_assets': total_debt / total_assets if total_assets > 0 else 0,
+                    'interest_coverage': net_income / (total_debt * 0.05) if total_debt > 0 else 0  # Assuming 5% interest rate
+                },
+                'valuation_ratios': {
+                    'pe_ratio': market_cap / net_income if net_income > 0 else 0,
+                    'pb_ratio': market_cap / book_value if book_value > 0 else 0,
+                    'ps_ratio': market_cap / revenue if revenue > 0 else 0,
+                    'ev_to_fcf': enterprise_value / current_fcf if current_fcf > 0 else 0,
+                    'price_to_fcf': fcf_result['current_price'] / (current_fcf / shares) if current_fcf > 0 else 0,
+                    'fcf_yield': (current_fcf / market_cap) * 100 if market_cap > 0 else 0
+                },
+                'per_share_metrics': {
+                    'fcf_per_share': current_fcf / shares,
+                    'book_value_per_share': book_value / shares,
+                    'revenue_per_share': revenue / shares,
+                    'eps': net_income / shares
+                },
+                'growth_metrics': {
+                    'fcf_growth_rate': fcf_result['assumptions']['initial_growth_rate'] * 100,
+                    'terminal_growth_rate': fcf_result['assumptions']['terminal_growth_rate'] * 100,
+                    'implied_growth_5y': ((fcf_result['projected_fcf'][-1] / current_fcf) ** (1/5) - 1) * 100
+                }
+            }
+            
+            return ratios
+            
+        except Exception as e:
+            logger.error(f"Error calculating financial ratios for {symbol}: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to calculate financial ratios: {str(e)}")
+    
+    def monte_carlo_simulation(self, symbol: str, scenarios: int = 1000, custom_data: UserFinancialData = None):
+        """Run Monte Carlo simulation for valuation uncertainty"""
+        try:
+            import random
+            
+            results = []
+            base_params = {
+                'growth_rate': 0.05,
+                'discount_rate': 0.10,
+                'terminal_growth_rate': 0.03
+            }
+            
+            for _ in range(scenarios):
+                # Randomize parameters within reasonable ranges
+                growth_rate = random.normalvariate(base_params['growth_rate'], 0.02)  # ±2% std dev
+                discount_rate = random.normalvariate(base_params['discount_rate'], 0.015)  # ±1.5% std dev  
+                terminal_growth = random.normalvariate(base_params['terminal_growth_rate'], 0.01)  # ±1% std dev
+                
+                # Ensure reasonable bounds
+                growth_rate = max(0.01, min(0.15, growth_rate))
+                discount_rate = max(0.05, min(0.20, discount_rate))
+                terminal_growth = max(0.01, min(0.05, terminal_growth))
+                
+                try:
+                    result = self.calculate_fcf_valuation(
+                        symbol, 5, growth_rate, discount_rate, terminal_growth, custom_data
+                    )
+                    results.append({
+                        'intrinsic_value': result['intrinsic_value'],
+                        'upside_percentage': result['upside_percentage'],
+                        'growth_rate': growth_rate,
+                        'discount_rate': discount_rate,
+                        'terminal_growth_rate': terminal_growth
+                    })
+                except:
+                    continue
+            
+            if not results:
+                raise ValueError("No valid simulation results")
+            
+            # Calculate statistics
+            valuations = [r['intrinsic_value'] for r in results]
+            upsides = [r['upside_percentage'] for r in results]
+            
+            return {
+                'symbol': symbol,
+                'simulation_count': len(results),
+                'statistics': {
+                    'mean_valuation': np.mean(valuations),
+                    'median_valuation': np.median(valuations),
+                    'std_valuation': np.std(valuations),
+                    'min_valuation': np.min(valuations),
+                    'max_valuation': np.max(valuations),
+                    'percentile_5': np.percentile(valuations, 5),
+                    'percentile_95': np.percentile(valuations, 95),
+                    'mean_upside': np.mean(upsides),
+                    'probability_positive': sum(1 for u in upsides if u > 0) / len(upsides) * 100
+                },
+                'results': results[:100]  # Return first 100 for analysis
+            }
+            
+        except Exception as e:
+            logger.error(f"Monte Carlo simulation error for {symbol}: {e}")
+            raise HTTPException(status_code=500, detail=f"Monte Carlo simulation failed: {str(e)}")
+    
+    def _generate_technical_signals(self, current_price, sma_20, sma_50, rsi, macd, bb_upper, bb_lower):
+        """Generate buy/sell signals based on technical indicators"""
+        signals = []
+        
+        # Moving average signals
+        if current_price > sma_20 > sma_50:
+            signals.append({"type": "BUY", "indicator": "MA", "description": "Price above rising moving averages"})
+        elif current_price < sma_20 < sma_50:
+            signals.append({"type": "SELL", "indicator": "MA", "description": "Price below falling moving averages"})
+        
+        # RSI signals
+        if rsi < 30:
+            signals.append({"type": "BUY", "indicator": "RSI", "description": "Oversold condition"})
+        elif rsi > 70:
+            signals.append({"type": "SELL", "indicator": "RSI", "description": "Overbought condition"})
+        
+        # MACD signals
+        if macd > 0:
+            signals.append({"type": "BUY", "indicator": "MACD", "description": "Bullish momentum"})
+        else:
+            signals.append({"type": "SELL", "indicator": "MACD", "description": "Bearish momentum"})
+        
+        # Bollinger Band signals
+        if current_price < bb_lower:
+            signals.append({"type": "BUY", "indicator": "BB", "description": "Price near lower Bollinger Band"})
+        elif current_price > bb_upper:
+            signals.append({"type": "SELL", "indicator": "BB", "description": "Price near upper Bollinger Band"})
+        
+        return signals
+
+# Initialize service
+valuation_service = StockValuationService()
+
+# API Endpoints
+@app.get("/")
+async def root():
+    return {"message": "Stock Valuation API", "version": "1.0.0", "features": ["DCF Analysis", "Comparable Analysis", "Technical Analysis"]}
+
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+
+@app.get("/search")
+async def search_stocks(query: str, limit: int = 10):
+    """Search stocks by company name or keyword"""
+    if not query or not query.strip():
+        raise HTTPException(status_code=400, detail="Query is required")
+
+    try:
+        url = "https://query1.finance.yahoo.com/v1/finance/search"
+        params = {
+            "q": query.strip(),
+            "quotesCount": limit,
+            "newsCount": 0,
+            "listsCount": 0,
+            "enableFuzzyQuery": "true",
+        }
+        headers = {
+            "User-Agent": "Mozilla/5.0 (StockValuationApp)"
+        }
+        response = requests.get(url, params=params, headers=headers, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+
+        results = []
+        for item in data.get("quotes", []):
+            if item.get("quoteType") != "EQUITY":
+                continue
+            results.append({
+                "symbol": item.get("symbol"),
+                "shortname": item.get("shortname") or item.get("longname"),
+                "longname": item.get("longname") or item.get("shortname"),
+                "exchange": item.get("exchange"),
+                "quote_type": item.get("quoteType"),
+            })
+
+        return {"query": query, "results": results}
+    except Exception as e:
+        logger.error(f"Search error for query '{query}': {e}")
+        return {"query": query, "results": [], "error": "Search unavailable"}
+
+@app.get("/stock/{symbol}")
+async def get_stock_info(symbol: str):
+    """Get basic stock information"""
+    try:
+        symbol_upper = symbol.upper()
+        
+        # Check if it's an NGX stock
+        if '.NG' in symbol_upper or symbol_upper in ['DANGCEM', 'MTNN', 'GTCO', 'ZENITHBANK', 'NESTLE', 'BUACEMENT', 'NB', 'SEPLAT', 'AIRTELAFRI', 'FBNH', 'ACCESSCORP']:
+            # Add .NG suffix if not present
+            if '.NG' not in symbol_upper:
+                symbol_upper = f"{symbol_upper}.NG"
+            
+            # Try multiple providers for NGX stocks
+            errors = []
+            
+            # 1. Try Alpha Vantage
+            if alpha_vantage.api_key and alpha_vantage.api_key != 'demo':
+                try:
+                    logger.info(f"Trying Alpha Vantage for {symbol_upper}")
+                    av_data = alpha_vantage.get_stock_info(symbol_upper)
+                    return {
+                        "symbol": av_data['symbol'],
+                        "company_name": av_data['company_name'],
+                        "current_price": av_data['current_price'],
+                        "market_cap": av_data.get('market_cap', 0),
+                        "pe_ratio": av_data.get('pe_ratio', 0),
+                        "sector": av_data.get('sector', 'N/A'),
+                        "industry": av_data.get('industry', 'N/A'),
+                        "dividend_yield": av_data.get('dividend_yield', 0),
+                        "52_week_high": av_data.get('52_week_high', 0),
+                        "52_week_low": av_data.get('52_week_low', 0),
+                        "beta": av_data.get('beta', 0),
+                        "volume": av_data.get('volume', 0),
+                        "avg_volume": av_data.get('volume', 0),
+                        "data_source": "Alpha Vantage"
+                    }
+                except Exception as av_error:
+                    errors.append(f"Alpha Vantage: {str(av_error)[:50]}")
+            else:
+                errors.append("Alpha Vantage: No API key configured")
+            
+            # 2. Try Twelve Data
+            if twelve_data.api_key and twelve_data.api_key != 'demo':
+                try:
+                    logger.info(f"Trying Twelve Data for {symbol_upper}")
+                    td_data = twelve_data.get_stock_info(symbol_upper)
+                    return {
+                        "symbol": td_data['symbol'],
+                        "company_name": td_data['company_name'],
+                        "current_price": td_data['current_price'],
+                        "market_cap": td_data.get('market_cap', 0),
+                        "pe_ratio": td_data.get('pe_ratio', 0),
+                        "sector": td_data.get('sector', 'N/A'),
+                        "industry": td_data.get('industry', 'N/A'),
+                        "dividend_yield": td_data.get('dividend_yield', 0),
+                        "52_week_high": td_data.get('52_week_high', 0),
+                        "52_week_low": td_data.get('52_week_low', 0),
+                        "beta": td_data.get('beta', 0),
+                        "volume": td_data.get('volume', 0),
+                        "avg_volume": td_data.get('volume', 0),
+                        "data_source": "Twelve Data"
+                    }
+                except Exception as td_error:
+                    errors.append(f"Twelve Data: {str(td_error)[:50]}")
+            else:
+                errors.append("Twelve Data: No API key configured")
+            
+            # All providers failed
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "NGX_NOT_SUPPORTED",
+                    "message": f"Nigerian Stock Exchange (NGX) stocks like {symbol_upper} are not available through any configured provider. Tested providers: {', '.join(errors)}",
+                    "suggestion": "NGX stocks require special data access. Options: 1) Get API key from Alpha Vantage or Twelve Data and add to .env, 2) Contact NGX directly for official API (info@ngxgroup.com), 3) Use Nigerian fintech APIs (Mono, Okra)",
+                    "symbol": symbol_upper,
+                    "tested_providers": errors
+                }
+            )
+        
+        data = valuation_service.get_stock_data(symbol_upper)
+        info = data['info']
+        
+        # Check if we got valid data
+        if not info.get('longName') and not info.get('shortName'):
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": "STOCK_NOT_FOUND",
+                    "message": f"Stock symbol '{symbol_upper}' not found or has no available data.",
+                    "suggestion": "Please verify the stock symbol and try again.",
+                    "symbol": symbol_upper
+                }
+            )
+        
+        return {
+            "symbol": symbol_upper,
+            "company_name": info.get('longName', info.get('shortName', 'N/A')),
+            "current_price": info.get('currentPrice', info.get('regularMarketPrice', 0)),
+            "market_cap": info.get('marketCap', 0),
+            "pe_ratio": info.get('trailingPE', 0),
+            "sector": info.get('sector', 'N/A'),
+            "industry": info.get('industry', 'N/A'),
+            "dividend_yield": info.get('dividendYield', 0),
+            "52_week_high": info.get('fiftyTwoWeekHigh', 0),
+            "52_week_low": info.get('fiftyTwoWeekLow', 0),
+            "beta": info.get('beta', 0),
+            "volume": info.get('volume', 0),
+            "avg_volume": info.get('averageVolume', 0)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching stock info for {symbol}: {e}")
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "FETCH_ERROR",
+                "message": f"Unable to fetch data for '{symbol}': {str(e)}",
+                "symbol": symbol.upper()
+            }
+        )
+
+@app.post("/valuation/dcf")
+async def calculate_dcf(params: DCFParams):
+    """Perform DCF valuation analysis"""
+    result = valuation_service.calculate_dcf_valuation(
+        params.symbol.upper(),
+        params.growth_rate,
+        params.discount_rate,
+        params.terminal_growth_rate
+    )
+    return result
+
+@app.get("/valuation/comparable/{symbol}")
+async def calculate_comparable_valuation(symbol: str, peers: Optional[str] = None):
+    """Perform comparable company analysis"""
+    peer_list = peers.split(',') if peers else None
+    result = valuation_service.calculate_comparable_analysis(symbol.upper(), peer_list)
+    return result
+
+@app.get("/analysis/technical/{symbol}")
+async def get_technical_analysis(symbol: str, period: str = "1y"):
+    """Get technical analysis indicators"""
+    result = valuation_service.calculate_technical_indicators(symbol.upper(), period)
+    return result
+
+@app.get("/analysis/price-eps/{symbol}")
+async def get_price_eps_series(symbol: str, period: str = "1y"):
+    """Get daily price and EPS series for visualization"""
+    result = valuation_service.get_price_eps_series(symbol.upper(), period)
+    return result
+
+@app.get("/analysis/financial-growth/{symbol}")
+async def get_financial_growth(symbol: str, period: str = "1y"):
+    """Get growth metrics for revenue, earnings, price, EPS, and debt to equity"""
+    result = valuation_service.get_financial_growth_metrics(symbol.upper(), period)
+    return result
+
+@app.get("/analysis/comprehensive/{symbol}")
+async def get_comprehensive_analysis(symbol: str):
+    """Get comprehensive valuation analysis (DCF + Comparable + Technical)"""
+    try:
+        # Get all three analyses
+        dcf_result = valuation_service.calculate_dcf_valuation(symbol.upper())
+        comp_result = valuation_service.calculate_comparable_analysis(symbol.upper())
+        tech_result = valuation_service.calculate_technical_indicators(symbol.upper())
+        
+        # Combine results
+        return {
+            "symbol": symbol.upper(),
+            "timestamp": datetime.now().isoformat(),
+            "current_price": dcf_result['current_price'],
+            "valuations": {
+                "dcf": {
+                    "intrinsic_value": dcf_result['intrinsic_value'],
+                    "upside": dcf_result['upside_percentage'],
+                    "confidence": dcf_result['confidence_level']
+                },
+                "comparable": {
+                    "average_valuation": comp_result['average_valuation'],
+                    "upside": comp_result['upside_percentage'],
+                    "confidence": comp_result['confidence_level']
+                }
+            },
+            "technical_analysis": {
+                "signals": tech_result['signals'],
+                "rsi": tech_result['momentum_indicators']['rsi'],
+                "support": tech_result['support_resistance']['support'],
+                "resistance": tech_result['support_resistance']['resistance']
+            },
+            "recommendation": get_overall_recommendation(dcf_result, comp_result, tech_result)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Comprehensive analysis failed: {str(e)}")
+
+def get_overall_recommendation(dcf_result, comp_result, tech_result):
+    """Generate overall buy/hold/sell recommendation"""
+    dcf_upside = dcf_result['upside_percentage']
+    comp_upside = comp_result['upside_percentage']
+    
+    # Count buy signals from technical analysis
+    buy_signals = sum(1 for signal in tech_result['signals'] if signal['type'] == 'BUY')
+    sell_signals = sum(1 for signal in tech_result['signals'] if signal['type'] == 'SELL')
+    
+    # Average fundamental upside
+    avg_upside = (dcf_upside + comp_upside) / 2
+    
+    # Generate recommendation
+    if avg_upside > 15 and buy_signals >= sell_signals:
+        return {"action": "BUY", "confidence": "High", "reasoning": "Strong fundamental value with positive technical signals"}
+    elif avg_upside > 5 and buy_signals > sell_signals:
+        return {"action": "BUY", "confidence": "Medium", "reasoning": "Moderate upside potential with technical support"}
+    elif avg_upside < -15 or sell_signals > buy_signals + 1:
+        return {"action": "SELL", "confidence": "High", "reasoning": "Overvalued with negative technical signals"}
+    elif avg_upside < -5:
+        return {"action": "SELL", "confidence": "Medium", "reasoning": "Limited upside potential"}
+    else:
+        return {"action": "HOLD", "confidence": "Medium", "reasoning": "Fair valuation with mixed signals"}
+
+# New endpoints for FCF valuation and user financial data
+
+@app.post("/valuation/fcf")
+async def calculate_fcf_valuation(params: FCFValuationParams):
+    """Perform Free Cash Flow valuation with optional custom financial data"""
+    result = valuation_service.calculate_fcf_valuation(
+        params.symbol.upper(),
+        params.years_to_project,
+        params.growth_rate,
+        params.discount_rate,
+        params.terminal_growth_rate,
+        params.custom_data
+    )
+    return result
+
+@app.get("/financial-template/{symbol}")
+async def get_financial_template(symbol: str):
+    """Get financial data template for user editing"""
+    template = valuation_service.get_financial_data_template(symbol.upper())
+    return {
+        "symbol": symbol.upper(),
+        "template": template,
+        "description": {
+            "revenue": "Total annual revenue/sales",
+            "operating_income": "Earnings before interest and taxes (EBIT)",
+            "net_income": "Net income after all expenses and taxes",
+            "total_assets": "Total assets on balance sheet",
+            "total_debt": "Total debt (short-term + long-term)",
+            "cash_and_equivalents": "Cash and cash equivalents",
+            "shares_outstanding": "Number of shares outstanding",
+            "capex": "Capital expenditures (negative number)",
+            "working_capital_change": "Change in working capital (optional)",
+            "tax_rate": "Effective tax rate (as decimal, e.g., 0.21 for 21%)",
+            "depreciation": "Depreciation and amortization expense"
+        }
+    }
+
+@app.post("/analysis/scenario")
+async def scenario_analysis(symbol: str, scenarios: List[FCFValuationParams]):
+    """Run multiple valuation scenarios with different assumptions"""
+    results = []
+    
+    for i, scenario in enumerate(scenarios):
+        scenario.symbol = symbol.upper()
+        result = valuation_service.calculate_fcf_valuation(
+            scenario.symbol,
+            scenario.years_to_project,
+            scenario.growth_rate,
+            scenario.discount_rate,
+            scenario.terminal_growth_rate,
+            scenario.custom_data
+        )
+        result['scenario_name'] = f"Scenario {i+1}"
+        results.append(result)
+    
+    # Calculate scenario statistics
+    valuations = [r['intrinsic_value'] for r in results]
+    upsides = [r['upside_percentage'] for r in results]
+    
+    return {
+        "symbol": symbol.upper(),
+        "scenarios": results,
+        "statistics": {
+            "avg_valuation": np.mean(valuations),
+            "min_valuation": np.min(valuations),
+            "max_valuation": np.max(valuations),
+            "std_valuation": np.std(valuations),
+            "avg_upside": np.mean(upsides),
+            "min_upside": np.min(upsides),
+            "max_upside": np.max(upsides)
+        }
+    }
+
+@app.get("/analysis/sensitivity/{symbol}")
+async def sensitivity_analysis(symbol: str, base_growth: float = 0.05, base_discount: float = 0.10):
+    """Perform sensitivity analysis on growth rate and discount rate"""
+    results = []
+    
+    # Growth rate variations: -2%, -1%, base, +1%, +2%
+    growth_variations = [base_growth - 0.02, base_growth - 0.01, base_growth, base_growth + 0.01, base_growth + 0.02]
+    # Discount rate variations: -1%, -0.5%, base, +0.5%, +1%
+    discount_variations = [base_discount - 0.01, base_discount - 0.005, base_discount, base_discount + 0.005, base_discount + 0.01]
+    
+    for growth in growth_variations:
+        for discount in discount_variations:
+            try:
+                result = valuation_service.calculate_fcf_valuation(
+                    symbol.upper(), 5, growth, discount, 0.03
+                )
+                results.append({
+                    'growth_rate': growth,
+                    'discount_rate': discount,
+                    'intrinsic_value': result['intrinsic_value'],
+                    'upside_percentage': result['upside_percentage']
+                })
+            except:
+                continue
+    
+    return {
+        "symbol": symbol.upper(),
+        "base_assumptions": {"growth_rate": base_growth, "discount_rate": base_discount},
+        "sensitivity_matrix": results
+    }
+
+@app.get("/analysis/ratios/{symbol}")
+async def get_financial_ratios(symbol: str, custom_data: UserFinancialData = None):
+    """Get comprehensive financial ratios analysis"""
+    try:
+        # First get a base FCF valuation
+        fcf_result = valuation_service.calculate_fcf_valuation(symbol.upper())
+        ratios = valuation_service.calculate_financial_ratios(symbol.upper(), fcf_result, custom_data)
+        
+        return {
+            "symbol": symbol.upper(),
+            "financial_ratios": ratios,
+            "valuation_context": {
+                "current_price": fcf_result['current_price'],
+                "intrinsic_value": fcf_result['intrinsic_value'],
+                "enterprise_value": fcf_result['enterprise_value']
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/analysis/monte-carlo/{symbol}")
+async def run_monte_carlo(symbol: str, scenarios: int = 1000, custom_data: UserFinancialData = None):
+    """Run Monte Carlo simulation for valuation uncertainty analysis"""
+    if scenarios > 5000:
+        raise HTTPException(status_code=400, detail="Maximum 5000 scenarios allowed")
+    
+    try:
+        result = valuation_service.monte_carlo_simulation(symbol.upper(), scenarios, custom_data)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/analysis/stress-test/{symbol}")  
+async def stress_test_valuation(symbol: str):
+    """Stress test valuation under different market conditions"""
+    try:
+        stress_scenarios = [
+            {"name": "Base Case", "growth": 0.05, "discount": 0.10, "terminal": 0.03},
+            {"name": "Recession", "growth": -0.02, "discount": 0.15, "terminal": 0.01},
+            {"name": "High Inflation", "growth": 0.03, "discount": 0.13, "terminal": 0.02},
+            {"name": "Market Crash", "growth": -0.05, "discount": 0.18, "terminal": 0.01},
+            {"name": "Economic Boom", "growth": 0.10, "discount": 0.08, "terminal": 0.04},
+            {"name": "Interest Rate Spike", "growth": 0.04, "discount": 0.16, "terminal": 0.025}
+        ]
+        
+        results = []
+        for scenario in stress_scenarios:
+            try:
+                result = valuation_service.calculate_fcf_valuation(
+                    symbol.upper(), 
+                    5, 
+                    scenario["growth"], 
+                    scenario["discount"], 
+                    scenario["terminal"]
+                )
+                results.append({
+                    "scenario_name": scenario["name"],
+                    "assumptions": scenario,
+                    "intrinsic_value": result['intrinsic_value'],
+                    "upside_percentage": result['upside_percentage'],
+                    "confidence_level": result['confidence_level']
+                })
+            except:
+                continue
+        
+        if not results:
+            raise ValueError("No valid stress test results")
+        
+        # Calculate stress test statistics
+        valuations = [r['intrinsic_value'] for r in results]
+        upsides = [r['upside_percentage'] for r in results]
+        
+        return {
+            "symbol": symbol.upper(),
+            "stress_test_results": results,
+            "summary": {
+                "worst_case_valuation": min(valuations),
+                "best_case_valuation": max(valuations),
+                "average_valuation": np.mean(valuations),
+                "worst_case_upside": min(upsides),
+                "best_case_upside": max(upsides),
+                "scenarios_with_positive_upside": sum(1 for u in upsides if u > 0),
+                "downside_risk": abs(min(upsides)) if min(upsides) < 0 else 0
+            }
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/analysis/peer-comparison/{symbol}")
+async def advanced_peer_comparison(symbol: str, include_ratios: bool = True):
+    """Advanced peer comparison with financial ratios"""
+    try:
+        # Get base company data
+        base_data = valuation_service.get_stock_data(symbol.upper())
+        sector = base_data['info'].get('sector', '')
+        
+        # Define sector peers (this would ideally come from a sector database)
+        sector_peers = {
+            'Technology': ['AAPL', 'MSFT', 'GOOGL', 'META', 'NVDA'],
+            'Healthcare': ['JNJ', 'PFE', 'ABBV', 'MRK', 'UNH'],
+            'Financial Services': ['JPM', 'BAC', 'WFC', 'C', 'GS'],
+            'Consumer Cyclical': ['AMZN', 'TSLA', 'HD', 'MCD', 'NKE'],
+            'Communication Services': ['GOOGL', 'META', 'DIS', 'NFLX', 'T']
+        }
+        
+        peers = sector_peers.get(sector, ['SPY', 'QQQ', 'DIA'])
+        peers = [p for p in peers if p != symbol.upper()][:5]  # Max 5 peers
+        
+        comparison_results = []
+        target_fcf = valuation_service.calculate_fcf_valuation(symbol.upper())
+        
+        for peer in peers:
+            try:
+                peer_fcf = valuation_service.calculate_fcf_valuation(peer)
+                peer_data = {
+                    'symbol': peer,
+                    'intrinsic_value': peer_fcf['intrinsic_value'],
+                    'current_price': peer_fcf['current_price'],
+                    'upside_percentage': peer_fcf['upside_percentage'],
+                    'fcf_margin': peer_fcf['fcf_margin'],
+                    'fcf_yield': peer_fcf['fcf_yield']
+                }
+                
+                if include_ratios:
+                    peer_ratios = valuation_service.calculate_financial_ratios(peer, peer_fcf)
+                    peer_data['ratios'] = peer_ratios
+                
+                comparison_results.append(peer_data)
+            except:
+                continue
+        
+        # Calculate peer averages
+        if comparison_results:
+            peer_avg = {
+                'avg_fcf_margin': np.mean([p['fcf_margin'] for p in comparison_results]),
+                'avg_fcf_yield': np.mean([p['fcf_yield'] for p in comparison_results]),
+                'avg_upside': np.mean([p['upside_percentage'] for p in comparison_results]),
+                'median_valuation': np.median([p['intrinsic_value'] for p in comparison_results])
+            }
+        else:
+            peer_avg = {}
+        
+        return {
+            "symbol": symbol.upper(),
+            "sector": sector,
+            "target_company": {
+                "intrinsic_value": target_fcf['intrinsic_value'],
+                "current_price": target_fcf['current_price'],
+                "upside_percentage": target_fcf['upside_percentage'],
+                "fcf_margin": target_fcf['fcf_margin'],
+                "fcf_yield": target_fcf['fcf_yield']
+            },
+            "peer_comparison": comparison_results,
+            "peer_averages": peer_avg,
+            "relative_ranking": {
+                "fcf_margin_percentile": sum(1 for p in comparison_results if p['fcf_margin'] < target_fcf['fcf_margin']) / len(comparison_results) * 100 if comparison_results else 0,
+                "fcf_yield_percentile": sum(1 for p in comparison_results if p['fcf_yield'] < target_fcf['fcf_yield']) / len(comparison_results) * 100 if comparison_results else 0
+            }
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/portfolio")
+async def get_portfolio():
+    """Get portfolio holdings with valuation, performance, and risk metrics."""
+    portfolio = _load_portfolio_data()
+    positions_output = []
+    allocation_by_sector: Dict[str, float] = {}
+    allocation_by_symbol: Dict[str, float] = {}
+
+    total_value = 0.0
+    total_cost = 0.0
+    now = datetime.now()
+    period_dates = {
+        "monthly": now - timedelta(days=30),
+        "quarterly": now - timedelta(days=90),
+        "ytd": datetime(now.year, 1, 1),
+    }
+    period_current = {key: 0.0 for key in period_dates}
+    period_start = {key: 0.0 for key in period_dates}
+
+    volatility_weighted = 0.0
+    volatility_weight_sum = 0.0
+    drawdown_weighted = 0.0
+
+    for position in portfolio.positions:
+        symbol = position.symbol.upper()
+        data = valuation_service.get_stock_data(symbol, period="1y")
+        info = data["info"]
+        history = data.get("history")
+
+        current_price = info.get("currentPrice") or info.get("regularMarketPrice")
+        if not current_price and history is not None and not history.empty:
+            current_price = float(history["Close"].iloc[-1])
+
+        current_price = float(current_price or 0)
+        market_value = position.shares * current_price
+        cost_value = position.shares * position.cost_basis
+        profit = market_value - cost_value
+        profit_pct = (profit / cost_value * 100) if cost_value > 0 else 0
+        sector = info.get("sector", "Unknown") or "Unknown"
+
+        positions_output.append({
+            "symbol": symbol,
+            "shares": position.shares,
+            "cost_basis": position.cost_basis,
+            "current_price": current_price,
+            "market_value": market_value,
+            "cost_value": cost_value,
+            "profit": profit,
+            "profit_pct": profit_pct,
+            "sector": sector,
+        })
+
+        total_value += market_value
+        total_cost += cost_value
+        allocation_by_sector[sector] = allocation_by_sector.get(sector, 0.0) + market_value
+        allocation_by_symbol[symbol] = allocation_by_symbol.get(symbol, 0.0) + market_value
+
+        for key, start_date in period_dates.items():
+            period_current[key] += market_value
+            start_price = _get_price_on_or_after(history, start_date) if history is not None else None
+            if start_price is None:
+                period_start[key] += market_value
+            else:
+                period_start[key] += position.shares * start_price
+
+        if history is not None and not history.empty:
+            returns = history["Close"].pct_change().dropna()
+            if not returns.empty:
+                annualized_vol = float(returns.std() * np.sqrt(252))
+                weight = market_value
+                volatility_weighted += annualized_vol * weight
+                volatility_weight_sum += weight
+
+                rolling_max = history["Close"].cummax()
+                drawdown = (history["Close"] / rolling_max - 1).min()
+                drawdown_weighted += float(drawdown) * weight
+
+    total_equity = total_value + portfolio.cash
+    total_profit = total_value - total_cost
+    total_profit_pct = (total_profit / total_cost * 100) if total_cost > 0 else 0
+
+    best_performer = None
+    worst_performer = None
+    if positions_output:
+        best_performer = max(positions_output, key=lambda item: item["profit_pct"])
+        worst_performer = min(positions_output, key=lambda item: item["profit_pct"])
+
+    performance = {}
+    for key in period_dates.keys():
+        start_value = period_start[key]
+        current_value = period_current[key]
+        profit_value = current_value - start_value
+        profit_pct_value = (profit_value / start_value * 100) if start_value > 0 else 0
+        performance[key] = {
+            "profit": profit_value,
+            "profit_pct": profit_pct_value,
+        }
+
+    volatility = (volatility_weighted / volatility_weight_sum) if volatility_weight_sum > 0 else None
+    avg_drawdown = (drawdown_weighted / volatility_weight_sum) if volatility_weight_sum > 0 else None
+
+    allocation_sector_list = [
+        {"name": sector, "value": (value / total_value) if total_value > 0 else 0}
+        for sector, value in allocation_by_sector.items()
+    ]
+    allocation_symbol_list = [
+        {"symbol": symbol, "value": (value / total_value) if total_value > 0 else 0}
+        for symbol, value in allocation_by_symbol.items()
+    ]
+
+    return {
+        "positions": positions_output,
+        "cash": portfolio.cash,
+        "summary": {
+            "total_value": total_value,
+            "total_cost": total_cost,
+            "total_profit": total_profit,
+            "total_profit_pct": total_profit_pct,
+            "total_equity": total_equity,
+            "best_performer": best_performer,
+            "worst_performer": worst_performer,
+        },
+        "performance": performance,
+        "risk": {
+            "volatility": volatility,
+            "risk_score": _calculate_risk_score(volatility),
+            "max_drawdown": avg_drawdown,
+        },
+        "allocation": {
+            "by_sector": allocation_sector_list,
+            "by_symbol": allocation_symbol_list,
+        },
+        "last_updated": portfolio.last_updated,
+    }
+
+@app.put("/portfolio")
+async def update_portfolio(payload: PortfolioData):
+    """Update portfolio holdings."""
+    _save_portfolio_data(payload)
+    return {"status": "updated", "last_updated": datetime.now().isoformat()}
+
+@app.get("/market/ngx/summary")
+async def ngx_market_summary(symbols: Optional[str] = None):
+    """Get NGX market summary with gainers, losers, volume leaders, and sector performance."""
+    if symbols:
+        symbol_list = [_normalize_ngx_symbol(s) for s in symbols.split(",") if s.strip()]
+    else:
+        portfolio = _load_portfolio_data()
+        symbol_list = [_normalize_ngx_symbol(pos.symbol) for pos in portfolio.positions]
+        if not symbol_list:
+            symbol_list = DEFAULT_NGX_SYMBOLS
+
+    snapshots = _get_market_snapshot(symbol_list)
+    gainers = sorted(snapshots, key=lambda item: item["change_pct"], reverse=True)[:5]
+    losers = sorted(snapshots, key=lambda item: item["change_pct"])[:5]
+    volume_leaders = sorted(snapshots, key=lambda item: item["volume"], reverse=True)[:5]
+
+    sector_groups: Dict[str, List[float]] = {}
+    for quote in snapshots:
+        sector_groups.setdefault(quote["sector"], []).append(quote["change_pct"])
+
+    sectors = [
+        {
+            "sector": sector,
+            "avg_change_pct": float(np.mean(changes)) if changes else 0,
+            "count": len(changes),
+        }
+        for sector, changes in sector_groups.items()
+    ]
+    sectors.sort(key=lambda item: item["avg_change_pct"], reverse=True)
+
+    return {
+        "quotes": snapshots,
+        "index": _get_ngx_index(),
+        "gainers": gainers,
+        "losers": losers,
+        "volume_leaders": volume_leaders,
+        "sectors": sectors,
+        "source_symbols": symbol_list,
+        "last_updated": datetime.now().isoformat(),
+    }
+
+@app.get("/market/ngx/summary")
+async def ngx_market_summary(symbols: Optional[str] = None):
+    """Get NGX market summary with gainers, losers, volume leaders, and sector performance."""
+    if symbols:
+        symbol_list = [_normalize_ngx_symbol(s) for s in symbols.split(",") if s.strip()]
+    else:
+        portfolio = _load_portfolio_data()
+        symbol_list = [_normalize_ngx_symbol(pos.symbol) for pos in portfolio.positions]
+        if not symbol_list:
+            symbol_list = DEFAULT_NGX_SYMBOLS
+
+    snapshots = _get_market_snapshot(symbol_list)
+    gainers = sorted(snapshots, key=lambda item: item["change_pct"], reverse=True)[:5]
+    losers = sorted(snapshots, key=lambda item: item["change_pct"])[:5]
+    volume_leaders = sorted(snapshots, key=lambda item: item["volume"], reverse=True)[:5]
+
+    sector_groups: Dict[str, List[float]] = {}
+    for quote in snapshots:
+        sector_groups.setdefault(quote["sector"], []).append(quote["change_pct"])
+
+    sectors = [
+        {
+            "sector": sector,
+            "avg_change_pct": float(np.mean(changes)) if changes else 0,
+            "count": len(changes),
+        }
+        for sector, changes in sector_groups.items()
+    ]
+    sectors.sort(key=lambda item: item["avg_change_pct"], reverse=True)
+
+    return {
+        "quotes": snapshots,
+        "index": _get_ngx_index(),
+        "gainers": gainers,
+        "losers": losers,
+        "volume_leaders": volume_leaders,
+        "sectors": sectors,
+        "source_symbols": symbol_list,
+        "last_updated": datetime.now().isoformat(),
+    }
+
+# Generic market endpoints for international markets
+@app.get("/market/us/summary")
+async def us_market_summary(symbols: Optional[str] = None):
+    """Get US market summary."""
+    if symbols:
+        symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    else:
+        symbol_list = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA", "META", "NFLX"]
+
+    snapshots = _get_market_snapshot(symbol_list)
+    gainers = sorted(snapshots, key=lambda item: item["change_pct"], reverse=True)[:5]
+    losers = sorted(snapshots, key=lambda item: item["change_pct"])[:5]
+    volume_leaders = sorted(snapshots, key=lambda item: item["volume"], reverse=True)[:5]
+
+    sector_groups: Dict[str, List[float]] = {}
+    for quote in snapshots:
+        sector_groups.setdefault(quote["sector"], []).append(quote["change_pct"])
+
+    sectors = [
+        {
+            "sector": sector,
+            "avg_change_pct": float(np.mean(changes)) if changes else 0,
+            "count": len(changes),
+        }
+        for sector, changes in sector_groups.items()
+    ]
+    sectors.sort(key=lambda item: item["avg_change_pct"], reverse=True)
+
+    # Get SPY as index for US markets
+    try:
+        spy_index = _get_ngx_index()  # Reuses existing logic but for SPY
+        spy_data = valuation_service.get_stock_data("SPY")
+        spy_index = {"symbol": "SPY", "name": "S&P 500", "price": spy_data["info"].get("regularMarketPrice", 0), "change_pct": spy_data["info"].get("regularMarketChangePercent", 0)}
+    except:
+        spy_index = None
+
+    return {
+        "quotes": snapshots,
+        "index": spy_index,
+        "gainers": gainers,
+        "losers": losers,
+        "volume_leaders": volume_leaders,
+        "sectors": sectors,
+        "source_symbols": symbol_list,
+        "last_updated": datetime.now().isoformat(),
+    }
+
+@app.get("/market/uk/summary")
+async def uk_market_summary(symbols: Optional[str] = None):
+    """Get UK stock market summary."""
+    if symbols:
+        symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    else:
+        symbol_list = ["LLOY.L", "HSBA.L", "BARX.L", "AZN.L", "SHELL.L", "GSK.L", "ULVR.L"]
+
+    snapshots = _get_market_snapshot(symbol_list)
+    gainers = sorted(snapshots, key=lambda item: item["change_pct"], reverse=True)[:5]
+    losers = sorted(snapshots, key=lambda item: item["change_pct"])[:5]
+    volume_leaders = sorted(snapshots, key=lambda item: item["volume"], reverse=True)[:5]
+
+    sector_groups: Dict[str, List[float]] = {}
+    for quote in snapshots:
+        sector_groups.setdefault(quote["sector"], []).append(quote["change_pct"])
+
+    sectors = [
+        {"sector": sector, "avg_change_pct": float(np.mean(changes)) if changes else 0, "count": len(changes)}
+        for sector, changes in sector_groups.items()
+    ]
+
+    return {
+        "quotes": snapshots,
+        "index": None,
+        "gainers": gainers,
+        "losers": losers,
+        "volume_leaders": volume_leaders,
+        "sectors": sectors,
+        "source_symbols": symbol_list,
+        "last_updated": datetime.now().isoformat(),
+    }
+
+@app.get("/market/eu/summary")
+async def eu_market_summary(symbols: Optional[str] = None):
+    """Get European market summary."""
+    if symbols:
+        symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    else:
+        symbol_list = ["SAP", "SIEMENS", "BMW", "LVMH.PA", "ASML.AS", "NOVO.CO", "TEL.DE"]
+
+    snapshots = _get_market_snapshot(symbol_list)
+    gainers = sorted(snapshots, key=lambda item: item["change_pct"], reverse=True)[:5]
+    losers = sorted(snapshots, key=lambda item: item["change_pct"])[:5]
+
+    return {
+        "quotes": snapshots,
+        "index": None,
+        "gainers": gainers,
+        "losers": losers,
+        "volume_leaders": sorted(snapshots, key=lambda x: x["volume"], reverse=True)[:5],
+        "sectors": [],
+        "source_symbols": symbol_list,
+        "last_updated": datetime.now().isoformat(),
+    }
+
+@app.get("/market/asia/summary")
+async def asia_market_summary(symbols: Optional[str] = None):
+    """Get Asian market summary."""
+    if symbols:
+        symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    else:
+        symbol_list = ["7203.T", "0700.HK", "BABA", "TSM", "RELIANCE.NS", "INFY.NS", "603659.SS"]
+
+    snapshots = _get_market_snapshot(symbol_list)
+    gainers = sorted(snapshots, key=lambda item: item["change_pct"], reverse=True)[:5]
+    losers = sorted(snapshots, key=lambda item: item["change_pct"])[:5]
+
+    return {
+        "quotes": snapshots,
+        "index": None,
+        "gainers": gainers,
+        "losers": losers,
+        "volume_leaders": sorted(snapshots, key=lambda x: x["volume"], reverse=True)[:5],
+        "sectors": [],
+        "source_symbols": symbol_list,
+        "last_updated": datetime.now().isoformat(),
+    }
+
+@app.get("/market/emerging/summary")
+async def emerging_market_summary(symbols: Optional[str] = None):
+    """Get emerging markets summary."""
+    if symbols:
+        symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    else:
+        symbol_list = ["RELIANCE.NS", "TCS.NS", "PETR4.SA", "INFY.NS", "SSNLF", "MT.AS", "EUOF.DE"]
+
+    snapshots = _get_market_snapshot(symbol_list)
+    gainers = sorted(snapshots, key=lambda item: item["change_pct"], reverse=True)[:5]
+    losers = sorted(snapshots, key=lambda item: item["change_pct"])[:5]
+
+    return {
+        "quotes": snapshots,
+        "index": None,
+        "gainers": gainers,
+        "losers": losers,
+        "volume_leaders": sorted(snapshots, key=lambda x: x["volume"], reverse=True)[:5],
+        "sectors": [],
+        "source_symbols": symbol_list,
+        "last_updated": datetime.now().isoformat(),
+    }
+
+@app.get("/market/ngx/alerts")
+async def ngx_market_alerts(symbols: Optional[str] = None, include_premium: bool = False):
+    """Premium: smart alerts based on technical triggers."""
+    if not include_premium:
+        return {
+            "locked": True,
+            "message": "Premium required for alerts.",
+            "alerts": [],
+        }
+
+    if symbols:
+        symbol_list = [_normalize_ngx_symbol(s) for s in symbols.split(",") if s.strip()]
+    else:
+        portfolio = _load_portfolio_data()
+        symbol_list = [_normalize_ngx_symbol(pos.symbol) for pos in portfolio.positions]
+        if not symbol_list:
+            symbol_list = DEFAULT_NGX_SYMBOLS
+
+    alerts = _build_alerts(symbol_list)
+    return {
+        "locked": False,
+        "alerts": alerts,
+        "source_symbols": symbol_list,
+        "last_updated": datetime.now().isoformat(),
+    }
+
+@app.get("/market/ngx/rankings")
+async def ngx_market_rankings(symbols: Optional[str] = None):
+    """Daily rankings for momentum, dividend, and value."""
+    if symbols:
+        symbol_list = [_normalize_ngx_symbol(s) for s in symbols.split(",") if s.strip()]
+    else:
+        symbol_list = DEFAULT_NGX_SYMBOLS
+
+    rankings = _rank_symbols(symbol_list)
+    return {
+        "rankings": rankings,
+        "source_symbols": symbol_list,
+        "last_updated": datetime.now().isoformat(),
+    }
+
+@app.get("/valuation/intrinsic/{symbol}")
+async def intrinsic_value(symbol: str):
+    """Intrinsic value summary (no price prediction)."""
+    try:
+        raw = symbol.strip().upper()
+        ngx_bases = {s.replace(".NG", "") for s in DEFAULT_NGX_SYMBOLS}
+        if raw.endswith(".NG") or raw in ngx_bases:
+            normalized = _normalize_ngx_symbol(raw)
+        else:
+            normalized = raw
+        result = _calculate_intrinsic_value(normalized)
+        return result
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+@app.get("/market/ngx/screener")
+async def ngx_screener(
+    symbols: Optional[str] = None,
+    min_price: Optional[float] = None,
+    max_price: Optional[float] = None,
+    min_change: Optional[float] = None,
+    min_volume: Optional[int] = None,
+    min_dividend: Optional[float] = None,
+    max_pe: Optional[float] = None,
+    min_score: Optional[float] = None,
+    min_momentum: Optional[float] = None,
+    max_volatility: Optional[float] = None,
+    sector: Optional[str] = None,
+    signal: Optional[str] = None,
+):
+    """AI-powered NGX screener with configurable filters."""
+    if symbols:
+        symbol_list = [_normalize_ngx_symbol(s) for s in symbols.split(",") if s.strip()]
+    else:
+        symbol_list = DEFAULT_NGX_SYMBOLS
+
+    snapshot = _get_screener_snapshot(symbol_list)
+
+    def matches(item: Dict[str, Any]) -> bool:
+        if min_price is not None and item["price"] < min_price:
+            return False
+        if max_price is not None and item["price"] > max_price:
+            return False
+        if min_change is not None and item["change_pct"] < min_change:
+            return False
+        if min_volume is not None and item["volume"] < min_volume:
+            return False
+        if min_dividend is not None and item["dividend_yield"] < min_dividend:
+            return False
+        if max_pe is not None and item["pe_ratio"] > 0 and item["pe_ratio"] > max_pe:
+            return False
+        if min_score is not None and item["ai_score"] < min_score:
+            return False
+        if min_momentum is not None and item["momentum"] < min_momentum:
+            return False
+        if max_volatility is not None and item["volatility"] > max_volatility:
+            return False
+        if sector and item["sector"].lower() != sector.lower():
+            return False
+        if signal and item["signal"].lower() != signal.lower():
+            return False
+        return True
+
+    filtered = [item for item in snapshot if matches(item)]
+    filtered.sort(key=lambda item: item["ai_score"], reverse=True)
+
+    return {
+        "results": filtered,
+        "total": len(filtered),
+        "source_symbols": symbol_list,
+        "last_updated": datetime.now().isoformat(),
+    }
+
+# Generic screener endpoints for international markets
+@app.get("/market/us/screener")
+async def us_screener(
+    symbols: Optional[str] = None,
+    min_price: Optional[float] = None,
+    max_price: Optional[float] = None,
+    min_change: Optional[float] = None,
+    min_volume: Optional[int] = None,
+    min_dividend: Optional[float] = None,
+    max_pe: Optional[float] = None,
+    min_score: Optional[float] = None,
+    min_momentum: Optional[float] = None,
+    max_volatility: Optional[float] = None,
+    sector: Optional[str] = None,
+    signal: Optional[str] = None,
+):
+    """US stock screener with configurable filters."""
+    if symbols:
+        symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    else:
+        symbol_list = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA", "META", "NFLX", "PYPL", "SQ"]
+
+    snapshot = _get_screener_snapshot(symbol_list)
+
+    def matches(item: Dict[str, Any]) -> bool:
+        if min_price is not None and item["price"] < min_price:
+            return False
+        if max_price is not None and item["price"] > max_price:
+            return False
+        if min_change is not None and item["change_pct"] < min_change:
+            return False
+        if min_volume is not None and item["volume"] < min_volume:
+            return False
+        if min_dividend is not None and item["dividend_yield"] < min_dividend:
+            return False
+        if max_pe is not None and item["pe_ratio"] > 0 and item["pe_ratio"] > max_pe:
+            return False
+        if min_score is not None and item["ai_score"] < min_score:
+            return False
+        if min_momentum is not None and item["momentum"] < min_momentum:
+            return False
+        if max_volatility is not None and item["volatility"] > max_volatility:
+            return False
+        if sector and item["sector"].lower() != sector.lower():
+            return False
+        if signal and item["signal"].lower() != signal.lower():
+            return False
+        return True
+
+    filtered = [item for item in snapshot if matches(item)]
+    filtered.sort(key=lambda item: item["ai_score"], reverse=True)
+
+    return {
+        "results": filtered,
+        "total": len(filtered),
+        "source_symbols": symbol_list,
+        "last_updated": datetime.now().isoformat(),
+    }
+
+@app.get("/market/uk/screener")
+@app.get("/market/eu/screener")
+@app.get("/market/asia/screener")
+@app.get("/market/emerging/screener")
+async def international_screener(
+    symbols: Optional[str] = None,
+    min_price: Optional[float] = None,
+    max_price: Optional[float] = None,
+    min_change: Optional[float] = None,
+    min_volume: Optional[int] = None,
+    min_dividend: Optional[float] = None,
+    max_pe: Optional[float] = None,
+    min_score: Optional[float] = None,
+    min_momentum: Optional[float] = None,
+    max_volatility: Optional[float] = None,
+    sector: Optional[str] = None,
+    signal: Optional[str] = None,
+):
+    """International stock screener with configurable filters."""
+    if symbols:
+        symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    else:
+        symbol_list = ["LLOY.L", "HSBA.L", "BARX.L", "AZN.L", "SAP", "BMW"]
+
+    snapshot = _get_screener_snapshot(symbol_list)
+
+    def matches(item: Dict[str, Any]) -> bool:
+        if min_price is not None and item["price"] < min_price:
+            return False
+        if max_price is not None and item["price"] > max_price:
+            return False
+        if min_change is not None and item["change_pct"] < min_change:
+            return False
+        if min_volume is not None and item["volume"] < min_volume:
+            return False
+        if min_dividend is not None and item["dividend_yield"] < min_dividend:
+            return False
+        if max_pe is not None and item["pe_ratio"] > 0 and item["pe_ratio"] > max_pe:
+            return False
+        if min_score is not None and item["ai_score"] < min_score:
+            return False
+        if min_momentum is not None and item["momentum"] < min_momentum:
+            return False
+        if max_volatility is not None and item["volatility"] > max_volatility:
+            return False
+        if sector and item["sector"].lower() != sector.lower():
+            return False
+        if signal and item["signal"].lower() != signal.lower():
+            return False
+        return True
+
+    filtered = [item for item in snapshot if matches(item)]
+    filtered.sort(key=lambda item: item["ai_score"], reverse=True)
+
+    return {
+        "results": filtered,
+        "total": len(filtered),
+        "source_symbols": symbol_list,
+        "last_updated": datetime.now().isoformat(),
+    }
+
+@app.get("/smart-strategy")
+async def get_smart_strategy(symbols: Optional[str] = None):
+    """
+    Professional hedge fund strategy: Value + Quality + Momentum.
+    Returns scored stocks with BUY/HOLD/SELL recommendations.
+    """
+    # Default to major US stocks if none provided (well-supported by yfinance)
+    if symbols:
+        symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    else:
+        symbol_list = [
+            "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", 
+            "META", "TSLA", "BRK.B", "JPM", "V",
+            "JNJ", "WMT", "PG", "MA", "HD",
+            "BAC", "DIS", "NFLX", "KO", "CSCO"
+        ]
+
+    results = []
+
+    for symbol in symbol_list:
+        try:
+            stock = yf.Ticker(symbol)
+            info = stock.info
+            hist = stock.history(period="1y")
+            
+            if hist.empty or 'currentPrice' not in info:
+                continue
+
+            current_price = info.get('currentPrice', info.get('regularMarketPrice', 0))
+            if current_price == 0:
+                continue
+
+            # Layer 1: Value Score
+            value_score = _calculate_value_score(info, current_price)
+            
+            # Layer 2: Quality Score
+            quality_score = _calculate_quality_score(info)
+            
+            # Layer 3: Momentum Score
+            momentum_score = _calculate_momentum_score(hist, current_price)
+            
+            # Overall score (weighted average)
+            overall_score = (value_score * 0.4 + quality_score * 0.3 + momentum_score * 0.3)
+            
+            # Recommendation logic
+            recommendation = _get_recommendation(value_score, quality_score, momentum_score, overall_score)
+            
+            # Confidence level
+            confidence = _get_confidence_level(value_score, quality_score, momentum_score)
+            
+            # Position allocation (risk-adjusted)
+            allocation = _calculate_allocation(overall_score, recommendation)
+            
+            # Calculate metrics for detail view
+            intrinsic_value = _estimate_intrinsic_value(info, current_price)
+            discount = ((intrinsic_value - current_price) / intrinsic_value * 100) if intrinsic_value > 0 else 0
+            
+            # Moving averages
+            ma50 = hist['Close'].rolling(window=50).mean().iloc[-1] if len(hist) >= 50 else current_price
+            ma200 = hist['Close'].rolling(window=200).mean().iloc[-1] if len(hist) >= 200 else current_price
+            
+            # Relative strength (price performance vs 1Y ago)
+            year_ago_price = hist['Close'].iloc[0] if len(hist) > 0 else current_price
+            relative_strength = ((current_price - year_ago_price) / year_ago_price * 100) if year_ago_price > 0 else 0
+
+            results.append({
+                "symbol": symbol,
+                "companyName": info.get('longName', info.get('shortName', symbol)),
+                "currentPrice": round(current_price, 2),
+                "valueScore": round(value_score, 0),
+                "qualityScore": round(quality_score, 0),
+                "momentumScore": round(momentum_score, 0),
+                "overallScore": round(overall_score, 0),
+                "recommendation": recommendation,
+                "confidence": confidence,
+                "allocation": allocation,
+                "intrinsicValue": round(intrinsic_value, 2),
+                "discountToFairValue": round(discount, 1),
+                "ma50": round(ma50, 2),
+                "ma200": round(ma200, 2),
+                "relativeStrength": round(relative_strength, 1),
+                "fcfPositive": info.get('freeCashflow', 0) > 0,
+                "revenueGrowth": info.get('revenueGrowth', 0) * 100 if info.get('revenueGrowth') else 0,
+                "debtRatio": _calculate_debt_ratio(info),
+                "profitMargin": info.get('profitMargins', 0) * 100 if info.get('profitMargins') else 0,
+            })
+
+        except Exception as e:
+            logger.error(f"Error analyzing {symbol}: {str(e)}")
+            continue
+
+    # Sort by overall score (descending)
+    results.sort(key=lambda x: x['overallScore'], reverse=True)
+
+    return {
+        "stocks": results,
+        "total": len(results),
+        "last_updated": datetime.now().isoformat(),
+    }
+
+def _calculate_value_score(info: dict, current_price: float) -> float:
+    """
+    Calculate value score based on price vs intrinsic value.
+    100 = Deep value (50%+ discount)
+    50+ = Good value (positive discount)
+    20-50 = Fair value (slightly overvalued)
+    0-20 = Overvalued (significantly overvalued)
+    """
+    try:
+        intrinsic_value = _estimate_intrinsic_value(info, current_price)
+        if intrinsic_value <= 0:
+            return 0
+        
+        # Calculate discount/premium percentage
+        discount = ((intrinsic_value - current_price) / intrinsic_value) * 100
+        
+        # Scoring logic - rewards undervaluation, penalizes overvaluation
+        if discount >= 50:
+            # Deep value territory
+            score = 100
+        elif discount >= 40:
+            score = 90 + (discount - 40) * 1.0
+        elif discount >= 30:
+            score = 80 + (discount - 30) * 1.0
+        elif discount >= 20:
+            score = 70 + (discount - 20) * 1.0
+        elif discount >= 10:
+            score = 55 + (discount - 10) * 1.5
+        elif discount >= 0:
+            # Slightly undervalued to fairly valued
+            score = 45 + (discount) * 1.0
+        elif discount >= -20:
+            # Slightly overvalued (give some credit)
+            score = 30 + (discount + 20) * 0.75
+        elif discount >= -50:
+            # Moderately overvalued
+            score = 15 + (discount + 50) * 0.5
+        else:
+            # Significantly overvalued
+            score = max(0, 15 + (discount + 50) * 0.3)
+        
+        return min(100, max(0, score))
+    except Exception as e:
+        logger.debug(f"Error calculating value score: {e}")
+        return 0
+
+def _calculate_debt_ratio(info: dict) -> float:
+    """Calculate debt-to-equity ratio as a percentage."""
+    try:
+        total_debt = info.get('totalDebt', 0)
+        total_equity = info.get('totalStockholdersEquity', 0)
+        
+        if total_equity > 0 and total_debt >= 0:
+            return (total_debt / total_equity) * 100
+        return 0
+    except Exception:
+        return 0
+
+def _calculate_quality_score(info: dict) -> float:
+    """Calculate quality score based on financial health."""
+    try:
+        score = 0
+        
+        # Free cash flow (25 points)
+        fcf = info.get('freeCashflow', 0)
+        if fcf > 0:
+            score += 25
+        
+        # Revenue growth (25 points)
+        revenue_growth = info.get('revenueGrowth', 0)
+        if revenue_growth:
+            if revenue_growth > 0.20:
+                score += 25
+            elif revenue_growth > 0.10:
+                score += 20
+            elif revenue_growth > 0:
+                score += 15
+        
+        # Debt ratio (25 points)
+        debt_ratio = _calculate_debt_ratio(info)
+        if debt_ratio < 30:
+            score += 25
+        elif debt_ratio < 50:
+            score += 15
+        elif debt_ratio < 70:
+            score += 10
+        
+        # Profit margin (25 points)
+        profit_margin = info.get('profitMargins', 0)
+        if profit_margin:
+            if profit_margin > 0.20:
+                score += 25
+            elif profit_margin > 0.10:
+                score += 20
+            elif profit_margin > 0:
+                score += 15
+        
+        return min(100, score)
+    except:
+        return 0
+
+def _calculate_momentum_score(hist: pd.DataFrame, current_price: float) -> float:
+    """Calculate momentum score based on technical indicators."""
+    try:
+        if hist.empty or len(hist) < 50:
+            return 0
+        
+        score = 0
+        
+        # MA50 (33 points)
+        ma50 = hist['Close'].rolling(window=50).mean().iloc[-1]
+        if current_price > ma50:
+            score += 33
+        
+        # MA200 (34 points)
+        if len(hist) >= 200:
+            ma200 = hist['Close'].rolling(window=200).mean().iloc[-1]
+            if current_price > ma200:
+                score += 34
+        else:
+            if current_price > ma50:
+                score += 17
+        
+        # Relative strength (33 points)
+        year_ago_price = hist['Close'].iloc[0]
+        if year_ago_price > 0:
+            performance = ((current_price - year_ago_price) / year_ago_price) * 100
+            if performance > 20:
+                score += 33
+            elif performance > 10:
+                score += 25
+            elif performance > 0:
+                score += 15
+        
+        return min(100, score)
+    except:
+        return 0
+
+def _estimate_intrinsic_value(info: dict, current_price: float) -> float:
+    """
+    Estimate intrinsic value using conservative value investing principles.
+    Returns a fair value that value investors would consider reasonable.
+    """
+    try:
+        intrinsic_values = []
+        
+        # Method 1: Graham Number (Value Investing Classic)
+        eps = info.get('trailingEps', 0)
+        book_value = info.get('bookValue', 0)
+        if eps > 0 and book_value > 0:
+            graham_number = (22.5 * eps * book_value) ** 0.5
+            intrinsic_values.append(graham_number)
+        
+        # Method 2: Earnings Power Value (Conservative PE approach)
+        # Use sector-average or conservative PE of 15
+        if eps > 0:
+            conservative_pe = 15
+            earnings_value = eps * conservative_pe
+            intrinsic_values.append(earnings_value)
+        
+        # Method 3: Book Value with quality premium
+        roe = info.get('returnOnEquity', 0)
+        if book_value > 0:
+            if roe > 0.15:  # Strong ROE > 15%
+                book_multiplier = 1.5
+            elif roe > 0.10:  # Good ROE > 10%
+                book_multiplier = 1.3
+            else:
+                book_multiplier = 1.0  # Just book value
+            book_based_value = book_value * book_multiplier
+            intrinsic_values.append(book_based_value)
+        
+        # Method 4: Dividend Discount Model (for dividend payers)
+        dividend = info.get('dividendRate', 0)
+        dividend_yield = info.get('dividendYield', 0)
+        if dividend > 0 and dividend_yield and dividend_yield > 0:
+            # Required return of 10%
+            required_return = 0.10
+            growth_rate = info.get('earningsGrowth', 0.05)  # Assume 5% if not available
+            if growth_rate < required_return:
+                ddm_value = dividend / (required_return - growth_rate)
+                if ddm_value > 0 and ddm_value < current_price * 3:  # Sanity check
+                    intrinsic_values.append(ddm_value)
+        
+        # Method 5: Free Cash Flow based (if available)
+        fcf_per_share = info.get('freeCashflow', 0) / info.get('sharesOutstanding', 1) if info.get('sharesOutstanding') else 0
+        if fcf_per_share > 0:
+            # Use conservative multiple of 12-15x FCF
+            fcf_value = fcf_per_share * 12
+            intrinsic_values.append(fcf_value)
+        
+        # Return the median of available methods (more robust than average)
+        if intrinsic_values:
+            intrinsic_values.sort()
+            mid = len(intrinsic_values) // 2
+            if len(intrinsic_values) % 2 == 0:
+                return (intrinsic_values[mid - 1] + intrinsic_values[mid]) / 2
+            else:
+                return intrinsic_values[mid]
+        
+        # Fallback: Apply a 20% buffer to current price as fair value
+        # (Assumes market is somewhat efficient but can be 20% off)
+        return current_price * 1.20
+        
+    except Exception as e:
+        logger.debug(f"Error estimating intrinsic value: {e}")
+        return current_price * 1.20
+
+def _get_recommendation(value_score: float, quality_score: float, momentum_score: float, overall_score: float) -> str:
+    """Determine BUY/HOLD/SELL/AVOID recommendation."""
+    if value_score >= 60 and quality_score >= 60 and momentum_score >= 60:
+        return "BUY"
+    
+    passes = sum([value_score >= 60, quality_score >= 60, momentum_score >= 60])
+    if passes >= 2 and overall_score >= 55:
+        return "HOLD"
+    
+    if value_score >= 70 and overall_score >= 45:
+        return "HOLD"
+    
+    if overall_score < 40:
+        return "AVOID"
+    
+    return "SELL"
+
+def _get_confidence_level(value_score: float, quality_score: float, momentum_score: float) -> str:
+    """Determine confidence level based on score consistency."""
+    avg_score = (value_score + quality_score + momentum_score) / 3
+    std_dev = np.std([value_score, quality_score, momentum_score])
+    
+    if avg_score >= 70 and std_dev < 15:
+        return "HIGH"
+    
+    if avg_score >= 50 or std_dev < 20:
+        return "MEDIUM"
+    
+    return "LOW"
+
+def _calculate_allocation(overall_score: float, recommendation: str) -> float:
+    """Calculate suggested portfolio allocation (%)."""
+    if recommendation == "AVOID" or recommendation == "SELL":
+        return 0.0
+    
+    if recommendation == "HOLD":
+        return min(5.0, overall_score / 20)
+    
+    base_allocation = overall_score / 10
+    
+    return min(10.0, max(3.0, base_allocation))
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -1,0 +1,14 @@
+{
+    "buildCommand": "npm run build:web",
+    "outputDirectory": "dist",
+    "framework": "other",
+    "env": {
+        "EXPO_PUBLIC_API_URL": "@api_url"
+    },
+    "rewrites": [
+        {
+            "source": "/(.*)",
+            "destination": "/index.html"
+        }
+    ]
+}

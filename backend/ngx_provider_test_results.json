@@ -1,0 +1,181 @@
+{
+  "baseline": [
+    {
+      "provider": "FMP",
+      "supported": false,
+      "symbol": "AAPL",
+      "error": "401 Client Error: Unauthorized for url: https://financialmodelingprep.com/api/v3/quote/AAPL?apikey=demo"
+    },
+    {
+      "provider": "Twelve Data",
+      "supported": true,
+      "symbol": "AAPL",
+      "data": {
+        "symbol": "AAPL",
+        "name": "Apple Inc.",
+        "exchange": "NASDAQ",
+        "mic_code": "XNGS",
+        "currency": "USD",
+        "datetime": "2026-02-13",
+        "timestamp": 1770993000,
+        "last_quote_at": 1771016340,
+        "open": "262.010010",
+        "high": "262.23001",
+        "low": "255.45000",
+        "close": "255.78000",
+        "volume": "56229900",
+        "previous_close": "261.73001",
+        "change": "-5.95001",
+        "percent_change": "-2.27334",
+        "average_volume": "60052330",
+        "is_market_open": false,
+        "fifty_two_week": {
+          "low": "169.21001",
+          "high": "288.62000",
+          "low_change": "86.56999",
+          "high_change": "-32.84000",
+          "low_change_percent": "51.16127",
+          "high_change_percent": "-11.37828",
+          "range": "169.210007 - 288.619995"
+        }
+      }
+    }
+  ],
+  "ngx": {
+    "FMP": [
+      {
+        "provider": "FMP",
+        "supported": false,
+        "symbol": "DANGCEM",
+        "error": "401 Client Error: Unauthorized for url: https://financialmodelingprep.com/api/v3/quote/DANGCEM?apikey=demo"
+      },
+      {
+        "provider": "FMP",
+        "supported": false,
+        "symbol": "DANGCEM.NG",
+        "error": "401 Client Error: Unauthorized for url: https://financialmodelingprep.com/api/v3/quote/DANGCEM.NG?apikey=demo"
+      },
+      {
+        "provider": "FMP",
+        "supported": false,
+        "symbol": "NESTLE",
+        "error": "401 Client Error: Unauthorized for url: https://financialmodelingprep.com/api/v3/quote/NESTLE?apikey=demo"
+      },
+      {
+        "provider": "FMP",
+        "supported": false,
+        "symbol": "NESTLE.NG",
+        "error": "401 Client Error: Unauthorized for url: https://financialmodelingprep.com/api/v3/quote/NESTLE.NG?apikey=demo"
+      }
+    ],
+    "Twelve Data": [
+      {
+        "provider": "Twelve Data",
+        "supported": false,
+        "symbol": "DANGCEM"
+      },
+      {
+        "provider": "Twelve Data",
+        "supported": false,
+        "symbol": "DANGCEM.NG"
+      },
+      {
+        "provider": "Twelve Data",
+        "supported": false,
+        "symbol": "NESTLE"
+      },
+      {
+        "provider": "Twelve Data",
+        "supported": false,
+        "symbol": "NESTLE.NG"
+      }
+    ],
+    "IEX Cloud": [
+      {
+        "provider": "IEX Cloud",
+        "supported": false,
+        "symbol": "DANGCEM",
+        "error": "HTTPSConnectionPool(host='cloud.iexapis.com', port=443): Read timed out. (read timeout=10)"
+      },
+      {
+        "provider": "IEX Cloud",
+        "supported": false,
+        "symbol": "DANGCEM.NG",
+        "error": "HTTPSConnectionPool(host='cloud.iexapis.com', port=443): Read timed out. (read timeout=10)"
+      },
+      {
+        "provider": "IEX Cloud",
+        "supported": false,
+        "symbol": "NESTLE",
+        "error": "HTTPSConnectionPool(host='cloud.iexapis.com', port=443): Read timed out. (read timeout=10)"
+      },
+      {
+        "provider": "IEX Cloud",
+        "supported": false,
+        "symbol": "NESTLE.NG",
+        "error": "HTTPSConnectionPool(host='cloud.iexapis.com', port=443): Read timed out. (read timeout=10)"
+      }
+    ],
+    "Polygon.io": [
+      {
+        "provider": "Polygon.io",
+        "supported": false,
+        "symbol": "DANGCEM",
+        "error": "401 Client Error: Unauthorized for url: https://api.polygon.io/v2/aggs/ticker/DANGCEM/prev?apiKey=demo"
+      },
+      {
+        "provider": "Polygon.io",
+        "supported": false,
+        "symbol": "DANGCEM.NG",
+        "error": "401 Client Error: Unauthorized for url: https://api.polygon.io/v2/aggs/ticker/DANGCEM.NG/prev?apiKey=demo"
+      },
+      {
+        "provider": "Polygon.io",
+        "supported": false,
+        "symbol": "NESTLE",
+        "error": "401 Client Error: Unauthorized for url: https://api.polygon.io/v2/aggs/ticker/NESTLE/prev?apiKey=demo"
+      },
+      {
+        "provider": "Polygon.io",
+        "supported": false,
+        "symbol": "NESTLE.NG",
+        "error": "401 Client Error: Unauthorized for url: https://api.polygon.io/v2/aggs/ticker/NESTLE.NG/prev?apiKey=demo"
+      }
+    ],
+    "Marketstack": [
+      {
+        "provider": "Marketstack",
+        "supported": false,
+        "symbol": "DANGCEM",
+        "error": "401 Client Error: Unauthorized for url: https://api.marketstack.com/v1/eod/latest?access_key=demo&symbols=DANGCEM"
+      },
+      {
+        "provider": "Marketstack",
+        "supported": false,
+        "symbol": "DANGCEM.NG",
+        "error": "401 Client Error: Unauthorized for url: https://api.marketstack.com/v1/eod/latest?access_key=demo&symbols=DANGCEM.NG"
+      },
+      {
+        "provider": "Marketstack",
+        "supported": false,
+        "symbol": "NESTLE",
+        "error": "401 Client Error: Unauthorized for url: https://api.marketstack.com/v1/eod/latest?access_key=demo&symbols=NESTLE"
+      },
+      {
+        "provider": "Marketstack",
+        "supported": false,
+        "symbol": "NESTLE.NG",
+        "error": "401 Client Error: Unauthorized for url: https://api.marketstack.com/v1/eod/latest?access_key=demo&symbols=NESTLE.NG"
+      }
+    ]
+  },
+  "ngx_direct": {
+    "provider": "NGX Direct",
+    "supported": false,
+    "error": "HTTPSConnectionPool(host='ngxgroup.com', port=443): Read timed out. (read timeout=10)"
+  },
+  "recommendation": {
+    "provider": null,
+    "success_count": 0
+  }
+}
