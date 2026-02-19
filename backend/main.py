@@ -20,6 +20,8 @@ import os
 from dotenv import load_dotenv
 from alpha_vantage_provider import AlphaVantageProvider
 from twelve_data_provider import TwelveDataProvider
+from ai_endpoints import router as ai_router
+from realtime_endpoints import router as realtime_router
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -34,8 +36,8 @@ twelve_data = TwelveDataProvider()
 
 app = FastAPI(
     title="Stock Valuation API",
-    description="Comprehensive stock analysis and valuation platform with fundamental and technical analysis",
-    version="1.0.0"
+    description="Comprehensive stock analysis and valuation platform with fundamental, technical, and AI-powered analysis",
+    version="2.0.0"
 )
 
 # CORS middleware
@@ -46,6 +48,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include routers
+app.include_router(ai_router)
+app.include_router(realtime_router)
 
 # Pydantic models
 class StockSymbol(BaseModel):

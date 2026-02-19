@@ -1,0 +1,459 @@
+# AI Analytics Architecture & Data Flow
+
+## 🏗️ System Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         Frontend (React)                        │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────┐ │
+│  │ Prediction Card  │  │Technical Analysis│  │ Valuation    │ │
+│  │                  │  │     Card         │  │ Card         │ │
+│  └──────────────────┘  └──────────────────┘  └──────────────┘ │
+│                                                                 │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────┐ │
+│  │Risk Assessment   │  │Recommendation    │  │Comparison    │ │
+│  │     Card         │  │     Card         │  │ Card         │ │
+│  └──────────────────┘  └──────────────────┘  └──────────────┘ │
+│                                                                 │
+│  ┌──────────────────┐  ┌──────────────────┐                    │
+│  │Market Insights   │  │Anomaly Alerts    │                    │
+│  │     Card         │  │     Card         │                    │
+│  └──────────────────┘  └──────────────────┘                    │
+│                                                                 │
+└────────────────────────────┬──────────────────────────────────┘
+                             │
+                    HTTP/REST API Calls
+                             │
+         ┌───────────────────┴────────────────────┐
+         │                                        │
+         ▼                                        ▼
+    ┌────────────────────────────────────────────────────────┐
+    │           FastAPI Backend (Python)                    │
+    ├────────────────────────────────────────────────────────┤
+    │                                                        │
+    │  ┌──────────────────────────────────────────────────┐ │
+    │  │              ai_endpoints.py                     │ │
+    │  │  (9 FastAPI Endpoints + Request/Response Models)│ │
+    │  └──────────────────┬───────────────────────────────┘ │
+    │                     │                                  │
+    │                     ▼                                  │
+    │  ┌──────────────────────────────────────────────────┐ │
+    │  │           ai_analytics.py                       │ │
+    │  │                                                  │ │
+    │  │  ┌────────────────────────────────────────────┐ │ │
+    │  │  │  AIStockAnalytics Engine                   │ │ │
+    │  │  │                                            │ │ │
+    │  │  │  • Price Predictions                       │ │ │
+    │  │  │  • Technical Analysis                      │ │ │
+    │  │  │  • Intrinsic Valuation                     │ │ │
+    │  │  │  • Recommendations                         │ │ │
+    │  │  │  • Risk Assessment                         │ │ │
+    │  │  │  • Anomaly Detection                       │ │ │
+    │  │  │  • Portfolio Analysis                      │ │ │
+    │  │  └────────────────────────────────────────────┘ │ │
+    │  │                                                  │ │
+    │  └──────────────────┬───────────────────────────────┘ │
+    │                     │                                  │
+    │                     ▼                                  │
+    │  ┌──────────────────────────────────────────────────┐ │
+    │  │         Data Providers & External APIs           │ │
+    │  │                                                  │ │
+    │  │  • yfinance (Historical data)                   │ │
+    │  │  • Alpha Vantage (Alternative data)             │ │
+    │  │  • Twelve Data (Alternative data)               │ │
+    │  └──────────────────────────────────────────────────┘ │
+    │                                                        │
+    └────────────────────────────────────────────────────────┘
+         │                                        │
+         ├──────────────────────────────────────┤
+         │                                        │
+         ▼                                        ▼
+    ┌──────────────────────┐          ┌──────────────────────┐
+    │  yfinance API        │          │  Other Data Sources  │
+    │  (Stock Data)        │          │  (Alternative APIs)  │
+    └──────────────────────┘          └──────────────────────┘
+```
+
+## 📊 Data Flow Diagram
+
+```
+User Request
+    │
+    ▼
+┌─────────────────────────────────┐
+│  API Endpoint (ai_endpoints.py) │
+├─────────────────────────────────┤
+│ • Validate request              │
+│ • Extract parameters            │
+│ • Error handling                │
+└──────────────┬──────────────────┘
+               │
+               ▼
+┌─────────────────────────────────┐
+│ Data Collection                 │
+├─────────────────────────────────┤
+│ • Fetch from yfinance           │
+│ • Get historical prices         │
+│ • Get financial metrics         │
+└──────────────┬──────────────────┘
+               │
+               ▼
+┌─────────────────────────────────────────────────────┐
+│ AIStockAnalytics Processing                         │
+├─────────────────────────────────────────────────────┤
+│                                                     │
+│ ┌─────────────────────────────────────────────────┐│
+│ │ Prediction Engine                               ││
+│ │ • Calculate returns distribution                ││
+│ │ • Run Monte Carlo simulations                   ││
+│ │ • Generate confidence scores                    ││
+│ └──────────────────┬────────────────────────────┘│
+│                    │                              │
+│ ┌──────────────────▼───────────────────────────┐│
+│ │ Technical Analysis                            ││
+│ │ • Calculate RSI, MACD                         ││
+│ │ • Identify support/resistance                 ││
+│ │ • Compute momentum                            ││
+│ └──────────────────┬────────────────────────────┘│
+│                    │                              │
+│ ┌──────────────────▼───────────────────────────┐│
+│ │ Valuation Analysis                            ││
+│ │ • DCF calculation                             ││
+│ │ • Relative valuation                          ││
+│ │ • Asset-based valuation                       ││
+│ └──────────────────┬────────────────────────────┘│
+│                    │                              │
+│ ┌──────────────────▼───────────────────────────┐│
+│ │ Recommendation Engine                         ││
+│ │ • Score predictions (40%)                     ││
+│ │ • Score technical (30%)                       ││
+│ │ • Score valuation (30%)                       ││
+│ │ • Generate action signals                     ││
+│ └──────────────────┬────────────────────────────┘│
+│                    │                              │
+│ ┌──────────────────▼───────────────────────────┐│
+│ │ Risk Assessment                               ││
+│ │ • Volatility calculation                      ││
+│ │ • Max drawdown analysis                       ││
+│ │ • Beta estimation                             ││
+│ │ • VaR/CVaR computation                        ││
+│ └──────────────────┬────────────────────────────┘│
+│                    │                              │
+│ ┌──────────────────▼───────────────────────────┐│
+│ │ Anomaly Detection                             ││
+│ │ • Z-score analysis                            ││
+│ │ • Volume spike detection                      ││
+│ │ • Volatility spike detection                  ││
+│ └──────────────────────────────────────────────┘│
+└──────────────┬──────────────────────────────────┘
+               │
+               ▼
+┌─────────────────────────────────┐
+│ Response Formatting             │
+├─────────────────────────────────┤
+│ • Create response models        │
+│ • Serialize data                │
+│ • Add metadata                  │
+└──────────────┬──────────────────┘
+               │
+               ▼
+┌─────────────────────────────────┐
+│ Frontend Receives Response       │
+├─────────────────────────────────┤
+│ • Parse JSON                    │
+│ • Render components             │
+│ • Display results               │
+└─────────────────────────────────┘
+```
+
+## 🔄 Request/Response Flow
+
+### Example: Price Prediction
+
+```
+CLIENT REQUEST
+↓
+POST /api/ai/predict
+{
+  "symbol": "AAPL",
+  "period": "1y"
+}
+
+↓ BACKEND PROCESSING ↓
+
+1. Fetch Data
+   └─ 2 years of AAPL historical data
+
+2. Calculate Metrics
+   ├─ Daily returns: [-0.02, 0.01, 0.03, ...]
+   ├─ Mean return: 0.0008 (0.08% daily)
+   └─ Volatility: 0.0245 (2.45% daily)
+
+3. Monte Carlo Simulation
+   ├─ Run 1000 simulations
+   ├─ Each simulation: 252 trading days
+   └─ Track final prices: [170, 175, 182, ...]
+
+4. Calculate Results
+   ├─ 1-month target: median of 21-day simulations
+   ├─ 1-year target: median of 252-day simulations
+   ├─ Confidence: 1 - (volatility/5%)
+   └─ Upside: ((target - current) / current) * 100
+
+5. Generate Recommendation
+   ├─ Calculate technical score
+   ├─ Score valuation
+   └─ Combine scores → BUY/HOLD/SELL
+
+↓
+
+SERVER RESPONSE
+{
+  "symbol": "AAPL",
+  "current_price": 150.25,
+  "predictions": {
+    "1_month": 152.50,
+    "1_year": 175.00
+  },
+  "confidence": 0.85,
+  "upside": 16.5,
+  "recommendation": "BUY",
+  "reasoning": [...]
+}
+
+↓ FRONTEND RENDERING ↓
+
+Display PredictionCard Component
+├─ Current Price: $150.25
+├─ 1-Year Target: $175.00
+├─ Upside Potential: 16.5%
+├─ Confidence: 85%
+└─ Recommendation: BUY (green button)
+```
+
+## 🧠 Algorithm Flow
+
+### Recommendation System Decision Tree
+
+```
+                    START: All Signals
+                           │
+                    ┌──────┴──────┐
+                    │             │
+              Calculate        Calculate
+              Technical        Valuation
+              Score (30%)      Score (30%)
+                    │             │
+                    ├──────┬──────┤
+                           │
+                    Predict Prices
+                    (Score 40%)
+                           │
+                    ┌──────┴──────┐
+                    │             │
+            Calculate Upside   Get Confidence
+            Potential           Score
+                    │             │
+                    ├──────┬──────┤
+                           │
+                    Combined Score
+                    = (Tech*0.3 + 
+                       Valuation*0.3 + 
+                       Prediction*0.4)
+                           │
+            ┌──────────────┼──────────────┐
+            │              │              │
+        Score>80?      Score>65?      Score<=35?
+       Upside>25%     Upside>15%     Upside<0%
+            │              │              │
+        STRONG_BUY        BUY          SELL
+            │              │              │
+            └──────────────┼──────────────┘
+                           │
+                    Return Recommendation
+                    with Catalysts & Risks
+```
+
+## 📈 Component Interaction Map
+
+```
+┌────────────────────────────────────────────────────────┐
+│                    Dashboard                           │
+├────────────────────────────────────────────────────────┤
+│                                                        │
+│  Stock Symbol Input                                    │
+│         │                                              │
+│         ▼                                              │
+│  ┌──────────────────────────────────────────┐         │
+│  │ Fetch AI Analytics                      │         │
+│  │ (All 9 analyses)                        │         │
+│  └──────────┬───────────────────────────────┘         │
+│             │                                          │
+│    ┌────────┼────────┬────────────────┐              │
+│    │        │        │                │              │
+│    ▼        ▼        ▼                ▼              │
+│  Pred   Technical  Valuation    Recommendation      │
+│  Card      Card      Card           Card            │
+│    │        │        │                │              │
+│    └────────┼────────┼────────────────┘              │
+│             │        │                               │
+│             ▼        ▼                               │
+│    ┌────────────────────────┐                       │
+│    │  Risk Assessment       │                       │
+│    │  + Anomaly Alerts      │                       │
+│    └────────────────────────┘                       │
+│             │                                        │
+│    ┌────────┴────────┐                              │
+│    │                 │                              │
+│    ▼                 ▼                              │
+│ Portfolio      Market                              │
+│ Analysis       Insights                            │
+│    │                 │                              │
+│    └────────┬────────┘                              │
+│             ▼                                        │
+│    Comparison Tool                                   │
+│    (Multi-stock)                                     │
+│                                                      │
+└────────────────────────────────────────────────────────┘
+```
+
+## 🎯 Data Processing Pipeline
+
+```
+Raw Stock Data (from yfinance)
+│
+├─ Historical Prices
+│  └─ Normalize, calculate returns, ...
+│
+├─ Financial Metrics
+│  └─ Extract earnings, assets, debt, ...
+│
+├─ Volume Data
+│  └─ Calculate averages, detect anomalies ...
+│
+└─ Real-time Data
+   └─ Current price, updates, ...
+
+         ▼
+    ┌──────────────────┐
+    │ Data Validation  │
+    │ • Check nulls    │
+    │ • Verify ranges  │
+    │ • Handle errors  │
+    └────────┬─────────┘
+             ▼
+    ┌──────────────────┐
+    │ Feature Calcs    │
+    │ • RSI, MACD      │
+    │ • Returns dist   │
+    │ • Volatility     │
+    └────────┬─────────┘
+             ▼
+    ┌──────────────────┐
+    │ Model Scoring    │
+    │ • Predictions    │
+    │ • Signals        │
+    │ • Risk scores    │
+    └────────┬─────────┘
+             ▼
+    ┌──────────────────┐
+    │ Output Format    │
+    │ • JSON response  │
+    │ • Add metadata   │
+    │ • Handle errors  │
+    └────────┬─────────┘
+             ▼
+    AI Analytics Response
+```
+
+## 🔌 API Endpoint Map
+
+```
+/api/ai (AI Analytics Root)
+│
+├─ POST /predict
+│  ├─ Input: symbol, period
+│  └─ Output: predictions, confidence, recommendation
+│
+├─ GET /technical-analysis/{symbol}
+│  ├─ Input: symbol
+│  └─ Output: RSI, MACD, support, resistance, momentum
+│
+├─ GET /intrinsic-value/{symbol}
+│  ├─ Input: symbol
+│  └─ Output: intrinsic value, MOS, methods breakdown
+│
+├─ POST /recommendation
+│  ├─ Input: symbol
+│  └─ Output: action, target, stop loss, catalysts, risks
+│
+├─ GET /risk-assessment/{symbol}
+│  ├─ Input: symbol
+│  └─ Output: risk level, volatility, beta, VaR, CVaR
+│
+├─ GET /anomalies/{symbol}
+│  ├─ Input: symbol
+│  └─ Output: alerts with type, severity, description
+│
+├─ POST /portfolio-analysis
+│  ├─ Input: symbols, weights
+│  └─ Output: concentration, diversification, HHI
+│
+├─ GET /compare-stocks
+│  ├─ Input: symbols list
+│  └─ Output: comparison table, best opportunity, lowest risk
+│
+└─ GET /market-insights
+   ├─ Input: symbols list
+   └─ Output: sentiment, averages, bullish/bearish count
+```
+
+## 💾 Data Structures
+
+```
+StockPrediction
+├─ symbol: str
+├─ current_price: float
+├─ predicted_price_1m: float
+├─ predicted_price_3m: float
+├─ predicted_price_6m: float
+├─ predicted_price_1y: float
+├─ confidence_score: float
+├─ upside_potential: float
+├─ downside_risk: float
+├─ recommendation: str
+└─ reasoning: List[str]
+
+TechnicalSignals
+├─ rsi: float (0-100)
+├─ macd_signal: str (BULLISH/BEARISH/NEUTRAL)
+├─ moving_avg_trend: str
+├─ support_level: float
+├─ resistance_level: float
+└─ momentum_score: float (0-100)
+
+AIRecommendation
+├─ symbol: str
+├─ action: str (BUY/HOLD/SELL/STRONG_BUY/STRONG_SELL)
+├─ confidence: float (0-1)
+├─ target_price: float
+├─ stop_loss: float
+├─ risk_reward_ratio: float
+├─ key_catalysts: List[str]
+└─ risks: List[str]
+
+RiskAssessment
+├─ risk_level: str (very_low/low/moderate/high/very_high)
+├─ risk_score: float (0-100)
+├─ volatility: float
+├─ max_drawdown: float
+├─ beta: float
+├─ var_95: float
+└─ cvar_95: float
+```
+
+---
+
+This comprehensive architecture provides enterprise-grade AI analytics with multiple analysis layers, robust error handling, and production-ready endpoints.
