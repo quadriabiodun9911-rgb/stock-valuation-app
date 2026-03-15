@@ -2,6 +2,14 @@ name: CI
 
 on:
   push:
+<<<<<<< HEAD
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+name: CI
+
+on:
+  push:
     branches: [ main, master, develop ]
   pull_request:
     branches: [ main, master, develop ]
@@ -44,4 +52,37 @@ jobs:
       - name: Run unit tests
         run: |
           cd mobile
+          npm test --silent
+        with:
+          node-version: '18'
+      - name: Install dependencies
+        run: |
+          cd mobile
+          npm ci --legacy-peer-deps
+      - name: Run unit tests
+        run: |
+          cd mobile
+=======
+      - name: Install backend deps
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f backend/requirements.txt ]; then pip install -r backend/requirements.txt; fi
+      - name: Run backend tests
+        run: |
+          cd backend
+          pytest -q
+
+  mobile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - name: Install and run mobile tests
+        run: |
+          cd mobile
+          npm ci --legacy-peer-deps
+>>>>>>> origin/main
           npm test --silent

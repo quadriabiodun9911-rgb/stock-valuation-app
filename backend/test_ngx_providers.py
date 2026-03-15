@@ -22,8 +22,8 @@ NGX_SYMBOLS = [
 INTERNATIONAL_SYMBOL = "AAPL"  # For baseline testing
 
 
-def test_fmp(symbol: str, api_key: str = "demo") -> Dict[str, Any]:
-    """Test Financial Modeling Prep API"""
+def fmp_check(symbol: str, api_key: str = "demo") -> Dict[str, Any]:
+    """Financial Modeling Prep API check (not a pytest test)"""
     print(f"\n🔍 Testing FMP for {symbol}...")
     
     try:
@@ -55,8 +55,8 @@ def test_fmp(symbol: str, api_key: str = "demo") -> Dict[str, Any]:
         return {"provider": "FMP", "supported": False, "symbol": symbol, "error": str(e)}
 
 
-def test_iex_cloud(symbol: str, api_key: str = "pk_test") -> Dict[str, Any]:
-    """Test IEX Cloud API"""
+def iex_cloud_check(symbol: str, api_key: str = "pk_test") -> Dict[str, Any]:
+    """IEX Cloud API check (not a pytest test)"""
     print(f"\n🔍 Testing IEX Cloud for {symbol}...")
     
     try:
@@ -87,8 +87,8 @@ def test_iex_cloud(symbol: str, api_key: str = "pk_test") -> Dict[str, Any]:
         return {"provider": "IEX Cloud", "supported": False, "symbol": symbol, "error": str(e)}
 
 
-def test_twelve_data(symbol: str, api_key: str = "demo") -> Dict[str, Any]:
-    """Test Twelve Data API"""
+def twelve_data_check(symbol: str, api_key: str = "demo") -> Dict[str, Any]:
+    """Twelve Data API check (not a pytest test)"""
     print(f"\n🔍 Testing Twelve Data for {symbol}...")
     
     try:
@@ -125,8 +125,8 @@ def test_twelve_data(symbol: str, api_key: str = "demo") -> Dict[str, Any]:
         return {"provider": "Twelve Data", "supported": False, "symbol": symbol, "error": str(e)}
 
 
-def test_polygon_io(symbol: str, api_key: str = "demo") -> Dict[str, Any]:
-    """Test Polygon.io API"""
+def polygon_io_check(symbol: str, api_key: str = "demo") -> Dict[str, Any]:
+    """Polygon.io API check (not a pytest test)"""
     print(f"\n🔍 Testing Polygon.io for {symbol}...")
     
     try:
@@ -157,8 +157,8 @@ def test_polygon_io(symbol: str, api_key: str = "demo") -> Dict[str, Any]:
         return {"provider": "Polygon.io", "supported": False, "symbol": symbol, "error": str(e)}
 
 
-def test_marketstack(symbol: str, api_key: str = "demo") -> Dict[str, Any]:
-    """Test Marketstack API"""
+def marketstack_check(symbol: str, api_key: str = "demo") -> Dict[str, Any]:
+    """Marketstack API check (not a pytest test)"""
     print(f"\n🔍 Testing Marketstack for {symbol}...")
     
     try:
@@ -236,8 +236,8 @@ def main():
     print("="*70)
     
     baseline_results = []
-    baseline_results.append(test_fmp(INTERNATIONAL_SYMBOL))
-    baseline_results.append(test_twelve_data(INTERNATIONAL_SYMBOL))
+    baseline_results.append(fmp_check(INTERNATIONAL_SYMBOL))
+    baseline_results.append(twelve_data_check(INTERNATIONAL_SYMBOL))
     
     # Test NGX symbols
     print("\n" + "="*70)
@@ -246,11 +246,11 @@ def main():
     
     ngx_results = {}
     providers = [
-        ("FMP", test_fmp),
-        ("Twelve Data", test_twelve_data),
-        ("IEX Cloud", test_iex_cloud),
-        ("Polygon.io", test_polygon_io),
-        ("Marketstack", test_marketstack),
+        ("FMP", fmp_check),
+        ("Twelve Data", twelve_data_check),
+        ("IEX Cloud", iex_cloud_check),
+        ("Polygon.io", polygon_io_check),
+        ("Marketstack", marketstack_check),
     ]
     
     for provider_name, test_func in providers:
