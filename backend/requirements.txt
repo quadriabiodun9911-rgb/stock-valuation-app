@@ -12,7 +12,7 @@ python-dotenv>=1.0.0
 # Added explicit low-risk runtime pins to reduce transitive vulnerability surface
 aiohttp>=3.13.3
 requests>=2.32.4
-urllib3>=2.6.3
+urllib3==2.6.3
 certifi>=2024.8.30
 setuptools>=78.1.1
 
