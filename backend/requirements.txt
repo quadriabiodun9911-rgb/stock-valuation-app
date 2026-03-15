@@ -17,7 +17,7 @@ certifi>=2024.8.30
 setuptools>=78.1.1
 
 # Security-focused upgrades (pin safe/minimum patched versions)
-protobuf>=5.29.6
+protobuf==5.29.6
 fonttools>=4.60.2
 pillow>=12.1.1
 tornado>=6.5.5
