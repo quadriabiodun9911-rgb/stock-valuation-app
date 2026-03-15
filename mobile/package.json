@@ -52,5 +52,9 @@
       "<rootDir>/jest.setup.js"
     ]
   },
+  "overrides": {
+    "tar": ">=7.5.11",
+    "cacache": "^19.0.0"
+  },
   "private": true
 }
