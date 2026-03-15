@@ -33,7 +33,7 @@ jest.mock('@react-native-async-storage/async-storage', () => {
             return Promise.resolve();
         }),
     };
-});
+}, { virtual: true });
 
 const originalConsoleError = console.error;
 console.error = (...args) => {
