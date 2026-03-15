@@ -268,6 +268,18 @@ jest.mock('../src/services/api', () => {
                 signal: 'Undervalued',
             })),
         },
+        AVAILABLE_MARKETS: {
+            US: {
+                code: 'US',
+                name: 'US Stock Market',
+                description: 'NASDAQ/NYSE',
+                region: 'North America',
+                mainIndices: ['SPY'],
+                tradingHours: '09:30 - 16:00 EST',
+                timezone: 'EST',
+                featured_stocks: ['AAPL', 'MSFT'],
+            },
+        },
     };
 });
 
