@@ -10,7 +10,7 @@ python-multipart>=0.0.5
 python-dotenv>=1.0.0
 
 # Added explicit low-risk runtime pins to reduce transitive vulnerability surface
-aiohttp>=3.13.3
+aiohttp==3.13.3
 requests>=2.32.4
 urllib3==2.6.3
 certifi>=2024.8.30
