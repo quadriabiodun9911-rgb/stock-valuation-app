@@ -2037,6 +2037,68 @@ async def eu_market_summary(symbols: Optional[str] = None):
         "last_updated": datetime.now().isoformat(),
     }
 
+
+# Lightweight HTML dashboard for quick local checks (mobile web fallback)
+from fastapi.responses import HTMLResponse
+
+
+@app.get("/world-markets", response_class=HTMLResponse)
+async def world_markets_page():
+        html = """
+        <!doctype html>
+        <html>
+        <head>
+            <meta charset="utf-8" />
+            <meta name="viewport" content="width=device-width,initial-scale=1" />
+            <title>World Markets - Stock Valuation</title>
+            <style>
+                body{font-family:system-ui, -apple-system, Roboto, 'Segoe UI', Arial; background:#0b1220; color:#e6eef8;}
+                .container{max-width:980px;margin:24px auto;padding:16px}
+                table{width:100%;border-collapse:collapse}
+                th,td{padding:8px 10px;border-bottom:1px solid rgba(255,255,255,0.04);text-align:left}
+                th{color:#9fb3d9;font-size:12px;text-transform:uppercase}
+                .up{color:#10b981} .down{color:#ef4444}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h2>World Markets Snapshot</h2>
+                <p id="updated">Updating...</p>
+                <table>
+                    <thead>
+                        <tr><th>Region</th><th>Symbol</th><th>Name</th><th>Price</th><th>Change %</th></tr>
+                    </thead>
+                    <tbody id="rows"></tbody>
+                </table>
+            </div>
+            <script>
+                const regions = ['us','uk','eu','asia','emerging','ngx'];
+                async function load(){
+                    const rows = document.getElementById('rows'); rows.innerHTML='';
+                    for(const r of regions){
+                        try{
+                            const res = await fetch(`/market/${r}/summary`);
+                            if(!res.ok) continue;
+                            const json = await res.json();
+                            const quotes = json.quotes || [];
+                            for(const q of quotes){
+                                const tr = document.createElement('tr');
+                                const change = (q.change_pct||0).toFixed(2);
+                                tr.innerHTML = `<td>${r.toUpperCase()}</td><td>${q.symbol||''}</td><td>${q.name||''}</td><td>${(q.price||q.last_price||0).toFixed ? (q.price||q.last_price||0).toFixed(2) : (q.price||q.last_price||0)}</td><td class="${change>=0?'up':'down'}">${change}%</td>`;
+                                rows.appendChild(tr);
+                            }
+                        }catch(e){console.warn('skip',r,e)}
+                    }
+                    document.getElementById('updated').textContent = 'Last updated: ' + new Date().toLocaleTimeString();
+                }
+                load();
+                setInterval(load, 60000);
+            </script>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=html, status_code=200)
+
 @app.get("/market/asia/summary")
 async def asia_market_summary(symbols: Optional[str] = None):
     """Get Asian market summary."""
