@@ -25,6 +25,7 @@ import ScreenerScreen from './src/screens/ScreenerScreen';
 import SmartStrategyScreen from './src/screens/SmartStrategyScreen';
 import StrategyDetailScreen from './src/screens/StrategyDetailScreen';
 import StrategyExplainerScreen from './src/screens/StrategyExplainerScreen';
+import FinancialStatementsScreen from './src/screens/FinancialStatementsScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -39,6 +40,7 @@ function HomeStack() {
             <Stack.Screen name="Screener" component={ScreenerScreen} options={{ title: 'AI Screener' }} />
             <Stack.Screen name="Dashboard" component={DashboardScreen} options={{ title: 'Portfolio Dashboard' }} />
             <Stack.Screen name="StockDetail" component={StockDetailScreen} options={{ title: 'Stock Details' }} />
+            <Stack.Screen name="Financials" component={FinancialStatementsScreen} options={{ headerShown: false }} />
             <Stack.Screen name="FCFValuation" component={FCFValuationScreen as any} options={{ title: 'FCF Valuation', headerShown: false }} />
             <Stack.Screen name="ScenarioAnalysis" component={ScenarioAnalysisScreen as any} options={{ title: 'Scenario Analysis', headerShown: false }} />
             <Stack.Screen name="AnalysisSmartStrategy" component={SmartStrategyScreen as any} options={{ headerShown: false }} />

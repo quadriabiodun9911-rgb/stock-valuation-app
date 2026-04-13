@@ -797,6 +797,13 @@ export class StockValuationAPI {
             params: { limit },
         });
     }
+
+    // ── Financial Statements ────────────────────────────────────
+    async getFinancialStatements(symbol: string, period: string = 'annual'): Promise<any> {
+        return this.request<any>(`/financials/${symbol}`, {
+            params: { period },
+        });
+    }
 }
 
 export const stockAPI = new StockValuationAPI();

@@ -2957,6 +2957,132 @@ def _calculate_allocation(overall: float, recommendation: str, risk_metrics: dic
 
     return round(min(10.0, max(1.0, base)), 1)
 
+
+# ── Financial Statements & Ratio Trends ─────────────────────────────────
+@app.get("/financials/{symbol}")
+async def get_financial_statements(symbol: str, period: str = "annual"):
+    """
+    Returns structured financial statements (income, balance sheet, cash flow)
+    plus key ratio trends for investment decision-making.
+    period: 'annual' or 'quarterly'
+    """
+    try:
+        stock = yf.Ticker(symbol.upper())
+        info = stock.info
+
+        if period == "quarterly":
+            inc = stock.quarterly_financials
+            bs = stock.quarterly_balance_sheet
+            cf = stock.quarterly_cashflow
+        else:
+            inc = stock.financials
+            bs = stock.balance_sheet
+            cf = stock.cashflow
+
+        def _df_to_dict(df):
+            """Convert yfinance DataFrame to {row_label: {date: value}} with dates as strings."""
+            if df is None or df.empty:
+                return {}
+            result = {}
+            for row in df.index:
+                vals = {}
+                for col in df.columns:
+                    v = df.loc[row, col]
+                    if pd.notna(v):
+                        vals[col.strftime("%Y-%m-%d")] = float(v)
+                if vals:
+                    result[str(row)] = vals
+            return result
+
+        inc_dict = _df_to_dict(inc)
+        bs_dict = _df_to_dict(bs)
+        cf_dict = _df_to_dict(cf)
+
+        # Get sorted date columns (most recent first)
+        dates = []
+        for df in [inc, bs, cf]:
+            if df is not None and not df.empty:
+                dates = [c.strftime("%Y-%m-%d") for c in df.columns]
+                break
+
+        # Build key metrics summary across years
+        def _safe(d, key, date):
+            try:
+                return d.get(key, {}).get(date)
+            except Exception:
+                return None
+
+        def _pct(a, b):
+            if a is not None and b is not None and b != 0:
+                return round((a - b) / abs(b) * 100, 1)
+            return None
+
+        key_metrics = []
+        for i, date in enumerate(dates):
+            prev_date = dates[i + 1] if i + 1 < len(dates) else None
+
+            revenue = _safe(inc_dict, "Total Revenue", date)
+            gross_profit = _safe(inc_dict, "Gross Profit", date)
+            operating_income = _safe(inc_dict, "Operating Income", date) or _safe(inc_dict, "EBIT", date)
+            net_income = _safe(inc_dict, "Net Income", date)
+            total_assets = _safe(bs_dict, "Total Assets", date)
+            total_liabilities = _safe(bs_dict, "Total Liabilities Net Minority Interest", date)
+            total_equity = _safe(bs_dict, "Stockholders Equity", date) or _safe(bs_dict, "Total Stockholders Equity", date)
+            total_debt = _safe(bs_dict, "Total Debt", date)
+            current_assets = _safe(bs_dict, "Current Assets", date)
+            current_liabilities = _safe(bs_dict, "Current Liabilities", date)
+            op_cashflow = _safe(cf_dict, "Operating Cash Flow", date) or _safe(cf_dict, "Total Cash From Operating Activities", date)
+            capex = _safe(cf_dict, "Capital Expenditure", date)
+            fcf = (op_cashflow + capex) if op_cashflow is not None and capex is not None else None  # capex is negative
+
+            prev_revenue = _safe(inc_dict, "Total Revenue", prev_date) if prev_date else None
+
+            m = {
+                "date": date,
+                "revenue": revenue,
+                "revenueGrowth": _pct(revenue, prev_revenue),
+                "grossProfit": gross_profit,
+                "grossMargin": round(gross_profit / revenue * 100, 1) if gross_profit and revenue else None,
+                "operatingIncome": operating_income,
+                "operatingMargin": round(operating_income / revenue * 100, 1) if operating_income and revenue else None,
+                "netIncome": net_income,
+                "netMargin": round(net_income / revenue * 100, 1) if net_income and revenue else None,
+                "totalAssets": total_assets,
+                "totalLiabilities": total_liabilities,
+                "totalEquity": total_equity,
+                "totalDebt": total_debt,
+                "debtToEquity": round(total_debt / total_equity, 2) if total_debt and total_equity and total_equity != 0 else None,
+                "currentRatio": round(current_assets / current_liabilities, 2) if current_assets and current_liabilities and current_liabilities != 0 else None,
+                "operatingCashFlow": op_cashflow,
+                "capex": capex,
+                "freeCashFlow": fcf,
+                "fcfMargin": round(fcf / revenue * 100, 1) if fcf and revenue and revenue != 0 else None,
+                "roe": round(net_income / total_equity * 100, 1) if net_income and total_equity and total_equity != 0 else None,
+                "roa": round(net_income / total_assets * 100, 1) if net_income and total_assets and total_assets != 0 else None,
+            }
+            key_metrics.append(m)
+
+        return {
+            "symbol": symbol.upper(),
+            "companyName": info.get("shortName", symbol.upper()),
+            "sector": info.get("sector", ""),
+            "industry": info.get("industry", ""),
+            "currency": info.get("currency", "USD"),
+            "period": period,
+            "dates": dates,
+            "incomeStatement": inc_dict,
+            "balanceSheet": bs_dict,
+            "cashFlowStatement": cf_dict,
+            "keyMetrics": key_metrics,
+            "currentPrice": info.get("currentPrice") or info.get("regularMarketPrice"),
+            "marketCap": info.get("marketCap"),
+        }
+
+    except Exception as e:
+        logger.error(f"Error fetching financials for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
