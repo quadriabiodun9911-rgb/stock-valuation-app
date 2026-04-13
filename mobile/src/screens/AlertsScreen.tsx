@@ -23,7 +23,7 @@ const AlertsScreen: React.FC = () => {
     useEffect(() => {
         const intervalId = setInterval(() => {
             loadAlerts();
-        }, 60000);
+        }, 300000);
 
         return () => clearInterval(intervalId);
     }, []);

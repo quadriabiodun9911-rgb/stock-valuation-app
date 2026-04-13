@@ -7,12 +7,10 @@ import {
     TouchableOpacity,
     TextInput,
     Alert,
-    Modal,
-    FlatList,
+    ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
-import { MarketSummaryResponse, stockAPI, StockInfo, SearchResult, Market, AVAILABLE_MARKETS, PortfolioResponse } from '../services/api';
+import { MarketSummaryResponse, stockAPI, SearchResult, Market, AVAILABLE_MARKETS, PortfolioResponse } from '../services/api';
 
 interface Props {
     navigation: any;
@@ -21,9 +19,6 @@ interface Props {
 const HomeScreen: React.FC<Props> = ({ navigation }) => {
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedMarket, setSelectedMarket] = useState<Market>('US');
-    const [marketModalVisible, setMarketModalVisible] = useState(false);
-    const [featuredStocks, setFeaturedStocks] = useState<string[]>([]);
-    const [stockPrices, setStockPrices] = useState<{ [key: string]: StockInfo }>({});
     const [loading, setLoading] = useState(false);
     const [companyResults, setCompanyResults] = useState<SearchResult[]>([]);
     const [marketSummary, setMarketSummary] = useState<MarketSummaryResponse | null>(null);
@@ -32,76 +27,25 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
     const [portfolioLoading, setPortfolioLoading] = useState(false);
 
     useEffect(() => {
-        const market = AVAILABLE_MARKETS[selectedMarket];
-        setFeaturedStocks(market.featured_stocks);
-        loadFeaturedStocks();
-        loadMarketSummary();
-        loadPortfolioSnapshot();
+        loadAll();
     }, [selectedMarket]);
 
     useEffect(() => {
-        const intervalId = setInterval(() => {
-            loadMarketSummary();
-            loadPortfolioSnapshot();
-        }, 60000);
-
-        return () => clearInterval(intervalId);
+        const id = setInterval(loadAll, 300000);
+        return () => clearInterval(id);
     }, [selectedMarket]);
 
-    const loadFeaturedStocks = async () => {
-        setLoading(true);
-        const prices: { [key: string]: StockInfo } = {};
-
-        for (const symbol of featuredStocks.slice(0, 4)) { // Load first 4 for performance
-            try {
-                const stockInfo = await stockAPI.getStockInfo(symbol);
-                prices[symbol] = stockInfo;
-            } catch (error) {
-                console.error(`Error loading ${symbol}:`, error);
-            }
-        }
-
-        setStockPrices(prices);
-        setLoading(false);
-    };
-
-    const handleSearch = async () => {
-        const rawQuery = searchQuery.trim();
-        if (!rawQuery) return;
-
-        setCompanyResults([]);
-
-        const symbolCandidate = rawQuery.toUpperCase();
-        const isSymbolLike = /^[A-Z0-9.^-]{1,10}$/.test(symbolCandidate) && !rawQuery.includes(' ');
-
-        if (isSymbolLike) {
-            navigation.navigate('StockDetail', { symbol: symbolCandidate });
-            setSearchQuery('');
-            return;
-        }
-
-        try {
-            setLoading(true);
-            const response = await stockAPI.searchStocks(rawQuery, 8);
-            if (response.results && response.results.length > 0) {
-                setCompanyResults(response.results);
-            } else {
-                Alert.alert('No Results', 'No matching companies found.');
-            }
-        } catch (error) {
-            Alert.alert('Error', 'Unable to search companies right now.');
-        } finally {
-            setLoading(false);
-        }
+    const loadAll = () => {
+        loadMarketSummary();
+        loadPortfolioSnapshot();
     };
 
     const loadMarketSummary = async () => {
         try {
             setMarketLoading(true);
-            const summary = await stockAPI.getMarketSummary(selectedMarket);
-            setMarketSummary(summary);
-        } catch (error) {
-            console.error(`Error loading ${selectedMarket} market summary:`, error);
+            setMarketSummary(await stockAPI.getMarketSummary(selectedMarket));
+        } catch (e) {
+            console.error('Market summary error:', e);
         } finally {
             setMarketLoading(false);
         }
@@ -110,457 +54,249 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
     const loadPortfolioSnapshot = async () => {
         try {
             setPortfolioLoading(true);
-            const portfolioData = await stockAPI.getPortfolio();
-            setPortfolio(portfolioData);
-        } catch (error) {
-            console.error('Error loading portfolio:', error);
+            setPortfolio(await stockAPI.getPortfolio());
+        } catch (e) {
+            console.error('Portfolio error:', e);
             setPortfolio(null);
         } finally {
             setPortfolioLoading(false);
         }
     };
 
-    const portfolioHoldings = useMemo(() => {
-        if (!portfolio) return [];
-        const totalEquity = portfolio.summary.total_equity || portfolio.summary.total_value || 0;
-        return portfolio.positions.map((position) => {
-            const allocationPct = totalEquity ? (position.market_value / totalEquity) * 100 : 0;
-            return {
-                symbol: position.symbol,
-                quantity: position.shares,
-                avg_cost: position.cost_basis,
-                allocation_pct: allocationPct,
-                return_pct: position.profit_pct,
-                profit: position.profit,
-            };
-        });
-    }, [portfolio]);
-
-    const handleMarketChange = (market: Market) => {
-        setSelectedMarket(market);
-        setMarketModalVisible(false);
+    const handleSearch = async () => {
+        const raw = searchQuery.trim();
+        if (!raw) return;
+        setCompanyResults([]);
+        const sym = raw.toUpperCase();
+        if (/^[A-Z0-9.^-]{1,10}$/.test(sym) && !raw.includes(' ')) {
+            navigation.navigate('StockDetail', { symbol: sym });
+            setSearchQuery('');
+            return;
+        }
+        try {
+            setLoading(true);
+            const resp = await stockAPI.searchStocks(raw, 8);
+            if (resp.results?.length) {
+                setCompanyResults(resp.results);
+            } else {
+                Alert.alert('No Results', 'No matching companies found.');
+            }
+        } catch {
+            Alert.alert('Error', 'Unable to search right now.');
+        } finally {
+            setLoading(false);
+        }
     };
 
-    const todaysSignal = () => {
-        if (!marketSummary || marketSummary.quotes.length === 0) return 'Neutral';
-        const avgChange = marketSummary.quotes.reduce((acc, item) => acc + item.change_pct, 0) / marketSummary.quotes.length;
-        if (avgChange >= 0.5) return 'Bullish';
-        if (avgChange <= -0.5) return 'Bearish';
-        return 'Neutral';
-    };
+    const fmt = (n: number) => `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+    const fmtPct = (n: number) => `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`;
+    const fmtPrice = (p: number) => p ? `$${p.toFixed(2)}` : 'N/A';
 
-    const navigateToStock = (symbol: string) => {
-        navigation.navigate('StockDetail', { symbol });
-    };
+    const totalValue = portfolio?.summary?.total_equity ?? 0;
+    const totalPL = portfolio?.summary?.total_profit ?? 0;
+    const totalPct = portfolio?.summary?.total_profit_pct ?? 0;
+    const holdingsCount = portfolio?.positions?.length ?? 0;
 
-    const formatMarketCap = (marketCap: number): string => {
-        if (!marketCap) return 'N/A';
-        if (marketCap >= 1e12) return `$${(marketCap / 1e12).toFixed(2)}T`;
-        if (marketCap >= 1e9) return `$${(marketCap / 1e9).toFixed(2)}B`;
-        if (marketCap >= 1e6) return `$${(marketCap / 1e6).toFixed(2)}M`;
-        return `$${marketCap.toFixed(0)}`;
-    };
+    const signal = useMemo(() => {
+        if (!marketSummary?.quotes?.length) return null;
+        const avg = marketSummary.quotes.reduce((a, q) => a + q.change_pct, 0) / marketSummary.quotes.length;
+        return avg >= 0.5 ? 'Bullish' : avg <= -0.5 ? 'Bearish' : 'Neutral';
+    }, [marketSummary]);
 
-    const formatCurrency = (value: number): string => {
-        return `$${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
-    };
-
-    const formatPercent = (value: number): string => {
-        return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
-    };
-
-    const formatPrice = (price: number): string => {
-        return price ? `$${price.toFixed(2)}` : 'N/A';
-    };
+    const quickActions = [
+        { icon: 'flash' as const, label: 'Strategy', screen: 'AnalysisSmartStrategy', color: '#6366f1' },
+        { icon: 'calculator' as const, label: 'Valuation', screen: 'Valuation', color: '#0ea5e9' },
+        { icon: 'notifications' as const, label: 'Alerts', screen: 'Alerts', color: '#10b981' },
+        { icon: 'wallet' as const, label: 'Portfolio', screen: 'Dashboard', color: '#f59e0b' },
+        { icon: 'analytics' as const, label: 'Analysis', screen: 'Analysis', color: '#8b5cf6' },
+        { icon: 'school' as const, label: 'Learn', screen: 'Education', color: '#ec4899' },
+    ];
 
     return (
         <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
             {/* Header */}
-            <LinearGradient
-                colors={['#667eea', '#764ba2']}
-                style={styles.header}
-            >
+            <View style={styles.header}>
                 <Text style={styles.headerTitle}>Stock Valuation</Text>
-                <Text style={styles.headerSubtitle}>Professional Analysis Platform</Text>
-            </LinearGradient>
-
-            {/* Market Selector */}
-            <View style={styles.marketSelectorContainer}>
-                <Text style={styles.sectionTitle}>Select Market</Text>
-                <TouchableOpacity
-                    style={styles.marketSelector}
-                    onPress={() => setMarketModalVisible(true)}
-                >
-                    <View style={styles.marketSelectorContent}>
-                        <Ionicons name="globe-outline" size={20} color="#667eea" />
-                        <View style={styles.marketSelectorText}>
-                            <Text style={styles.marketSelectorLabel}>{AVAILABLE_MARKETS[selectedMarket].name}</Text>
-                            <Text style={styles.marketSelectorDesc}>{AVAILABLE_MARKETS[selectedMarket].region}</Text>
-                        </View>
-                    </View>
-                    <Ionicons name="chevron-down" size={24} color="#667eea" />
-                </TouchableOpacity>
-            </View>
-
-            {/* Market Selector Modal */}
-            <Modal
-                visible={marketModalVisible}
-                transparent
-                animationType="slide"
-                onRequestClose={() => setMarketModalVisible(false)}
-            >
-                <View style={styles.modalOverlay}>
-                    <View style={styles.modalContent}>
-                        <View style={styles.modalHeader}>
-                            <Text style={styles.modalTitle}>Select Stock Market</Text>
-                            <TouchableOpacity onPress={() => setMarketModalVisible(false)}>
-                                <Ionicons name="close" size={28} color="#333" />
-                            </TouchableOpacity>
-                        </View>
-                        <FlatList
-                            data={Object.values(AVAILABLE_MARKETS)}
-                            keyExtractor={(item) => item.code}
-                            renderItem={({ item }) => (
-                                <TouchableOpacity
-                                    style={[
-                                        styles.marketOption,
-                                        selectedMarket === item.code && styles.marketOptionSelected,
-                                    ]}
-                                    onPress={() => handleMarketChange(item.code as Market)}
-                                >
-                                    <View style={styles.marketOptionContent}>
-                                        <Text style={styles.marketOptionName}>{item.name}</Text>
-                                        <Text style={styles.marketOptionDesc}>
-                                            {item.description} • {item.timezone}
-                                        </Text>
-                                    </View>
-                                    {selectedMarket === item.code && (
-                                        <Ionicons name="checkmark-circle" size={24} color="#667eea" />
-                                    )}
-                                </TouchableOpacity>
-                            )}
-                            scrollEnabled={true}
-                        />
-                    </View>
-                </View>
-            </Modal>
-
-            {/* Search Section */}
-            <View style={styles.searchSection}>
-                <Text style={styles.sectionTitle}>Search Stocks</Text>
-                <View style={styles.searchContainer}>
-                    <TextInput
-                        style={styles.searchInput}
-                        placeholder={`Enter symbol (e.g., ${AVAILABLE_MARKETS[selectedMarket].featured_stocks[0]})`}
-                        value={searchQuery}
-                        onChangeText={setSearchQuery}
-                        onSubmitEditing={handleSearch}
-                        autoCapitalize="characters"
-                    />
-                    <TouchableOpacity style={styles.searchButton} onPress={handleSearch}>
-                        <Ionicons name="search" size={24} color="white" />
-                    </TouchableOpacity>
-                </View>
-            </View>
-
-            {companyResults.length > 0 && (
-                <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Company Matches</Text>
-                    {companyResults.map((result, index) => (
+                <View style={styles.marketToggle}>
+                    {Object.keys(AVAILABLE_MARKETS).map((m) => (
                         <TouchableOpacity
-                            key={`${result.symbol}-${index}`}
-                            style={styles.companyCard}
-                            onPress={() => navigateToStock(result.symbol)}
+                            key={m}
+                            style={[styles.marketPill, selectedMarket === m && styles.marketPillActive]}
+                            onPress={() => setSelectedMarket(m as Market)}
                         >
-                            <View style={styles.companyInfo}>
-                                <Text style={styles.companyName} numberOfLines={1}>
-                                    {result.longname || result.shortname || result.symbol}
+                            <Text style={[styles.marketPillText, selectedMarket === m && styles.marketPillTextActive]}>
+                                {m}
+                            </Text>
+                        </TouchableOpacity>
+                    ))}
+                </View>
+            </View>
+
+            {/* Search */}
+            <View style={styles.searchWrap}>
+                <Ionicons name="search" size={18} color="#94a3b8" style={{ marginRight: 10 }} />
+                <TextInput
+                    style={styles.searchInput}
+                    placeholder={`Search stocks (e.g. ${AVAILABLE_MARKETS[selectedMarket].featured_stocks[0]})`}
+                    placeholderTextColor="#94a3b8"
+                    value={searchQuery}
+                    onChangeText={setSearchQuery}
+                    onSubmitEditing={handleSearch}
+                    autoCapitalize="characters"
+                    returnKeyType="search"
+                />
+                {searchQuery.length > 0 && (
+                    <TouchableOpacity onPress={() => { setSearchQuery(''); setCompanyResults([]); }}>
+                        <Ionicons name="close-circle" size={20} color="#cbd5e1" />
+                    </TouchableOpacity>
+                )}
+            </View>
+
+            {/* Search Results */}
+            {companyResults.length > 0 && (
+                <View style={styles.card}>
+                    {companyResults.map((r, i) => (
+                        <TouchableOpacity
+                            key={`${r.symbol}-${i}`}
+                            style={styles.resultRow}
+                            onPress={() => { navigation.navigate('StockDetail', { symbol: r.symbol }); setCompanyResults([]); setSearchQuery(''); }}
+                        >
+                            <View style={{ flex: 1 }}>
+                                <Text style={styles.resultName} numberOfLines={1}>
+                                    {r.longname || r.shortname || r.symbol}
                                 </Text>
-                                <Text style={styles.companyMeta}>
-                                    {result.symbol} {result.exchange ? `• ${result.exchange}` : ''}
-                                </Text>
+                                <Text style={styles.resultMeta}>{r.symbol}{r.exchange ? ` · ${r.exchange}` : ''}</Text>
                             </View>
-                            <Ionicons name="chevron-forward" size={20} color="#666" />
+                            <Ionicons name="chevron-forward" size={16} color="#cbd5e1" />
                         </TouchableOpacity>
                     ))}
                 </View>
             )}
 
-            {/* Portfolio Snapshot */}
-            <View style={styles.portfolioSnapshot}>
-                <View style={styles.portfolioHeader}>
-                    <Text style={styles.sectionTitle}>Portfolio Snapshot</Text>
-                    <TouchableOpacity onPress={() => navigation.navigate('Dashboard')}>
-                        <Ionicons name="arrow-forward-circle" size={24} color="#667eea" />
-                    </TouchableOpacity>
-                </View>
-
+            {/* Portfolio Card */}
+            <TouchableOpacity style={styles.portfolioCard} onPress={() => navigation.navigate('Dashboard')} activeOpacity={0.7}>
                 {portfolioLoading ? (
-                    <View style={styles.portfolioEmpty}>
-                        <Ionicons name="hourglass" size={32} color="#999" />
-                        <Text style={styles.portfolioEmptyText}>Loading portfolio...</Text>
-                    </View>
-                ) : portfolio && portfolio.summary.total_equity > 0 ? (
-                    <View style={styles.portfolioCard}>
-                        {/* Portfolio Value Cards */}
-                        <View style={styles.portfolioValueRow}>
-                            <View style={styles.portfolioValueCard}>
-                                <Text style={styles.portfolioValueLabel}>Total Value</Text>
-                                <Text style={styles.portfolioValueAmount}>
-                                    {formatCurrency(portfolio.summary.total_equity)}
-                                </Text>
-                                <Text style={[
-                                    styles.portfolioValueChange,
-                                    portfolio.summary.total_profit >= 0 ? styles.positive : styles.negative
-                                ]}>
-                                    {formatCurrency(portfolio.summary.total_profit)}
-                                </Text>
+                    <ActivityIndicator color="#6366f1" />
+                ) : totalValue > 0 ? (
+                    <>
+                        <View style={styles.portfolioTop}>
+                            <View>
+                                <Text style={styles.portfolioLabel}>Portfolio Value</Text>
+                                <Text style={styles.portfolioValue}>{fmt(totalValue)}</Text>
                             </View>
-                            <View style={styles.portfolioValueCard}>
-                                <Text style={styles.portfolioValueLabel}>Return %</Text>
-                                <Text style={[
-                                    styles.portfolioValueAmount,
-                                    portfolio.summary.total_profit_pct >= 0 ? styles.positiveText : styles.negativeText
-                                ]}>
-                                    {formatPercent(portfolio.summary.total_profit_pct)}
+                            <View style={styles.portfolioReturn}>
+                                <Text style={[styles.portfolioPct, totalPct >= 0 ? styles.green : styles.red]}>
+                                    {fmtPct(totalPct)}
                                 </Text>
-                                <Text style={styles.portfolioValueMeta}>
-                                    Monthly: {formatPercent(portfolio.performance.monthly.profit_pct)}
+                                <Text style={[styles.portfolioPL, totalPL >= 0 ? styles.green : styles.red]}>
+                                    {fmt(totalPL)}
                                 </Text>
                             </View>
                         </View>
-
-                        {/* Portfolio Holdings */}
-                        <View style={styles.portfolioDivider} />
-                        <View style={styles.portfolioHoldings}>
-                            <View style={styles.holdingHeader}>
-                                <Text style={styles.holdingHeaderText}>Holdings ({portfolioHoldings.length})</Text>
-                                <Text style={styles.holdingHeaderText}>Allocation</Text>
-                            </View>
-                            {portfolioHoldings.slice(0, 3).map((holding) => (
-                                <View key={holding.symbol} style={styles.holdingRow}>
-                                    <View style={styles.holdingInfo}>
-                                        <Text style={styles.holdingSymbol}>{holding.symbol}</Text>
-                                        <Text style={styles.holdingShares}>{holding.quantity} shares @ {formatPrice(holding.avg_cost)}</Text>
-                                    </View>
-                                    <View style={styles.holdingAllocation}>
-                                        <Text style={styles.holdingPercent}>{holding.allocation_pct.toFixed(1)}%</Text>
-                                        <Text style={[
-                                            styles.holdingReturn,
-                                            holding.profit >= 0 ? styles.positiveText : styles.negativeText
-                                        ]}>
-                                            {formatPercent(holding.return_pct)}
-                                        </Text>
-                                    </View>
-                                </View>
-                            ))}
-                            {portfolioHoldings.length > 3 && (
-                                <TouchableOpacity style={styles.viewAllLink} onPress={() => navigation.navigate('Dashboard')}>
-                                    <Text style={styles.viewAllText}>
-                                        View all {portfolioHoldings.length} holdings →
-                                    </Text>
-                                </TouchableOpacity>
-                            )}
+                        <View style={styles.portfolioBottom}>
+                            <Text style={styles.portfolioMeta}>{holdingsCount} holding{holdingsCount !== 1 ? 's' : ''}</Text>
+                            <Text style={styles.portfolioLink}>View details →</Text>
                         </View>
-
-                        {/* Risk Indicator */}
-                        <View style={styles.portfolioDivider} />
-                        <View style={styles.riskIndicator}>
-                            <Ionicons name="shield" size={20} color="#FF9500" />
-                            <View style={styles.riskContent}>
-                                <Text style={styles.riskLabel}>Risk Level</Text>
-                                <Text style={styles.riskValue}>
-                                    {portfolio.risk.risk_score >= 7 ? '🔴 High' : portfolio.risk.risk_score >= 4 ? '🟡 Medium' : '🟢 Low'}
-                                </Text>
-                            </View>
-                        </View>
-                    </View>
+                    </>
                 ) : (
-                    <View style={styles.portfolioEmpty}>
-                        <Ionicons name="wallet-outline" size={48} color="#ddd" />
-                        <Text style={styles.portfolioEmptyTitle}>No Assets Yet</Text>
-                        <Text style={styles.portfolioEmptyText}>
-                            Start building your portfolio by analyzing stocks and adding them to your watchlist.
-                        </Text>
-                        <TouchableOpacity
-                            style={styles.startPortfolioButton}
-                            onPress={() => navigation.navigate('Analysis')}
-                        >
-                            <Ionicons name="add-circle" size={20} color="white" />
-                            <Text style={styles.startPortfolioButtonText}>Begin Analysis</Text>
-                        </TouchableOpacity>
+                    <View style={styles.emptyPortfolio}>
+                        <Ionicons name="wallet-outline" size={28} color="#cbd5e1" />
+                        <Text style={styles.emptyPortfolioText}>No holdings yet</Text>
+                        <Text style={styles.portfolioLink}>Start building →</Text>
                     </View>
                 )}
-            </View>
+            </TouchableOpacity>
 
             {/* Quick Actions */}
-            <View style={styles.quickActions}>
-                <Text style={styles.sectionTitle}>Start Here</Text>
-                <View style={styles.actionGrid}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.actionsRow} contentContainerStyle={{ paddingHorizontal: 16 }}>
+                {quickActions.map((a) => (
                     <TouchableOpacity
-                        style={styles.actionCard}
-                        onPress={() => navigation.navigate('SmartStrategy')}
+                        key={a.screen}
+                        style={styles.actionChip}
+                        onPress={() => navigation.navigate(a.screen)}
                     >
-                        <LinearGradient colors={['#667eea', '#764ba2']} style={styles.actionCardGradient}>
-                            <Ionicons name="flash" size={28} color="white" />
-                        </LinearGradient>
-                        <Text style={styles.actionText}>Smart Strategy</Text>
-                        <Text style={styles.actionSubtext}>AI picks</Text>
+                        <View style={[styles.actionIcon, { backgroundColor: a.color + '18' }]}>
+                            <Ionicons name={a.icon} size={18} color={a.color} />
+                        </View>
+                        <Text style={styles.actionLabel}>{a.label}</Text>
                     </TouchableOpacity>
+                ))}
+            </ScrollView>
 
-                    <TouchableOpacity
-                        style={styles.actionCard}
-                        onPress={() => navigation.navigate('Valuation')}
-                    >
-                        <LinearGradient colors={['#007AFF', '#0051D5']} style={styles.actionCardGradient}>
-                            <Ionicons name="calculator" size={28} color="white" />
-                        </LinearGradient>
-                        <Text style={styles.actionText}>Quick Valuation</Text>
-                        <Text style={styles.actionSubtext}>EPS & DCF</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                        style={styles.actionCard}
-                        onPress={() => navigation.navigate('Watchlist')}
-                    >
-                        <LinearGradient colors={['#34C759', '#00A86B']} style={styles.actionCardGradient}>
-                            <Ionicons name="notifications" size={28} color="white" />
-                        </LinearGradient>
-                        <Text style={styles.actionText}>Set Alerts</Text>
-                        <Text style={styles.actionSubtext}>Track prices</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                        style={styles.actionCard}
-                        onPress={() => navigation.navigate('Dashboard')}
-                    >
-                        <LinearGradient colors={['#FF9500', '#FF6B00']} style={styles.actionCardGradient}>
-                            <Ionicons name="wallet" size={28} color="white" />
-                        </LinearGradient>
-                        <Text style={styles.actionText}>Portfolio</Text>
-                        <Text style={styles.actionSubtext}>Your holdings</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                        style={styles.actionCard}
-                        onPress={() => navigation.navigate('Analysis')}
-                    >
-                        <LinearGradient colors={['#7c3aed', '#6D28D9']} style={styles.actionCardGradient}>
-                            <Ionicons name="analytics" size={28} color="white" />
-                        </LinearGradient>
-                        <Text style={styles.actionText}>Market News</Text>
-                        <Text style={styles.actionSubtext}>Latest trends</Text>
-                    </TouchableOpacity>
+            {/* Market Pulse */}
+            <View style={styles.card}>
+                <View style={styles.cardHeader}>
+                    <Text style={styles.cardTitle}>Market Pulse</Text>
+                    {signal && (
+                        <View style={[styles.signalBadge, signal === 'Bullish' ? styles.greenBg : signal === 'Bearish' ? styles.redBg : styles.neutralBg]}>
+                            <Text style={styles.signalText}>{signal}</Text>
+                        </View>
+                    )}
                 </View>
-            </View>
-
-            {/* Market Snapshot */}
-            <View style={styles.marketOverview}>
-                <Text style={styles.sectionTitle}>NGX Snapshot</Text>
                 {marketLoading ? (
-                    <View style={styles.loadingContainer}>
-                        <Text style={styles.loadingText}>Loading market data...</Text>
-                    </View>
+                    <ActivityIndicator color="#6366f1" style={{ paddingVertical: 20 }} />
                 ) : marketSummary ? (
-                    <View style={styles.marketCard}>
-                        <View style={styles.marketRow}>
-                            <Text style={styles.marketLabel}>NGX Index</Text>
-                            <Text style={styles.marketValue}>
-                                {marketSummary.index?.price ? `₦${marketSummary.index.price.toFixed(2)}` : 'N/A'}
-                            </Text>
-                            <Text style={marketSummary.index && marketSummary.index.change_pct >= 0 ? styles.marketPositive : styles.marketNegative}>
-                                {marketSummary.index ? `${marketSummary.index.change_pct.toFixed(2)}%` : ''}
-                            </Text>
-                        </View>
-                        <View style={styles.marketRow}>
-                            <Text style={styles.marketLabel}>Today’s signal</Text>
-                            <Text style={styles.marketValue}>{todaysSignal()}</Text>
-                        </View>
-                        <View style={styles.marketDivider} />
-                        <Text style={styles.marketSubTitle}>Top Gainers</Text>
-                        {marketSummary.gainers.slice(0, 3).map((item) => (
-                            <View key={`g-${item.symbol}`} style={styles.marketRow}>
-                                <Text style={styles.marketLabel}>{item.symbol.replace('.NG', '')}</Text>
-                                <Text style={styles.marketPositive}>{item.change_pct.toFixed(2)}%</Text>
+                    <>
+                        {marketSummary.index?.price != null && (
+                            <View style={styles.indexRow}>
+                                <Text style={styles.indexLabel}>{selectedMarket === 'NGX' ? 'NGX Index' : 'S&P 500'}</Text>
+                                <Text style={styles.indexPrice}>
+                                    {selectedMarket === 'NGX' ? '₦' : '$'}{marketSummary.index.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                                </Text>
+                                <Text style={[styles.indexChange, marketSummary.index.change_pct >= 0 ? styles.green : styles.red]}>
+                                    {fmtPct(marketSummary.index.change_pct)}
+                                </Text>
                             </View>
-                        ))}
-                        <Text style={styles.marketSubTitle}>Top Losers</Text>
-                        {marketSummary.losers.slice(0, 3).map((item) => (
-                            <View key={`l-${item.symbol}`} style={styles.marketRow}>
-                                <Text style={styles.marketLabel}>{item.symbol.replace('.NG', '')}</Text>
-                                <Text style={styles.marketNegative}>{item.change_pct.toFixed(2)}%</Text>
-                            </View>
-                        ))}
-                    </View>
+                        )}
+                        {marketSummary.gainers.length > 0 && (
+                            <>
+                                <Text style={styles.moversLabel}>Top Movers</Text>
+                                {[...marketSummary.gainers.slice(0, 2), ...marketSummary.losers.slice(0, 2)].map((item, i) => (
+                                    <TouchableOpacity
+                                        key={`m-${item.symbol}-${i}`}
+                                        style={styles.moverRow}
+                                        onPress={() => navigation.navigate('StockDetail', { symbol: item.symbol })}
+                                    >
+                                        <Text style={styles.moverSymbol}>{item.symbol.replace('.NG', '')}</Text>
+                                        <Text style={[styles.moverChange, item.change_pct >= 0 ? styles.green : styles.red]}>
+                                            {fmtPct(item.change_pct)}
+                                        </Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </>
+                        )}
+                    </>
                 ) : (
-                    <Text style={styles.loadingText}>Market data unavailable.</Text>
+                    <Text style={styles.mutedText}>Market data unavailable</Text>
                 )}
             </View>
 
-            {/* Featured Stocks */}
-            <View style={styles.featuredSection}>
-                <Text style={styles.sectionTitle}>Featured Stocks</Text>
-                {loading ? (
-                    <View style={styles.loadingContainer}>
-                        <Text style={styles.loadingText}>Loading stock data...</Text>
-                    </View>
+            {/* Featured Stocks — from market summary */}
+            <View style={[styles.card, { marginBottom: 40 }]}>
+                <Text style={styles.cardTitle}>Featured</Text>
+                {marketLoading ? (
+                    <ActivityIndicator color="#6366f1" style={{ paddingVertical: 20 }} />
+                ) : marketSummary?.quotes?.length ? (
+                    marketSummary.quotes.slice(0, 6).map((q, i) => (
+                        <TouchableOpacity
+                            key={`${q.symbol}-${i}`}
+                            style={styles.stockRow}
+                            onPress={() => navigation.navigate('StockDetail', { symbol: q.symbol })}
+                        >
+                            <View style={styles.stockLeft}>
+                                <Text style={styles.stockSymbol}>{q.symbol.replace('.NG', '')}</Text>
+                            </View>
+                            <View style={styles.stockRight}>
+                                <Text style={styles.stockPrice}>{fmtPrice(q.price)}</Text>
+                                <Text style={[styles.stockCap, q.change_pct >= 0 ? styles.green : styles.red]}>
+                                    {fmtPct(q.change_pct)}
+                                </Text>
+                            </View>
+                        </TouchableOpacity>
+                    ))
                 ) : (
-                    <View style={styles.stockGrid}>
-                        {Object.entries(stockPrices).map(([symbol, stockInfo]) => (
-                            <TouchableOpacity
-                                key={symbol}
-                                style={styles.stockCard}
-                                onPress={() => navigateToStock(symbol)}
-                            >
-                                <View style={styles.stockHeader}>
-                                    <Text style={styles.stockSymbol}>{symbol}</Text>
-                                    <Ionicons name="chevron-forward" size={16} color="#666" />
-                                </View>
-                                <Text style={styles.stockName} numberOfLines={1}>
-                                    {stockInfo.company_name}
-                                </Text>
-                                <Text style={styles.stockPrice}>
-                                    {formatPrice(stockInfo.current_price)}
-                                </Text>
-                                <Text style={styles.stockMarketCap}>
-                                    Market Cap: {formatMarketCap(stockInfo.market_cap)}
-                                </Text>
-                                <View style={styles.stockMetrics}>
-                                    <Text style={styles.stockMetric}>
-                                        P/E: {stockInfo.pe_ratio ? stockInfo.pe_ratio.toFixed(1) : 'N/A'}
-                                    </Text>
-                                    <Text style={styles.stockMetric}>
-                                        Beta: {stockInfo.beta ? stockInfo.beta.toFixed(2) : 'N/A'}
-                                    </Text>
-                                </View>
-                            </TouchableOpacity>
-                        ))}
-                    </View>
+                    <Text style={styles.mutedText}>No stock data available</Text>
                 )}
-            </View>
-
-            {/* Market Overview */}
-            <View style={styles.marketOverview}>
-                <Text style={styles.sectionTitle}>Market Insights</Text>
-                <View style={styles.insightCard}>
-                    <Ionicons name="trending-up" size={24} color="#34C759" />
-                    <View style={styles.insightContent}>
-                        <Text style={styles.insightTitle}>Valuation Methods</Text>
-                        <Text style={styles.insightDescription}>
-                            DCF, Comparable Analysis, and Technical Indicators
-                        </Text>
-                    </View>
-                </View>
-
-                <View style={styles.insightCard}>
-                    <Ionicons name="shield-checkmark" size={24} color="#007AFF" />
-                    <View style={styles.insightContent}>
-                        <Text style={styles.insightTitle}>Professional Grade</Text>
-                        <Text style={styles.insightDescription}>
-                            Institutional-level analysis tools
-                        </Text>
-                    </View>
-                </View>
             </View>
         </ScrollView>
     );
@@ -569,600 +305,294 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#f5f5f5',
+        backgroundColor: '#f8fafc',
     },
+    /* ── Header ── */
     header: {
-        padding: 24,
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
         paddingTop: 60,
-        borderBottomLeftRadius: 20,
-        borderBottomRightRadius: 20,
+        paddingBottom: 12,
+        paddingHorizontal: 20,
+        backgroundColor: '#fff',
     },
     headerTitle: {
-        fontSize: 28,
-        fontWeight: 'bold',
-        color: 'white',
-        marginBottom: 4,
+        fontSize: 22,
+        fontWeight: '800',
+        color: '#0f172a',
     },
-    headerSubtitle: {
-        fontSize: 16,
-        color: 'rgba(255, 255, 255, 0.8)',
+    marketToggle: {
+        flexDirection: 'row',
+        backgroundColor: '#f1f5f9',
+        borderRadius: 8,
+        padding: 2,
     },
-    searchSection: {
-        padding: 20,
-        backgroundColor: 'white',
-        margin: 16,
-        borderRadius: 12,
-        elevation: 2,
+    marketPill: {
+        paddingHorizontal: 14,
+        paddingVertical: 6,
+        borderRadius: 6,
+    },
+    marketPillActive: {
+        backgroundColor: '#fff',
         shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.08,
+        shadowRadius: 2,
+        elevation: 1,
     },
-    sectionTitle: {
-        fontSize: 18,
+    marketPillText: {
+        fontSize: 13,
         fontWeight: '600',
-        color: '#333',
-        marginBottom: 16,
+        color: '#94a3b8',
     },
-    companyCard: {
+    marketPillTextActive: {
+        color: '#0f172a',
+    },
+    /* ── Search ── */
+    searchWrap: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingVertical: 14,
-        borderBottomWidth: 1,
-        borderBottomColor: '#f0f0f0',
-    },
-    companyInfo: {
-        flex: 1,
-    },
-    companyName: {
-        fontSize: 15,
-        fontWeight: '600',
-        color: '#111827',
-        marginBottom: 4,
-    },
-    companyMeta: {
-        fontSize: 12,
-        color: '#6b7280',
-    },
-    searchContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
+        backgroundColor: '#fff',
+        marginHorizontal: 16,
+        marginTop: 8,
+        marginBottom: 12,
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
     },
     searchInput: {
         flex: 1,
-        height: 48,
-        borderWidth: 1,
-        borderColor: '#ddd',
-        borderRadius: 8,
-        paddingHorizontal: 16,
-        fontSize: 16,
-        marginRight: 12,
+        fontSize: 15,
+        color: '#0f172a',
+        paddingVertical: 0,
     },
-    searchButton: {
-        width: 48,
-        height: 48,
-        backgroundColor: '#007AFF',
-        borderRadius: 8,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    quickActions: {
-        padding: 20,
-        backgroundColor: 'white',
-        margin: 16,
-        marginTop: 0,
-        borderRadius: 12,
-        elevation: 2,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-    },
-    actionGrid: {
+    /* ── Search Results ── */
+    resultRow: {
         flexDirection: 'row',
-        flexWrap: 'wrap',
-        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingVertical: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: '#f1f5f9',
     },
-    actionCard: {
-        width: '48%',
-        aspectRatio: 1.3,
-        backgroundColor: 'white',
+    resultName: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#0f172a',
+        marginBottom: 2,
+    },
+    resultMeta: {
+        fontSize: 12,
+        color: '#94a3b8',
+    },
+    /* ── Card (reusable) ── */
+    card: {
+        backgroundColor: '#fff',
+        marginHorizontal: 16,
+        marginBottom: 12,
+        borderRadius: 14,
+        padding: 16,
+    },
+    cardHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 12,
+    },
+    cardTitle: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: '#0f172a',
+        marginBottom: 8,
+    },
+    /* ── Portfolio ── */
+    portfolioCard: {
+        backgroundColor: '#fff',
+        marginHorizontal: 16,
+        marginBottom: 12,
+        borderRadius: 14,
+        padding: 18,
+    },
+    portfolioTop: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'flex-start',
+    },
+    portfolioLabel: {
+        fontSize: 12,
+        color: '#94a3b8',
+        fontWeight: '500',
+        marginBottom: 4,
+    },
+    portfolioValue: {
+        fontSize: 24,
+        fontWeight: '800',
+        color: '#0f172a',
+    },
+    portfolioReturn: {
+        alignItems: 'flex-end',
+    },
+    portfolioPct: {
+        fontSize: 18,
+        fontWeight: '700',
+    },
+    portfolioPL: {
+        fontSize: 12,
+        fontWeight: '600',
+        marginTop: 2,
+    },
+    portfolioBottom: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginTop: 14,
+        paddingTop: 12,
+        borderTopWidth: 1,
+        borderTopColor: '#f1f5f9',
+    },
+    portfolioMeta: {
+        fontSize: 13,
+        color: '#94a3b8',
+    },
+    portfolioLink: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: '#6366f1',
+    },
+    emptyPortfolio: {
+        alignItems: 'center',
+        paddingVertical: 12,
+        gap: 6,
+    },
+    emptyPortfolioText: {
+        fontSize: 14,
+        color: '#94a3b8',
+    },
+    /* ── Quick Actions ── */
+    actionsRow: {
+        marginBottom: 12,
+    },
+    actionChip: {
+        alignItems: 'center',
+        marginRight: 16,
+        width: 64,
+    },
+    actionIcon: {
+        width: 44,
+        height: 44,
         borderRadius: 14,
         alignItems: 'center',
         justifyContent: 'center',
-        marginBottom: 12,
-        elevation: 2,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.08,
-        shadowRadius: 4,
-        overflow: 'hidden',
+        marginBottom: 6,
     },
-    actionCardGradient: {
-        width: 56,
-        height: 56,
-        borderRadius: 12,
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginBottom: 8,
-    },
-    actionText: {
-        fontSize: 13,
-        fontWeight: '600',
-        color: '#1a1a1a',
-        textAlign: 'center',
-    },
-    actionSubtext: {
+    actionLabel: {
         fontSize: 11,
-        color: '#999',
-        marginTop: 4,
+        fontWeight: '600',
+        color: '#475569',
         textAlign: 'center',
     },
-    featuredSection: {
-        padding: 20,
-        backgroundColor: 'white',
-        margin: 16,
-        marginTop: 0,
-        borderRadius: 12,
-        elevation: 2,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
+    /* ── Market Pulse ── */
+    signalBadge: {
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 6,
     },
-    loadingContainer: {
-        padding: 40,
+    signalText: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: '#fff',
+    },
+    greenBg: { backgroundColor: '#10b981' },
+    redBg: { backgroundColor: '#ef4444' },
+    neutralBg: { backgroundColor: '#94a3b8' },
+    indexRow: {
+        flexDirection: 'row',
         alignItems: 'center',
-    },
-    loadingText: {
-        fontSize: 16,
-        color: '#666',
-    },
-    stockGrid: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        justifyContent: 'space-between',
-    },
-    stockCard: {
-        width: '48%',
-        backgroundColor: '#f8f9fa',
-        borderRadius: 12,
-        padding: 16,
         marginBottom: 12,
-        elevation: 1,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.05,
-        shadowRadius: 2,
     },
-    noticeContainer: {
-        padding: 16,
-        paddingTop: 8,
-    },
-    noticeCard: {
-        backgroundColor: '#FFF8E1',
-        borderLeftWidth: 4,
-        borderLeftColor: '#FF9500',
-        borderRadius: 8,
-        padding: 16,
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-    },
-    noticeContent: {
+    indexLabel: {
         flex: 1,
-        marginLeft: 12,
+        fontSize: 13,
+        color: '#64748b',
+        fontWeight: '500',
     },
-    noticeTitle: {
+    indexPrice: {
+        fontSize: 15,
+        fontWeight: '700',
+        color: '#0f172a',
+        marginRight: 8,
+    },
+    indexChange: {
+        fontSize: 13,
+        fontWeight: '700',
+        minWidth: 60,
+        textAlign: 'right',
+    },
+    moversLabel: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#94a3b8',
+        marginTop: 4,
+        marginBottom: 8,
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+    },
+    moverRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        paddingVertical: 8,
+        borderBottomWidth: 1,
+        borderBottomColor: '#f8fafc',
+    },
+    moverSymbol: {
         fontSize: 14,
         fontWeight: '600',
-        color: '#FF9500',
-        marginBottom: 4,
+        color: '#0f172a',
     },
-    noticeText: {
-        fontSize: 12,
-        color: '#8B6914',
-        lineHeight: 18,
+    moverChange: {
+        fontSize: 14,
+        fontWeight: '700',
     },
-    stockHeader: {
+    /* ── Featured Stocks ── */
+    stockRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: 4,
+        paddingVertical: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: '#f1f5f9',
+    },
+    stockLeft: {
+        flex: 1,
+        marginRight: 12,
     },
     stockSymbol: {
-        fontSize: 16,
-        fontWeight: 'bold',
-        color: '#333',
+        fontSize: 15,
+        fontWeight: '700',
+        color: '#0f172a',
     },
-    stockName: {
-        fontSize: 12,
-        color: '#666',
-        marginBottom: 8,
+    stockRight: {
+        alignItems: 'flex-end',
     },
     stockPrice: {
-        fontSize: 18,
-        fontWeight: '600',
-        color: '#007AFF',
-        marginBottom: 4,
-    },
-    stockMarketCap: {
-        fontSize: 11,
-        color: '#666',
-        marginBottom: 8,
-    },
-    stockMetrics: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-    },
-    stockMetric: {
-        fontSize: 11,
-        color: '#666',
-    },
-    marketOverview: {
-        padding: 20,
-        backgroundColor: 'white',
-        margin: 16,
-        marginTop: 0,
-        marginBottom: 32,
-        borderRadius: 12,
-        elevation: 2,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-    },
-    marketCard: {
-        backgroundColor: '#f8f9fa',
-        borderRadius: 12,
-        padding: 16,
-    },
-    marketRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginVertical: 6,
-    },
-    marketLabel: {
-        fontSize: 13,
-        color: '#666',
-        flex: 1,
-    },
-    marketValue: {
-        fontSize: 14,
-        fontWeight: '600',
-        color: '#111',
-        flex: 1,
-        textAlign: 'right',
-    },
-    marketPositive: {
-        fontSize: 14,
-        fontWeight: '600',
-        color: '#34C759',
-        flex: 1,
-        textAlign: 'right',
-    },
-    marketNegative: {
-        fontSize: 14,
-        fontWeight: '600',
-        color: '#FF3B30',
-        flex: 1,
-        textAlign: 'right',
-    },
-    marketSubTitle: {
-        marginTop: 12,
-        fontSize: 14,
-        fontWeight: '600',
-        color: '#333',
-    },
-    marketDivider: {
-        height: 1,
-        backgroundColor: '#e5e7eb',
-        marginVertical: 10,
-    },
-    insightCard: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingVertical: 12,
-        borderBottomWidth: 1,
-        borderBottomColor: '#f0f0f0',
-    },
-    insightContent: {
-        marginLeft: 16,
-        flex: 1,
-    },
-    insightTitle: {
-        fontSize: 16,
-        fontWeight: '500',
-        color: '#333',
-        marginBottom: 2,
-    },
-    insightDescription: {
-        fontSize: 14,
-        color: '#666',
-    },
-    marketSelectorContainer: {
-        padding: 20,
-        backgroundColor: 'white',
-        margin: 16,
-        marginTop: 0,
-        borderRadius: 12,
-        elevation: 2,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-    },
-    marketSelector: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        backgroundColor: '#f8f9fa',
-        borderRadius: 8,
-        paddingHorizontal: 16,
-        paddingVertical: 12,
-        borderWidth: 1,
-        borderColor: '#e5e7eb',
-    },
-    marketSelectorContent: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        flex: 1,
-    },
-    marketSelectorText: {
-        marginLeft: 12,
-        flex: 1,
-    },
-    marketSelectorLabel: {
-        fontSize: 16,
-        fontWeight: '600',
-        color: '#333',
-        marginBottom: 2,
-    },
-    marketSelectorDesc: {
-        fontSize: 12,
-        color: '#666',
-    },
-    modalOverlay: {
-        flex: 1,
-        backgroundColor: 'rgba(0, 0, 0, 0.5)',
-        justifyContent: 'flex-end',
-    },
-    modalContent: {
-        backgroundColor: 'white',
-        borderTopLeftRadius: 20,
-        borderTopRightRadius: 20,
-        maxHeight: '80%',
-    },
-    modalHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingHorizontal: 20,
-        paddingVertical: 16,
-        borderBottomWidth: 1,
-        borderBottomColor: '#f0f0f0',
-    },
-    modalTitle: {
-        fontSize: 18,
+        fontSize: 15,
         fontWeight: '700',
-        color: '#333',
+        color: '#0f172a',
     },
-    marketOption: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingHorizontal: 20,
-        paddingVertical: 16,
-        borderBottomWidth: 1,
-        borderBottomColor: '#f0f0f0',
-    },
-    marketOptionSelected: {
-        backgroundColor: '#f8f9fa',
-    },
-    marketOptionContent: {
-        flex: 1,
-    },
-    marketOptionName: {
-        fontSize: 16,
-        fontWeight: '600',
-        color: '#333',
-        marginBottom: 4,
-    },
-    marketOptionDesc: {
-        fontSize: 12,
-        color: '#666',
-    },
-    portfolioSnapshot: {
-        padding: 20,
-        backgroundColor: 'white',
-        margin: 16,
-        marginTop: 0,
-        borderRadius: 12,
-        elevation: 2,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-    },
-    portfolioHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 16,
-    },
-    portfolioCard: {
-        backgroundColor: '#f8f9fa',
-        borderRadius: 12,
-        overflow: 'hidden',
-    },
-    portfolioValueRow: {
-        flexDirection: 'row',
-        padding: 16,
-        gap: 12,
-    },
-    portfolioValueCard: {
-        flex: 1,
-        backgroundColor: 'white',
-        borderRadius: 10,
-        padding: 14,
-        borderWidth: 1,
-        borderColor: '#e5e7eb',
-    },
-    portfolioValueLabel: {
-        fontSize: 12,
-        color: '#666',
-        marginBottom: 8,
-        fontWeight: '500',
-    },
-    portfolioValueAmount: {
-        fontSize: 18,
-        fontWeight: '700',
-        color: '#1a1a1a',
-        marginBottom: 4,
-    },
-    portfolioValueChange: {
-        fontSize: 12,
-        fontWeight: '600',
-    },
-    portfolioValueMeta: {
+    stockCap: {
         fontSize: 11,
-        color: '#999',
+        color: '#94a3b8',
         marginTop: 2,
     },
-    positive: {
-        color: '#34C759',
-    },
-    negative: {
-        color: '#FF3B30',
-    },
-    positiveText: {
-        color: '#34C759',
-    },
-    negativeText: {
-        color: '#FF3B30',
-    },
-    portfolioDivider: {
-        height: 1,
-        backgroundColor: '#e5e7eb',
-        marginVertical: 0,
-    },
-    portfolioHoldings: {
-        padding: 16,
-    },
-    holdingHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        marginBottom: 12,
-        paddingBottom: 8,
-        borderBottomWidth: 1,
-        borderBottomColor: '#e5e7eb',
-    },
-    holdingHeaderText: {
-        fontSize: 12,
-        fontWeight: '600',
-        color: '#666',
-    },
-    holdingRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        paddingVertical: 10,
-        borderBottomWidth: 1,
-        borderBottomColor: '#f0f0f0',
-    },
-    holdingInfo: {
-        flex: 1,
-    },
-    holdingSymbol: {
-        fontSize: 14,
-        fontWeight: '600',
-        color: '#1a1a1a',
-        marginBottom: 2,
-    },
-    holdingShares: {
-        fontSize: 11,
-        color: '#999',
-    },
-    holdingAllocation: {
-        alignItems: 'flex-end',
-        minWidth: 60,
-    },
-    holdingPercent: {
+    /* ── Shared ── */
+    green: { color: '#10b981' },
+    red: { color: '#ef4444' },
+    mutedText: {
         fontSize: 13,
-        fontWeight: '600',
-        color: '#667eea',
-        marginBottom: 2,
-    },
-    holdingReturn: {
-        fontSize: 11,
-        fontWeight: '600',
-    },
-    viewAllLink: {
-        paddingVertical: 12,
-        marginTop: 4,
-    },
-    viewAllText: {
-        fontSize: 13,
-        fontWeight: '600',
-        color: '#667eea',
-    },
-    riskIndicator: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        padding: 16,
-        backgroundColor: 'rgba(255, 149, 0, 0.05)',
-        borderRadius: 0,
-    },
-    riskContent: {
-        marginLeft: 12,
-        flex: 1,
-    },
-    riskLabel: {
-        fontSize: 12,
-        color: '#666',
-        marginBottom: 2,
-    },
-    riskValue: {
-        fontSize: 14,
-        fontWeight: '600',
-        color: '#FF9500',
-    },
-    portfolioEmpty: {
-        paddingVertical: 40,
-        paddingHorizontal: 20,
-        alignItems: 'center',
-        backgroundColor: '#f8f9fa',
-        borderRadius: 10,
-    },
-    portfolioEmptyTitle: {
-        fontSize: 16,
-        fontWeight: '600',
-        color: '#1a1a1a',
-        marginTop: 12,
-        marginBottom: 8,
-    },
-    portfolioEmptyText: {
-        fontSize: 13,
-        color: '#999',
+        color: '#94a3b8',
         textAlign: 'center',
-        lineHeight: 18,
-        marginBottom: 16,
-    },
-    startPortfolioButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#667eea',
-        paddingHorizontal: 20,
-        paddingVertical: 10,
-        borderRadius: 8,
-        marginTop: 8,
-        gap: 8,
-    },
-    startPortfolioButtonText: {
-        fontSize: 14,
-        fontWeight: '600',
-        color: 'white',
+        paddingVertical: 16,
     },
 });
 

@@ -161,7 +161,7 @@ const WatchlistScreen: React.FC<Props> = ({ navigation }) => {
         if (!autoRefresh || !symbolKey) return;
         const intervalId = setInterval(() => {
             refreshWatchlist(false);
-        }, 60000);
+        }, 300000);
         return () => clearInterval(intervalId);
     }, [autoRefresh, symbolKey, selectedMarket]);
 
