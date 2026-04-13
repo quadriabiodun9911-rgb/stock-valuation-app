@@ -43,6 +43,8 @@ async def run_backtest(request: BacktestRequest):
         
         # Get historical data
         if request.start_date and request.end_date:
+            if request.start_date >= request.end_date:
+                raise HTTPException(status_code=400, detail="start_date must be before end_date")
             hist = ticker.history(start=request.start_date, end=request.end_date)
         else:
             hist = ticker.history(period="5y")
@@ -270,8 +272,9 @@ def generate_rsi_signals(hist):
     delta = hist['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / loss
+    rs = gain / loss.replace(0, np.nan)
     rsi = 100 - (100 / (1 + rs))
+    rsi = rsi.fillna(50)  # Neutral RSI when loss is zero
     
     signals = np.zeros(len(hist))
     for i in range(14, len(hist)):
@@ -353,8 +356,8 @@ def calculate_backtest_metrics(trades, equity_curve, hist, initial_capital):
     
     # Annual return
     days = len(hist)
-    years = days / 365
-    annual_return = ((final_value / initial_capital) ** (1 / years) - 1) * 100
+    years = max(days / 365, 0.01)  # Avoid division by zero for very short periods
+    annual_return = ((final_value / initial_capital) ** (1 / years) - 1) * 100 if initial_capital > 0 else 0
     
     # Win rate
     winning_trades = len([t for t in trades if t['profit'] > 0])

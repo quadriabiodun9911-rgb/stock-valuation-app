@@ -3,7 +3,7 @@ Stock Valuation API Backend
 Comprehensive stock analysis and valuation platform
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
@@ -17,6 +17,7 @@ import logging
 from dataclasses import dataclass
 import json
 import os
+import threading
 from dotenv import load_dotenv
 from alpha_vantage_provider import AlphaVantageProvider
 from twelve_data_provider import TwelveDataProvider
@@ -41,12 +42,18 @@ app = FastAPI(
 )
 
 # CORS middleware
+ALLOWED_ORIGINS = os.getenv(
+    "ALLOWED_ORIGINS",
+    "http://localhost:3000,http://localhost:8081,http://localhost:19006"
+).split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
+    max_age=600,
 )
 
 # Include routers
@@ -101,21 +108,24 @@ class PortfolioData(BaseModel):
     last_updated: Optional[str] = None
 
 PORTFOLIO_PATH = Path(__file__).parent / "data" / "portfolio.json"
+_portfolio_lock = threading.Lock()
 
 def _load_portfolio_data() -> PortfolioData:
-    if not PORTFOLIO_PATH.exists():
-        return PortfolioData(positions=[], cash=0.0, last_updated=datetime.now().isoformat())
+    with _portfolio_lock:
+        if not PORTFOLIO_PATH.exists():
+            return PortfolioData(positions=[], cash=0.0, last_updated=datetime.now().isoformat())
 
-    with PORTFOLIO_PATH.open("r", encoding="utf-8") as handle:
-        payload = json.load(handle)
-    return PortfolioData(**payload)
+        with PORTFOLIO_PATH.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        return PortfolioData(**payload)
 
 def _save_portfolio_data(data: PortfolioData) -> None:
-    PORTFOLIO_PATH.parent.mkdir(parents=True, exist_ok=True)
-    payload = data.dict()
-    payload["last_updated"] = datetime.now().isoformat()
-    with PORTFOLIO_PATH.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2)
+    with _portfolio_lock:
+        PORTFOLIO_PATH.parent.mkdir(parents=True, exist_ok=True)
+        payload = data.dict()
+        payload["last_updated"] = datetime.now().isoformat()
+        with PORTFOLIO_PATH.open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2)
 
 def _get_price_on_or_after(history: pd.DataFrame, target_date: datetime) -> Optional[float]:
     if history is None or history.empty:
@@ -1186,9 +1196,12 @@ async def health_check():
     return {"status": "healthy", "timestamp": datetime.now().isoformat()}
 
 @app.get("/search")
-async def search_stocks(query: str, limit: int = 10):
+async def search_stocks(
+    query: str = Query(..., min_length=1, max_length=100),
+    limit: int = Query(10, ge=1, le=50)
+):
     """Search stocks by company name or keyword"""
-    if not query or not query.strip():
+    if not query.strip():
         raise HTTPException(status_code=400, detail="Query is required")
 
     try:
@@ -1851,47 +1864,6 @@ async def update_portfolio(payload: PortfolioData):
     """Update portfolio holdings."""
     _save_portfolio_data(payload)
     return {"status": "updated", "last_updated": datetime.now().isoformat()}
-
-@app.get("/market/ngx/summary")
-async def ngx_market_summary(symbols: Optional[str] = None):
-    """Get NGX market summary with gainers, losers, volume leaders, and sector performance."""
-    if symbols:
-        symbol_list = [_normalize_ngx_symbol(s) for s in symbols.split(",") if s.strip()]
-    else:
-        portfolio = _load_portfolio_data()
-        symbol_list = [_normalize_ngx_symbol(pos.symbol) for pos in portfolio.positions]
-        if not symbol_list:
-            symbol_list = DEFAULT_NGX_SYMBOLS
-
-    snapshots = _get_market_snapshot(symbol_list)
-    gainers = sorted(snapshots, key=lambda item: item["change_pct"], reverse=True)[:5]
-    losers = sorted(snapshots, key=lambda item: item["change_pct"])[:5]
-    volume_leaders = sorted(snapshots, key=lambda item: item["volume"], reverse=True)[:5]
-
-    sector_groups: Dict[str, List[float]] = {}
-    for quote in snapshots:
-        sector_groups.setdefault(quote["sector"], []).append(quote["change_pct"])
-
-    sectors = [
-        {
-            "sector": sector,
-            "avg_change_pct": float(np.mean(changes)) if changes else 0,
-            "count": len(changes),
-        }
-        for sector, changes in sector_groups.items()
-    ]
-    sectors.sort(key=lambda item: item["avg_change_pct"], reverse=True)
-
-    return {
-        "quotes": snapshots,
-        "index": _get_ngx_index(),
-        "gainers": gainers,
-        "losers": losers,
-        "volume_leaders": volume_leaders,
-        "sectors": sectors,
-        "source_symbols": symbol_list,
-        "last_updated": datetime.now().isoformat(),
-    }
 
 @app.get("/market/ngx/summary")
 async def ngx_market_summary(symbols: Optional[str] = None):

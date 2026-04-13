@@ -21,6 +21,9 @@ const resolveApiBaseUrl = () => {
 
 const API_BASE_URL = resolveApiBaseUrl();
 
+// Export for screens that need the raw URL (e.g. axios calls)
+export const API_URL = API_BASE_URL;
+
 export interface StockInfo {
     symbol: string;
     company_name: string;
@@ -487,6 +490,9 @@ export class StockValuationAPI {
             });
         }
 
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30000);
+
         try {
             const response = await fetch(url.toString(), {
                 method,
@@ -494,6 +500,7 @@ export class StockValuationAPI {
                     'Content-Type': 'application/json',
                 },
                 body: body ? JSON.stringify(body) : undefined,
+                signal: controller.signal,
             });
 
             if (!response.ok) {
@@ -503,9 +510,14 @@ export class StockValuationAPI {
             }
 
             return response.json() as Promise<T>;
-        } catch (error) {
+        } catch (error: any) {
+            if (error.name === 'AbortError') {
+                throw new Error('Request timed out. Please check your connection and try again.');
+            }
             console.error('API Error:', error);
             throw error;
+        } finally {
+            clearTimeout(timeoutId);
         }
     }
 
