@@ -5,6 +5,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
+import ErrorBoundary from './src/components/ErrorBoundary';
 
 // Screens
 import HomeScreen from './src/screens/HomeScreen';
@@ -157,6 +158,7 @@ function AnalysisStack() {
 
 export default function App() {
     return (
+        <ErrorBoundary>
         <View testID="app-root" style={{ flex: 1 }}>
             <NavigationContainer>
                 <StatusBar style="auto" />
@@ -198,5 +200,6 @@ export default function App() {
                 </Tab.Navigator>
             </NavigationContainer>
         </View>
+        </ErrorBoundary>
     );
 }

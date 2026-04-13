@@ -3,7 +3,7 @@ Stock Valuation API Backend
 Comprehensive stock analysis and valuation platform
 """
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
@@ -18,6 +18,7 @@ from dataclasses import dataclass
 import json
 import os
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
 from alpha_vantage_provider import AlphaVantageProvider
 from twelve_data_provider import TwelveDataProvider
@@ -34,6 +35,21 @@ load_dotenv()
 # Initialize data providers
 alpha_vantage = AlphaVantageProvider()
 twelve_data = TwelveDataProvider()
+
+# ── API Key Authentication ────────────────────────────────────────
+# Set API_KEY env var to enable authentication. When unset, auth is disabled.
+API_KEY = os.getenv("API_KEY")
+
+async def verify_api_key(request: Request):
+    """Verify API key if one is configured."""
+    if not API_KEY:
+        return  # Auth disabled when no key is set
+    auth_header = request.headers.get("Authorization", "")
+    key = request.query_params.get("api_key") or (
+        auth_header.removeprefix("Bearer ").strip() if auth_header.startswith("Bearer ") else ""
+    )
+    if key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 app = FastAPI(
     title="Stock Valuation API",
@@ -55,6 +71,20 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization"],
     max_age=600,
 )
+
+# API key middleware — skips public endpoints
+_PUBLIC_PATHS = {"/", "/health", "/docs", "/openapi.json", "/redoc"}
+
+@app.middleware("http")
+async def api_key_middleware(request: Request, call_next):
+    if request.method == "OPTIONS" or request.url.path in _PUBLIC_PATHS:
+        return await call_next(request)
+    try:
+        await verify_api_key(request)
+    except HTTPException as exc:
+        from starlette.responses import JSONResponse
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    return await call_next(request)
 
 # Include routers
 app.include_router(ai_router)
@@ -173,8 +203,7 @@ def _normalize_ngx_symbol(symbol: str) -> str:
     return f"{raw}.NG"
 
 def _get_market_snapshot(symbols: List[str]) -> List[Dict[str, Any]]:
-    snapshots = []
-    for symbol in symbols:
+    def _fetch_one(symbol: str) -> Dict[str, Any]:
         data = valuation_service.get_stock_data(symbol, period="1mo")
         info = data.get("info", {})
         history = data.get("history")
@@ -190,14 +219,31 @@ def _get_market_snapshot(symbols: List[str]) -> List[Dict[str, Any]]:
                 if prev_close > 0:
                     change_pct = (float(current_price) - prev_close) / prev_close * 100
 
-        snapshots.append({
+        return {
             "symbol": symbol,
             "name": info.get("shortName") or info.get("longName") or symbol,
             "price": float(current_price or 0),
             "change_pct": float(change_pct or 0),
             "volume": int(volume or 0),
             "sector": info.get("sector", "Unknown") or "Unknown",
-        })
+        }
+
+    snapshots = []
+    with ThreadPoolExecutor(max_workers=min(5, len(symbols))) as executor:
+        future_to_sym = {executor.submit(_fetch_one, sym): sym for sym in symbols}
+        for future in as_completed(future_to_sym):
+            try:
+                snapshots.append(future.result())
+            except Exception as exc:
+                sym = future_to_sym[future]
+                logger.warning(f"Snapshot fetch failed for {sym}: {exc}")
+                snapshots.append({
+                    "symbol": sym, "name": sym, "price": 0,
+                    "change_pct": 0, "volume": 0, "sector": "Unknown",
+                })
+    # Maintain original symbol order
+    order = {s: i for i, s in enumerate(symbols)}
+    snapshots.sort(key=lambda x: order.get(x["symbol"], 999))
     return snapshots
 
 def _get_ngx_index() -> Optional[Dict[str, Any]]:
@@ -468,8 +514,8 @@ class StockValuationService:
                 else:
                     # Fallback calculation
                     current_fcf = cashflow.iloc[0, 0]  # First row, first column
-            except:
-                current_fcf = 1000000000  # Default 1B if no data
+            except Exception:
+                raise HTTPException(status_code=400, detail="No free cash flow data available for DCF analysis")
             
             # Project cash flows for 5 years
             projected_fcf = []
@@ -903,8 +949,8 @@ class StockValuationService:
                         current_fcf = operating_cf + capex  # CapEx is usually negative
                     else:
                         current_fcf = cashflow.iloc[0, 0]
-                except:
-                    current_fcf = 1000000000
+                except Exception:
+                    raise HTTPException(status_code=400, detail="No free cash flow data available for DCF analysis")
                 
                 shares_outstanding = info.get('sharesOutstanding', 0) or info.get('impliedSharesOutstanding', 1)
                 total_cash = info.get('totalCash', 0) or 0

@@ -7,6 +7,9 @@ from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
+import json
+import threading
 import yfinance as yf
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
@@ -27,8 +30,31 @@ class AlertCheck(BaseModel):
     current_price: float
     triggered_alerts: List[PriceAlert]
 
-# In-memory storage (would be database in production)
-active_alerts: List[PriceAlert] = []
+# ── Persistent JSON storage ──────────────────────────────────────
+ALERTS_PATH = Path(__file__).parent / "data" / "price_alerts.json"
+_alerts_lock = threading.Lock()
+
+def _load_alerts() -> List[PriceAlert]:
+    with _alerts_lock:
+        if not ALERTS_PATH.exists():
+            return []
+        try:
+            with ALERTS_PATH.open("r", encoding="utf-8") as fh:
+                raw = json.load(fh)
+            return [PriceAlert(**item) for item in raw]
+        except (json.JSONDecodeError, Exception):
+            return []
+
+def _save_alerts(alerts: List[PriceAlert]) -> None:
+    with _alerts_lock:
+        ALERTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        payload = [a.dict() for a in alerts]
+        # Convert datetime objects to ISO strings for JSON serialisation
+        for item in payload:
+            if item.get("created_at"):
+                item["created_at"] = item["created_at"].isoformat() if not isinstance(item["created_at"], str) else item["created_at"]
+        with ALERTS_PATH.open("w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=2, default=str)
 
 @router.post("/create")
 async def create_alert(alert: PriceAlert):
@@ -41,7 +67,9 @@ async def create_alert(alert: PriceAlert):
             raise HTTPException(status_code=400, detail="Invalid stock symbol")
         
         alert.created_at = datetime.now()
-        active_alerts.append(alert)
+        alerts = _load_alerts()
+        alerts.append(alert)
+        _save_alerts(alerts)
         
         return {
             "status": "success",
@@ -49,13 +77,16 @@ async def create_alert(alert: PriceAlert):
             "current_price": current_price,
             "message": f"Alert created: {alert.symbol} {alert.alert_type} ${alert.target_price}"
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/list")
 async def list_alerts():
     """Get all active alerts"""
-    enabled_alerts = [a for a in active_alerts if a.enabled]
+    alerts = _load_alerts()
+    enabled_alerts = [a for a in alerts if a.enabled]
     return {
         "total": len(enabled_alerts),
         "alerts": enabled_alerts
@@ -65,10 +96,11 @@ async def list_alerts():
 async def check_all_alerts():
     """Check all alerts against current prices"""
     try:
+        alerts = _load_alerts()
         triggered = []
         alerts_status = {}
         
-        for alert in active_alerts:
+        for alert in alerts:
             if not alert.enabled:
                 continue
             
@@ -79,12 +111,7 @@ async def check_all_alerts():
                 if not current_price:
                     continue
                 
-                # Check if alert should trigger
-                should_trigger = False
-                if alert.alert_type == AlertType.ABOVE and current_price >= alert.target_price:
-                    should_trigger = True
-                elif alert.alert_type == AlertType.BELOW and current_price <= alert.target_price:
-                    should_trigger = True
+                should_trigger = _check_alert_trigger(alert, current_price)
                 
                 if should_trigger:
                     triggered.append({
@@ -124,18 +151,9 @@ async def check_symbol_alerts(symbol: str):
         if not current_price:
             raise HTTPException(status_code=400, detail="Invalid stock symbol")
         
-        symbol_alerts = [a for a in active_alerts if a.symbol == symbol and a.enabled]
-        triggered = []
-        
-        for alert in symbol_alerts:
-            should_trigger = False
-            if alert.alert_type == AlertType.ABOVE and current_price >= alert.target_price:
-                should_trigger = True
-            elif alert.alert_type == AlertType.BELOW and current_price <= alert.target_price:
-                should_trigger = True
-            
-            if should_trigger:
-                triggered.append(alert)
+        alerts = _load_alerts()
+        symbol_alerts = [a for a in alerts if a.symbol == symbol and a.enabled]
+        triggered = [a for a in symbol_alerts if _check_alert_trigger(a, current_price)]
         
         return {
             'symbol': symbol,
@@ -145,20 +163,23 @@ async def check_symbol_alerts(symbol: str):
             'alerts': symbol_alerts,
             'triggered': triggered
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/delete/{symbol}/{target_price}/{alert_type}")
 async def delete_alert(symbol: str, target_price: float, alert_type: AlertType):
     """Delete a specific alert"""
-    global active_alerts
-    original_count = len(active_alerts)
-    active_alerts = [
-        a for a in active_alerts 
+    alerts = _load_alerts()
+    original_count = len(alerts)
+    alerts = [
+        a for a in alerts 
         if not (a.symbol == symbol and a.target_price == target_price and a.alert_type == alert_type)
     ]
     
-    if len(active_alerts) < original_count:
+    if len(alerts) < original_count:
+        _save_alerts(alerts)
         return {"status": "success", "message": "Alert deleted"}
     else:
         raise HTTPException(status_code=404, detail="Alert not found")
@@ -167,17 +188,18 @@ async def delete_alert(symbol: str, target_price: float, alert_type: AlertType):
 async def update_alert(symbol: str, old_target: float, alert_type: AlertType, new_alert: PriceAlert):
     """Update an existing alert"""
     try:
-        global active_alerts
+        alerts = _load_alerts()
         
-        # Find and remove old alert
-        active_alerts = [
-            a for a in active_alerts 
+        # Remove old alert
+        alerts = [
+            a for a in alerts 
             if not (a.symbol == symbol and a.target_price == old_target and a.alert_type == alert_type)
         ]
         
         # Add new alert
         new_alert.created_at = datetime.now()
-        active_alerts.append(new_alert)
+        alerts.append(new_alert)
+        _save_alerts(alerts)
         
         return {
             "status": "success",
@@ -190,8 +212,9 @@ async def update_alert(symbol: str, old_target: float, alert_type: AlertType, ne
 @router.get("/summary")
 async def alert_summary():
     """Get summary of all alerts"""
-    enabled = [a for a in active_alerts if a.enabled]
-    disabled = [a for a in active_alerts if not a.enabled]
+    alerts = _load_alerts()
+    enabled = [a for a in alerts if a.enabled]
+    disabled = [a for a in alerts if not a.enabled]
     
     symbols = {}
     for alert in enabled:
@@ -200,9 +223,16 @@ async def alert_summary():
         symbols[alert.symbol][alert.alert_type] += 1
     
     return {
-        'total_alerts': len(active_alerts),
+        'total_alerts': len(alerts),
         'enabled': len(enabled),
         'disabled': len(disabled),
         'symbols_with_alerts': len(symbols),
         'breakdown_by_symbol': symbols
     }
+
+
+def _check_alert_trigger(alert: PriceAlert, current_price: float) -> bool:
+    """Shared logic for checking if an alert should trigger."""
+    if alert.alert_type == AlertType.ABOVE:
+        return current_price >= alert.target_price
+    return current_price <= alert.target_price
