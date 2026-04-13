@@ -3356,7 +3356,7 @@ async def get_peer_comparison_table(symbol: str, peers: Optional[str] = None):
                     "pb": si.get("priceToBook"),
                     "ps": si.get("priceToSalesTrailing12Months"),
                     "evEbitda": si.get("enterpriseToEbitda"),
-                    "dividendYield": round(si.get("dividendYield", 0) * 100, 2) if si.get("dividendYield") and si.get("dividendYield") < 1 else si.get("dividendYield"),
+                    "dividendYield": round(si.get("dividendYield", 0), 2) if si.get("dividendYield") else None,
                     "beta": si.get("beta"),
                     "revenue": revenue,
                     "netIncome": net_income,
@@ -3393,6 +3393,313 @@ async def get_peer_comparison_table(symbol: str, peers: Optional[str] = None):
         }
     except Exception as e:
         logger.error(f"Error in peer comparison for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ────────────────────────────────────────────────────────────────
+#  DIVIDEND INCOME ANALYSIS
+# ────────────────────────────────────────────────────────────────
+@app.get("/dividends/{symbol}")
+async def get_dividend_analysis(symbol: str):
+    """Dividend history, yield analysis, income projection and DRIP simulation."""
+    try:
+        stock = yf.Ticker(symbol.upper())
+        info = stock.info
+        divs = stock.dividends
+
+        current_price = info.get("currentPrice") or info.get("regularMarketPrice") or 0
+        annual_dividend = info.get("dividendRate") or 0
+        dividend_yield = info.get("dividendYield") or 0
+        payout_ratio = info.get("payoutRatio")
+        ex_date = info.get("exDividendDate")
+
+        # Dividend history (last 5 years)
+        history = []
+        annual_totals = {}
+        if divs is not None and not divs.empty:
+            for date, amount in divs.items():
+                d = date.strftime("%Y-%m-%d") if hasattr(date, 'strftime') else str(date)
+                year = d[:4]
+                history.append({"date": d, "amount": round(float(amount), 4)})
+                annual_totals[year] = annual_totals.get(year, 0) + float(amount)
+
+        annual_history = [{"year": y, "total": round(t, 4)} for y, t in sorted(annual_totals.items())]
+
+        # Growth rate
+        years_list = sorted(annual_totals.keys())
+        growth_rates = []
+        for i in range(1, len(years_list)):
+            prev = annual_totals[years_list[i - 1]]
+            curr = annual_totals[years_list[i]]
+            if prev > 0:
+                growth_rates.append((curr - prev) / prev)
+        avg_growth = round(np.mean(growth_rates) * 100, 1) if growth_rates else 0
+
+        # Income projection: $10k, $50k, $100k invested
+        projections = []
+        for investment in [10000, 50000, 100000]:
+            if current_price > 0 and annual_dividend > 0:
+                shares = investment / current_price
+                annual_income = shares * annual_dividend
+                monthly_income = annual_income / 12
+
+                # 10-year DRIP projection
+                drip_shares = shares
+                drip_values = []
+                div_rate = annual_dividend
+                for yr in range(1, 11):
+                    div_income = drip_shares * div_rate
+                    new_shares = div_income / current_price
+                    drip_shares += new_shares
+                    div_rate *= (1 + avg_growth / 100)
+                    drip_values.append({
+                        "year": yr,
+                        "shares": round(drip_shares, 2),
+                        "annualIncome": round(drip_shares * div_rate, 2),
+                        "portfolioValue": round(drip_shares * current_price, 2),
+                    })
+
+                projections.append({
+                    "investment": investment,
+                    "shares": round(shares, 2),
+                    "annualIncome": round(annual_income, 2),
+                    "monthlyIncome": round(monthly_income, 2),
+                    "yieldOnCost": round(dividend_yield * 100, 2),
+                    "drip10Year": drip_values,
+                })
+
+        # Dividend safety score (0-100)
+        safety = 50
+        if payout_ratio is not None:
+            if payout_ratio < 0.4:
+                safety = 90
+            elif payout_ratio < 0.6:
+                safety = 75
+            elif payout_ratio < 0.8:
+                safety = 55
+            else:
+                safety = 30
+        if avg_growth > 5:
+            safety = min(100, safety + 10)
+        if len(annual_history) >= 5:
+            safety = min(100, safety + 5)
+
+        return {
+            "symbol": symbol.upper(),
+            "companyName": info.get("shortName", symbol),
+            "currentPrice": current_price,
+            "annualDividend": annual_dividend,
+            "dividendYield": round(dividend_yield, 2) if dividend_yield else 0,
+            "payoutRatio": round(payout_ratio * 100, 1) if payout_ratio else None,
+            "exDividendDate": ex_date,
+            "dividendHistory": history[-20:],
+            "annualHistory": annual_history,
+            "avgGrowthRate": avg_growth,
+            "yearsOfDividends": len(annual_history),
+            "safetyScore": safety,
+            "projections": projections,
+        }
+    except Exception as e:
+        logger.error(f"Error in dividend analysis for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ────────────────────────────────────────────────────────────────
+#  INVESTMENT GOAL PLANNER
+# ────────────────────────────────────────────────────────────────
+class GoalPlannerRequest(BaseModel):
+    targetAmount: float = 1000000
+    currentSavings: float = 0
+    monthlyContribution: float = 500
+    annualReturn: float = 10.0
+    years: int = 20
+    inflationRate: float = 3.0
+
+@app.post("/goal-planner")
+async def goal_planner(req: GoalPlannerRequest):
+    """Calculate path to financial goal with year-by-year breakdown."""
+    try:
+        monthly_rate = req.annualReturn / 100 / 12
+        inflation_monthly = req.inflationRate / 100 / 12
+        real_monthly = monthly_rate - inflation_monthly
+        total_months = req.years * 12
+
+        # Nominal projection
+        yearly_data = []
+        balance = req.currentSavings
+        total_contributed = req.currentSavings
+        for year in range(1, req.years + 1):
+            for _ in range(12):
+                balance = balance * (1 + monthly_rate) + req.monthlyContribution
+                total_contributed += req.monthlyContribution
+            earnings = balance - total_contributed
+            yearly_data.append({
+                "year": year,
+                "balance": round(balance, 2),
+                "contributed": round(total_contributed, 2),
+                "earnings": round(earnings, 2),
+                "realBalance": round(balance / ((1 + req.inflationRate / 100) ** year), 2),
+            })
+
+        final_balance = balance
+        goal_reached = final_balance >= req.targetAmount
+
+        # Find year goal is reached
+        goal_year = None
+        for yd in yearly_data:
+            if yd["balance"] >= req.targetAmount:
+                goal_year = yd["year"]
+                break
+
+        # Calculate required monthly to hit goal
+        if not goal_reached and total_months > 0:
+            # FV = PV*(1+r)^n + PMT*((1+r)^n - 1)/r
+            fv_factor = (1 + monthly_rate) ** total_months
+            if monthly_rate > 0:
+                needed_monthly = (req.targetAmount - req.currentSavings * fv_factor) / ((fv_factor - 1) / monthly_rate)
+            else:
+                needed_monthly = (req.targetAmount - req.currentSavings) / total_months
+            required_monthly = max(0, round(needed_monthly, 2))
+        else:
+            required_monthly = req.monthlyContribution
+
+        # Passive income at goal (4% rule)
+        passive_monthly = round(req.targetAmount * 0.04 / 12, 2)
+        passive_annual = round(req.targetAmount * 0.04, 2)
+
+        # Milestone markers
+        milestones = []
+        for pct in [25, 50, 75, 100]:
+            target = req.targetAmount * pct / 100
+            for yd in yearly_data:
+                if yd["balance"] >= target:
+                    milestones.append({"percent": pct, "year": yd["year"], "amount": target})
+                    break
+
+        return {
+            "goalAmount": req.targetAmount,
+            "finalBalance": round(final_balance, 2),
+            "goalReached": goal_reached,
+            "goalYear": goal_year,
+            "totalContributed": round(total_contributed, 2),
+            "totalEarnings": round(final_balance - total_contributed, 2),
+            "requiredMonthly": required_monthly,
+            "passiveIncome": {"monthly": passive_monthly, "annual": passive_annual},
+            "yearlyProjection": yearly_data,
+            "milestones": milestones,
+            "assumptions": {
+                "annualReturn": req.annualReturn,
+                "inflationRate": req.inflationRate,
+                "realReturn": round(req.annualReturn - req.inflationRate, 1),
+            },
+        }
+    except Exception as e:
+        logger.error(f"Error in goal planner: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ────────────────────────────────────────────────────────────────
+#  DCA (Dollar-Cost Averaging) CALCULATOR
+# ────────────────────────────────────────────────────────────────
+@app.get("/dca/{symbol}")
+async def dca_calculator(
+    symbol: str,
+    monthly_amount: float = Query(500, ge=1),
+    years: int = Query(5, ge=1, le=30),
+):
+    """Backtest DCA strategy: what if you invested $X/month for Y years?"""
+    try:
+        stock = yf.Ticker(symbol.upper())
+        hist = stock.history(period=f"{years}y", interval="1mo")
+
+        if hist is None or hist.empty:
+            raise HTTPException(status_code=404, detail=f"No price history for {symbol}")
+
+        if hist.index.tz is not None:
+            hist.index = hist.index.tz_localize(None)
+
+        total_invested = 0
+        total_shares = 0
+        monthly_data = []
+
+        for i, (date, row) in enumerate(hist.iterrows()):
+            price = float(row["Close"])
+            if price <= 0:
+                continue
+            shares_bought = monthly_amount / price
+            total_invested += monthly_amount
+            total_shares += shares_bought
+            portfolio_value = total_shares * price
+            monthly_data.append({
+                "date": date.strftime("%Y-%m-%d"),
+                "price": round(price, 2),
+                "sharesBought": round(shares_bought, 4),
+                "totalShares": round(total_shares, 4),
+                "totalInvested": round(total_invested, 2),
+                "portfolioValue": round(portfolio_value, 2),
+                "gainLoss": round(portfolio_value - total_invested, 2),
+                "returnPct": round((portfolio_value / total_invested - 1) * 100, 1) if total_invested > 0 else 0,
+            })
+
+        if not monthly_data:
+            raise HTTPException(status_code=404, detail="No valid price data")
+
+        latest = monthly_data[-1]
+        avg_cost = total_invested / total_shares if total_shares > 0 else 0
+        current_price = latest["price"]
+
+        # Compare vs lump sum
+        first_price = monthly_data[0]["price"]
+        lump_sum_total = monthly_amount * len(monthly_data)
+        lump_sum_shares = lump_sum_total / first_price if first_price > 0 else 0
+        lump_sum_value = lump_sum_shares * current_price
+
+        # Annual returns
+        annual_data = {}
+        for m in monthly_data:
+            yr = m["date"][:4]
+            annual_data[yr] = m
+        annual_summary = []
+        for yr, m in sorted(annual_data.items()):
+            annual_summary.append({
+                "year": yr,
+                "portfolioValue": m["portfolioValue"],
+                "totalInvested": m["totalInvested"],
+                "returnPct": m["returnPct"],
+            })
+
+        # Dividend income if applicable
+        info = stock.info
+        div_yield = info.get("dividendYield", 0) or 0
+        est_annual_div_income = round(latest["portfolioValue"] * div_yield / 100, 2)
+
+        return {
+            "symbol": symbol.upper(),
+            "companyName": info.get("shortName", symbol),
+            "monthlyAmount": monthly_amount,
+            "periodYears": years,
+            "monthsInvested": len(monthly_data),
+            "totalInvested": latest["totalInvested"],
+            "currentValue": latest["portfolioValue"],
+            "totalReturn": latest["gainLoss"],
+            "totalReturnPct": latest["returnPct"],
+            "totalShares": round(total_shares, 4),
+            "avgCostBasis": round(avg_cost, 2),
+            "currentPrice": current_price,
+            "lumpSumComparison": {
+                "lumpSumValue": round(lump_sum_value, 2),
+                "dcaValue": latest["portfolioValue"],
+                "dcaBetter": latest["portfolioValue"] > lump_sum_value,
+                "difference": round(latest["portfolioValue"] - lump_sum_value, 2),
+            },
+            "estimatedAnnualDividendIncome": est_annual_div_income,
+            "annualSummary": annual_summary,
+            "monthlyData": monthly_data,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in DCA calculator for {symbol}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

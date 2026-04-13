@@ -821,6 +821,31 @@ export class StockValuationAPI {
             params: peers ? { peers } : {},
         });
     }
+
+    // ── Dividend Analysis ───────────────────────────────────────
+    async getDividendAnalysis(symbol: string): Promise<any> {
+        return this.request<any>(`/dividends/${symbol}`);
+    }
+
+    // ── Goal Planner ────────────────────────────────────────────
+    async calculateGoalPlan(params: {
+        targetAmount: number;
+        currentSavings: number;
+        monthlyContribution: number;
+        annualReturn: number;
+        years: number;
+        inflationRate?: number;
+    }): Promise<any> {
+        return this.request<any>('/goal-planner', { method: 'POST', data: params });
+    }
+
+    // ── DCA Calculator ──────────────────────────────────────────
+    async getDCAAnalysis(symbol: string, monthlyAmount?: number, years?: number): Promise<any> {
+        const params: any = {};
+        if (monthlyAmount) params.monthly_amount = monthlyAmount;
+        if (years) params.years = years;
+        return this.request<any>(`/dca/${symbol}`, { params });
+    }
 }
 
 export const stockAPI = new StockValuationAPI();
