@@ -3083,6 +3083,319 @@ async def get_financial_statements(symbol: str, period: str = "annual"):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ── Earnings Analysis ────────────────────────────────────────────────────
+@app.get("/earnings/{symbol}")
+async def get_earnings_analysis(symbol: str):
+    """Earnings history with beat/miss tracking and EPS trends."""
+    try:
+        stock = yf.Ticker(symbol.upper())
+        info = stock.info
+
+        # Earnings dates with estimates vs actuals
+        ed = stock.earnings_dates
+        quarters = []
+        if ed is not None and not ed.empty:
+            for idx, row in ed.iterrows():
+                event_type = row.get("Event Type", "")
+                if event_type == "Meeting":
+                    continue
+                est = row.get("EPS Estimate")
+                actual = row.get("Reported EPS")
+                surprise = row.get("Surprise(%)")
+                date_str = idx.strftime("%Y-%m-%d") if hasattr(idx, "strftime") else str(idx)
+                q = {
+                    "date": date_str,
+                    "epsEstimate": float(est) if pd.notna(est) else None,
+                    "epsActual": float(actual) if pd.notna(actual) else None,
+                    "surprisePct": float(surprise) if pd.notna(surprise) else None,
+                    "beat": bool(actual > est) if pd.notna(actual) and pd.notna(est) else None,
+                }
+                quarters.append(q)
+
+        # Annual EPS from financials
+        fin = stock.financials
+        annual_eps = []
+        if fin is not None and not fin.empty:
+            for col in fin.columns:
+                ni = fin.loc["Net Income", col] if "Net Income" in fin.index else None
+                shares = fin.loc["Diluted Average Shares", col] if "Diluted Average Shares" in fin.index else None
+                eps = float(ni / shares) if ni is not None and shares is not None and pd.notna(ni) and pd.notna(shares) and shares != 0 else None
+                annual_eps.append({
+                    "date": col.strftime("%Y-%m-%d"),
+                    "eps": eps,
+                    "netIncome": float(ni) if ni is not None and pd.notna(ni) else None,
+                })
+
+        # Stats
+        beats = [q for q in quarters if q["beat"] is True]
+        misses = [q for q in quarters if q["beat"] is False]
+        total_reported = [q for q in quarters if q["beat"] is not None]
+
+        return {
+            "symbol": symbol.upper(),
+            "companyName": info.get("shortName", symbol.upper()),
+            "trailingEps": info.get("trailingEps"),
+            "forwardEps": info.get("forwardEps"),
+            "trailingPE": info.get("trailingPE"),
+            "forwardPE": info.get("forwardPE"),
+            "quarters": quarters,
+            "annualEps": annual_eps,
+            "stats": {
+                "totalReported": len(total_reported),
+                "beats": len(beats),
+                "misses": len(misses),
+                "beatRate": round(len(beats) / len(total_reported) * 100, 1) if total_reported else None,
+                "avgSurprise": round(np.mean([q["surprisePct"] for q in quarters if q["surprisePct"] is not None]), 2) if any(q["surprisePct"] is not None for q in quarters) else None,
+            },
+        }
+    except Exception as e:
+        logger.error(f"Error fetching earnings for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Valuation History ────────────────────────────────────────────────────
+@app.get("/valuation-history/{symbol}")
+async def get_valuation_history(symbol: str):
+    """Historical valuation multiples (P/E, P/B, P/S, EV/EBITDA) with current vs 5-year range."""
+    try:
+        stock = yf.Ticker(symbol.upper())
+        info = stock.info
+
+        current = {
+            "pe": info.get("trailingPE"),
+            "forwardPE": info.get("forwardPE"),
+            "pb": info.get("priceToBook"),
+            "ps": info.get("priceToSalesTrailing12Months"),
+            "evEbitda": info.get("enterpriseToEbitda"),
+            "evRevenue": info.get("enterpriseToRevenue"),
+            "pegRatio": info.get("pegRatio"),
+            "dividendYield": info.get("dividendYield"),
+            "currentPrice": info.get("currentPrice") or info.get("regularMarketPrice"),
+            "marketCap": info.get("marketCap"),
+        }
+
+        # Build historical multiples from annual financials + price history
+        fin = stock.financials
+        bs = stock.balance_sheet
+        hist = stock.history(period="5y", interval="1mo")
+        shares_outstanding = info.get("sharesOutstanding", 0)
+
+        historical = []
+        if fin is not None and not fin.empty and hist is not None and not hist.empty:
+            # Normalize timezone to avoid comparison errors
+            if hist.index.tz is not None:
+                hist.index = hist.index.tz_localize(None)
+            for col in fin.columns:
+                date = col
+                date_str = date.strftime("%Y-%m-%d")
+
+                # Find closest price to this date
+                price = None
+                if not hist.empty:
+                    closest_idx = hist.index.get_indexer([date], method="nearest")[0]
+                    if 0 <= closest_idx < len(hist):
+                        price = float(hist.iloc[closest_idx]["Close"])
+
+                revenue = fin.loc["Total Revenue", col] if "Total Revenue" in fin.index else None
+                net_income = fin.loc["Net Income", col] if "Net Income" in fin.index else None
+                ebitda = fin.loc["EBITDA", col] if "EBITDA" in fin.index else None
+
+                book_value = None
+                if bs is not None and not bs.empty and date in bs.columns:
+                    equity = bs.loc["Stockholders Equity", date] if "Stockholders Equity" in bs.index else None
+                    if equity is not None and pd.notna(equity) and shares_outstanding:
+                        book_value = float(equity) / shares_outstanding
+
+                eps = float(net_income / shares_outstanding) if net_income is not None and pd.notna(net_income) and shares_outstanding else None
+
+                h = {"date": date_str, "price": price}
+                h["pe"] = round(price / eps, 1) if price and eps and eps > 0 else None
+                h["pb"] = round(price / book_value, 1) if price and book_value and book_value > 0 else None
+                h["ps"] = round(price * shares_outstanding / float(revenue), 1) if price and revenue and pd.notna(revenue) and float(revenue) > 0 else None
+                h["evEbitda"] = round(price * shares_outstanding / float(ebitda), 1) if price and ebitda and pd.notna(ebitda) and float(ebitda) > 0 else None
+                historical.append(h)
+
+        # Calculate 5-year ranges for each multiple
+        def _range(key):
+            vals = [h[key] for h in historical if h.get(key) is not None and h[key] > 0]
+            if not vals:
+                return None
+            return {
+                "min": round(min(vals), 1),
+                "max": round(max(vals), 1),
+                "avg": round(np.mean(vals), 1),
+                "median": round(np.median(vals), 1),
+                "current": current.get(key),
+            }
+
+        ranges = {
+            "pe": _range("pe"),
+            "pb": _range("pb"),
+            "ps": _range("ps"),
+            "evEbitda": _range("evEbitda"),
+        }
+
+        # Where current sits in range (percentile)
+        verdicts = {}
+        for key, r in ranges.items():
+            if r and r["current"] is not None:
+                c = r["current"]
+                if c <= r["avg"]:
+                    verdicts[key] = "Below average — potentially undervalued"
+                elif c <= r["max"] * 0.75:
+                    verdicts[key] = "Near average — fairly valued"
+                else:
+                    verdicts[key] = "Above average — potentially overvalued"
+            else:
+                verdicts[key] = None
+
+        return {
+            "symbol": symbol.upper(),
+            "companyName": info.get("shortName", symbol.upper()),
+            "sector": info.get("sector", ""),
+            "current": current,
+            "historical": historical,
+            "ranges": ranges,
+            "verdicts": verdicts,
+        }
+    except Exception as e:
+        logger.error(f"Error fetching valuation history for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Enhanced Peer Comparison ─────────────────────────────────────────────
+SECTOR_PEERS = {
+    "Technology": ["AAPL", "MSFT", "GOOGL", "META", "NVDA", "AVGO", "ORCL", "CRM", "AMD", "INTC"],
+    "Healthcare": ["JNJ", "UNH", "PFE", "ABBV", "MRK", "LLY", "TMO", "ABT", "BMY", "AMGN"],
+    "Financial Services": ["JPM", "BAC", "WFC", "GS", "MS", "C", "BLK", "SCHW", "AXP", "USB"],
+    "Consumer Cyclical": ["AMZN", "TSLA", "HD", "MCD", "NKE", "SBUX", "TJX", "LOW", "BKNG", "CMG"],
+    "Consumer Defensive": ["WMT", "PG", "KO", "PEP", "COST", "PM", "CL", "MDLZ", "MO", "KHC"],
+    "Communication Services": ["GOOGL", "META", "DIS", "NFLX", "T", "VZ", "CMCSA", "TMUS", "CHTR", "EA"],
+    "Energy": ["XOM", "CVX", "COP", "SLB", "EOG", "MPC", "PSX", "VLO", "OXY", "PXD"],
+    "Industrials": ["UNP", "HON", "UPS", "CAT", "DE", "LMT", "RTX", "BA", "GE", "MMM"],
+    "Real Estate": ["PLD", "AMT", "CCI", "EQIX", "PSA", "SPG", "O", "WELL", "DLR", "AVB"],
+    "Utilities": ["NEE", "DUK", "SO", "D", "AEP", "SRE", "EXC", "XEL", "ED", "WEC"],
+    "Basic Materials": ["LIN", "APD", "ECL", "SHW", "DD", "NEM", "FCX", "NUE", "DOW", "VMC"],
+}
+
+
+@app.get("/peer-compare/{symbol}")
+async def get_peer_comparison_table(symbol: str, peers: Optional[str] = None):
+    """
+    Side-by-side financial comparison of a stock vs its sector peers.
+    Custom peers can be passed as comma-separated symbols.
+    """
+    try:
+        stock = yf.Ticker(symbol.upper())
+        info = stock.info
+        sector = info.get("sector", "")
+
+        # Determine peer list
+        if peers:
+            peer_list = [p.strip().upper() for p in peers.split(",") if p.strip()]
+        else:
+            sector_list = SECTOR_PEERS.get(sector, [])
+            peer_list = [p for p in sector_list if p != symbol.upper()][:5]
+
+        # Fetch data for target + peers
+        all_symbols = [symbol.upper()] + peer_list
+        results = []
+
+        for sym in all_symbols:
+            try:
+                s = yf.Ticker(sym)
+                si = s.info
+                fin = s.financials
+                bs = s.balance_sheet
+                cf = s.cashflow
+
+                revenue = None
+                net_income = None
+                gross_profit = None
+                op_income = None
+                fcf = None
+                total_equity = None
+                total_debt_val = None
+                total_assets = None
+                current_assets = None
+                current_liabs = None
+
+                if fin is not None and not fin.empty:
+                    col = fin.columns[0]
+                    revenue = float(fin.loc["Total Revenue", col]) if "Total Revenue" in fin.index and pd.notna(fin.loc["Total Revenue", col]) else None
+                    net_income = float(fin.loc["Net Income", col]) if "Net Income" in fin.index and pd.notna(fin.loc["Net Income", col]) else None
+                    gross_profit = float(fin.loc["Gross Profit", col]) if "Gross Profit" in fin.index and pd.notna(fin.loc["Gross Profit", col]) else None
+                    op_income = float(fin.loc["Operating Income", col]) if "Operating Income" in fin.index and pd.notna(fin.loc["Operating Income", col]) else None
+
+                if bs is not None and not bs.empty:
+                    col = bs.columns[0]
+                    total_equity = float(bs.loc["Stockholders Equity", col]) if "Stockholders Equity" in bs.index and pd.notna(bs.loc["Stockholders Equity", col]) else None
+                    total_debt_val = float(bs.loc["Total Debt", col]) if "Total Debt" in bs.index and pd.notna(bs.loc["Total Debt", col]) else None
+                    total_assets = float(bs.loc["Total Assets", col]) if "Total Assets" in bs.index and pd.notna(bs.loc["Total Assets", col]) else None
+                    current_assets = float(bs.loc["Current Assets", col]) if "Current Assets" in bs.index and pd.notna(bs.loc["Current Assets", col]) else None
+                    current_liabs = float(bs.loc["Current Liabilities", col]) if "Current Liabilities" in bs.index and pd.notna(bs.loc["Current Liabilities", col]) else None
+
+                if cf is not None and not cf.empty:
+                    col = cf.columns[0]
+                    op_cf = cf.loc["Operating Cash Flow", col] if "Operating Cash Flow" in cf.index else None
+                    capex = cf.loc["Capital Expenditure", col] if "Capital Expenditure" in cf.index else None
+                    if op_cf is not None and capex is not None and pd.notna(op_cf) and pd.notna(capex):
+                        fcf = float(op_cf) + float(capex)
+
+                price = si.get("currentPrice") or si.get("regularMarketPrice") or 0
+                mktcap = si.get("marketCap") or 0
+
+                results.append({
+                    "symbol": sym,
+                    "companyName": si.get("shortName", sym),
+                    "isTarget": sym == symbol.upper(),
+                    "price": price,
+                    "marketCap": mktcap,
+                    "pe": si.get("trailingPE"),
+                    "forwardPE": si.get("forwardPE"),
+                    "pb": si.get("priceToBook"),
+                    "ps": si.get("priceToSalesTrailing12Months"),
+                    "evEbitda": si.get("enterpriseToEbitda"),
+                    "dividendYield": round(si.get("dividendYield", 0) * 100, 2) if si.get("dividendYield") and si.get("dividendYield") < 1 else si.get("dividendYield"),
+                    "beta": si.get("beta"),
+                    "revenue": revenue,
+                    "netIncome": net_income,
+                    "grossMargin": round(gross_profit / revenue * 100, 1) if gross_profit and revenue else None,
+                    "operatingMargin": round(op_income / revenue * 100, 1) if op_income and revenue else None,
+                    "netMargin": round(net_income / revenue * 100, 1) if net_income and revenue else None,
+                    "roe": round(net_income / total_equity * 100, 1) if net_income and total_equity and total_equity != 0 else None,
+                    "roa": round(net_income / total_assets * 100, 1) if net_income and total_assets and total_assets != 0 else None,
+                    "debtToEquity": round(total_debt_val / total_equity, 2) if total_debt_val and total_equity and total_equity != 0 else None,
+                    "currentRatio": round(current_assets / current_liabs, 2) if current_assets and current_liabs and current_liabs != 0 else None,
+                    "fcf": fcf,
+                    "fcfMargin": round(fcf / revenue * 100, 1) if fcf and revenue and revenue != 0 else None,
+                    "revenueGrowth": round(si.get("revenueGrowth", 0) * 100, 1) if si.get("revenueGrowth") else None,
+                    "earningsGrowth": round(si.get("earningsGrowth", 0) * 100, 1) if si.get("earningsGrowth") else None,
+                })
+            except Exception as ex:
+                logger.warning(f"Peer compare: skipping {sym}: {ex}")
+                continue
+
+        # Calculate sector averages (excluding target)
+        peers_only = [r for r in results if not r["isTarget"]]
+        avg_keys = ["pe", "forwardPE", "pb", "ps", "evEbitda", "grossMargin", "operatingMargin", "netMargin", "roe", "roa", "debtToEquity", "currentRatio", "fcfMargin", "beta", "dividendYield"]
+        sector_avg = {}
+        for k in avg_keys:
+            vals = [r[k] for r in peers_only if r.get(k) is not None]
+            sector_avg[k] = round(np.mean(vals), 2) if vals else None
+
+        return {
+            "symbol": symbol.upper(),
+            "sector": sector,
+            "companies": results,
+            "sectorAverage": sector_avg,
+            "peerCount": len(peers_only),
+        }
+    except Exception as e:
+        logger.error(f"Error in peer comparison for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

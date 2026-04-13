@@ -26,6 +26,9 @@ import SmartStrategyScreen from './src/screens/SmartStrategyScreen';
 import StrategyDetailScreen from './src/screens/StrategyDetailScreen';
 import StrategyExplainerScreen from './src/screens/StrategyExplainerScreen';
 import FinancialStatementsScreen from './src/screens/FinancialStatementsScreen';
+import EarningsScreen from './src/screens/EarningsScreen';
+import PeerComparisonScreen from './src/screens/PeerComparisonScreen';
+import ValuationHistoryScreen from './src/screens/ValuationHistoryScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -41,6 +44,9 @@ function HomeStack() {
             <Stack.Screen name="Dashboard" component={DashboardScreen} options={{ title: 'Portfolio Dashboard' }} />
             <Stack.Screen name="StockDetail" component={StockDetailScreen} options={{ title: 'Stock Details' }} />
             <Stack.Screen name="Financials" component={FinancialStatementsScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="Earnings" component={EarningsScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="PeerComparison" component={PeerComparisonScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="ValuationHistory" component={ValuationHistoryScreen} options={{ headerShown: false }} />
             <Stack.Screen name="FCFValuation" component={FCFValuationScreen as any} options={{ title: 'FCF Valuation', headerShown: false }} />
             <Stack.Screen name="ScenarioAnalysis" component={ScenarioAnalysisScreen as any} options={{ title: 'Scenario Analysis', headerShown: false }} />
             <Stack.Screen name="AnalysisSmartStrategy" component={SmartStrategyScreen as any} options={{ headerShown: false }} />

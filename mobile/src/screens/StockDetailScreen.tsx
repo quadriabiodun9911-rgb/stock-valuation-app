@@ -578,6 +578,30 @@ const StockDetailScreen: React.FC<Props> = ({ route, navigation }) => {
                         <Ionicons name="document-text" size={24} color="white" />
                         <Text style={styles.analyzeButtonText}>Financial Statements</Text>
                     </TouchableOpacity>
+
+                    <TouchableOpacity
+                        style={[styles.analyzeButton, { backgroundColor: '#065f46', marginTop: 8 }]}
+                        onPress={() => navigation.navigate('Earnings', { symbol })}
+                    >
+                        <Ionicons name="bar-chart" size={24} color="white" />
+                        <Text style={styles.analyzeButtonText}>Earnings Analysis</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                        style={[styles.analyzeButton, { backgroundColor: '#1e3a5f', marginTop: 8 }]}
+                        onPress={() => navigation.navigate('PeerComparison', { symbol })}
+                    >
+                        <Ionicons name="people" size={24} color="white" />
+                        <Text style={styles.analyzeButtonText}>Peer Comparison</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                        style={[styles.analyzeButton, { backgroundColor: '#4c1d95', marginTop: 8 }]}
+                        onPress={() => navigation.navigate('ValuationHistory', { symbol })}
+                    >
+                        <Ionicons name="time" size={24} color="white" />
+                        <Text style={styles.analyzeButtonText}>Valuation History</Text>
+                    </TouchableOpacity>
                 </View>
             ) : (
                 <View>

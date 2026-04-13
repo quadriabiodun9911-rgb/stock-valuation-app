@@ -804,6 +804,23 @@ export class StockValuationAPI {
             params: { period },
         });
     }
+
+    // ── Earnings Analysis ───────────────────────────────────────
+    async getEarningsAnalysis(symbol: string): Promise<any> {
+        return this.request<any>(`/earnings/${symbol}`);
+    }
+
+    // ── Valuation History ───────────────────────────────────────
+    async getValuationHistory(symbol: string): Promise<any> {
+        return this.request<any>(`/valuation-history/${symbol}`);
+    }
+
+    // ── Peer Comparison ─────────────────────────────────────────
+    async getPeerComparison(symbol: string, peers?: string): Promise<any> {
+        return this.request<any>(`/peer-compare/${symbol}`, {
+            params: peers ? { peers } : {},
+        });
+    }
 }
 
 export const stockAPI = new StockValuationAPI();
