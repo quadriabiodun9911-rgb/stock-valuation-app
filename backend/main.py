@@ -24,6 +24,8 @@ from alpha_vantage_provider import AlphaVantageProvider
 from twelve_data_provider import TwelveDataProvider
 from ai_endpoints import router as ai_router
 from realtime_endpoints import router as realtime_router
+from news_integration import router as news_router
+from price_alerts import router as alerts_router
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -89,6 +91,8 @@ async def api_key_middleware(request: Request, call_next):
 # Include routers
 app.include_router(ai_router)
 app.include_router(realtime_router)
+app.include_router(news_router)
+app.include_router(alerts_router)
 
 # Pydantic models
 class StockSymbol(BaseModel):

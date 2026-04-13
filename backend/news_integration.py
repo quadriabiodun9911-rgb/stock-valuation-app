@@ -37,17 +37,46 @@ def _fetch_yfinance_news(symbol: str, limit: int) -> List[dict]:
             return []
         articles = []
         for item in raw[:limit]:
-            pub_ts = item.get("providerPublishTime")
-            published = datetime.fromtimestamp(pub_ts).isoformat() if isinstance(pub_ts, (int, float)) else datetime.now().isoformat()
-            thumb = item.get("thumbnail", {})
+            # yfinance >= 0.2.31 returns {"id": ..., "content": {...}}
+            content = item.get("content", item)
+
+            title = content.get("title", "") or item.get("title", "")
+            summary = content.get("summary", "") or item.get("summary", "")
+
+            # URL
+            canon = content.get("canonicalUrl") or content.get("clickThroughUrl") or {}
+            url = canon.get("url", "") if isinstance(canon, dict) else ""
+            url = url or item.get("link", "")
+
+            # Publisher / source
+            provider = content.get("provider") or {}
+            source = provider.get("displayName", "") if isinstance(provider, dict) else ""
+            source = source or item.get("publisher", "Unknown") or "Unknown"
+
+            # Publish time
+            pub_date = content.get("pubDate") or content.get("displayTime")
+            if isinstance(pub_date, str):
+                published = pub_date
+            elif isinstance(pub_date, (int, float)):
+                published = datetime.fromtimestamp(pub_date).isoformat()
+            else:
+                ts = item.get("providerPublishTime")
+                published = datetime.fromtimestamp(ts).isoformat() if isinstance(ts, (int, float)) else datetime.now().isoformat()
+
+            # Thumbnail
+            thumb = content.get("thumbnail") or item.get("thumbnail") or {}
             resolutions = thumb.get("resolutions", []) if isinstance(thumb, dict) else []
             image_url = resolutions[0].get("url") if resolutions else None
+
+            if not title:
+                continue
+
             articles.append({
-                "title": item.get("title", ""),
-                "url": item.get("link", ""),
-                "source": item.get("publisher", "Unknown"),
+                "title": title,
+                "url": url,
+                "source": source,
                 "published": published,
-                "summary": item.get("summary", ""),
+                "summary": summary,
                 "image": image_url,
             })
         return articles
@@ -61,7 +90,10 @@ def _fetch_google_news_rss(query: str, limit: int) -> List[dict]:
     try:
         import feedparser
         url = f"https://news.google.com/rss/search?q={quote(query)}&hl=en-US&gl=US&ceid=US:en"
-        feed = feedparser.parse(url)
+        # Use requests to fetch the XML (avoids feedparser SSL issues)
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        feed = feedparser.parse(resp.text)
         articles = []
         for entry in feed.entries[:limit]:
             pub = entry.get("published_parsed")
