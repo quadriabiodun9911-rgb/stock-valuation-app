@@ -105,9 +105,11 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
 
     const quickActions = [
         { icon: 'flash' as const, label: 'Strategy', screen: 'AnalysisSmartStrategy', color: '#6366f1' },
+        { icon: 'globe' as const, label: 'Economy', screen: 'EconomicDashboard', color: '#0f172a' },
         { icon: 'calculator' as const, label: 'Valuation', screen: 'Valuation', color: '#0ea5e9' },
         { icon: 'flag' as const, label: 'Goal Plan', screen: 'GoalPlanner', color: '#2563eb' },
         { icon: 'wallet' as const, label: 'Portfolio', screen: 'Dashboard', color: '#f59e0b' },
+        { icon: 'receipt' as const, label: 'Trades', screen: 'Transactions', color: '#1a1a2e' },
         { icon: 'repeat' as const, label: 'DCA', screen: 'DCA', color: '#7c3aed' },
         { icon: 'school' as const, label: 'Learn', screen: 'Education', color: '#ec4899' },
     ];

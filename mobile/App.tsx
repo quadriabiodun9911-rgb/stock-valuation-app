@@ -32,6 +32,9 @@ import ValuationHistoryScreen from './src/screens/ValuationHistoryScreen';
 import DividendScreen from './src/screens/DividendScreen';
 import GoalPlannerScreen from './src/screens/GoalPlannerScreen';
 import DCAScreen from './src/screens/DCAScreen';
+import EconomicDashboardScreen from './src/screens/EconomicDashboardScreen';
+import EconomicImpactScreen from './src/screens/EconomicImpactScreen';
+import TransactionScreen from './src/screens/TransactionScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -58,6 +61,9 @@ function HomeStack() {
             <Stack.Screen name="Dividends" component={DividendScreen} options={{ headerShown: false }} />
             <Stack.Screen name="GoalPlanner" component={GoalPlannerScreen} options={{ headerShown: false }} />
             <Stack.Screen name="DCA" component={DCAScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="EconomicDashboard" component={EconomicDashboardScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="EconomicImpact" component={EconomicImpactScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="Transactions" component={TransactionScreen} options={{ headerShown: false }} />
             <Stack.Screen name="Alerts" component={AlertsScreen} options={{ title: 'Price Alerts' }} />
             <Stack.Screen name="Education" component={EducationScreen} options={{ title: 'Learn' }} />
             <Stack.Screen name="Analysis" component={AnalysisScreen} options={{ title: 'Market Analysis' }} />

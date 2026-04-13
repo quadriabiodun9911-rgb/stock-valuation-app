@@ -618,6 +618,14 @@ const StockDetailScreen: React.FC<Props> = ({ route, navigation }) => {
                         <Ionicons name="repeat" size={24} color="white" />
                         <Text style={styles.analyzeButtonText}>DCA Backtest</Text>
                     </TouchableOpacity>
+
+                    <TouchableOpacity
+                        style={[styles.analyzeButton, { backgroundColor: '#0f172a', marginTop: 8 }]}
+                        onPress={() => navigation.navigate('EconomicImpact', { symbol })}
+                    >
+                        <Ionicons name="globe" size={24} color="white" />
+                        <Text style={styles.analyzeButtonText}>Economic & News Impact</Text>
+                    </TouchableOpacity>
                 </View>
             ) : (
                 <View>

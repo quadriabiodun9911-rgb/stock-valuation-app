@@ -3464,7 +3464,7 @@ async def get_dividend_analysis(symbol: str):
                     "shares": round(shares, 2),
                     "annualIncome": round(annual_income, 2),
                     "monthlyIncome": round(monthly_income, 2),
-                    "yieldOnCost": round(dividend_yield * 100, 2),
+                    "yieldOnCost": round(dividend_yield, 2),
                     "drip10Year": drip_values,
                 })
 
@@ -3701,6 +3701,654 @@ async def dca_calculator(
     except Exception as e:
         logger.error(f"Error in DCA calculator for {symbol}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ────────────────────────────────────────────────────────────────
+#  ECONOMIC DASHBOARD — real-time macro snapshot
+# ────────────────────────────────────────────────────────────────
+
+SECTOR_ETFS = {
+    "Technology": "XLK",
+    "Healthcare": "XLV",
+    "Financials": "XLF",
+    "Energy": "XLE",
+    "Consumer Discretionary": "XLY",
+    "Consumer Staples": "XLP",
+    "Industrials": "XLI",
+    "Materials": "XLB",
+    "Utilities": "XLU",
+    "Real Estate": "XLRE",
+    "Communication Services": "XLC",
+}
+
+MARKET_INDICES = {
+    "S&P 500": "^GSPC",
+    "Dow Jones": "^DJI",
+    "NASDAQ": "^IXIC",
+    "Russell 2000": "^RUT",
+}
+
+_econ_cache: Dict[str, Any] = {}
+_econ_cache_time: float = 0
+
+
+@app.get("/economic-dashboard")
+async def economic_dashboard():
+    """Economy snapshot: indices, sector performance, yields, volatility."""
+    global _econ_cache, _econ_cache_time
+    import time
+    now = time.time()
+    if _econ_cache and now - _econ_cache_time < 300:
+        return _econ_cache
+
+    try:
+        # ── Market indices ──
+        indices = []
+        idx_symbols = list(MARKET_INDICES.values())
+        idx_names = list(MARKET_INDICES.keys())
+
+        def _fetch_quote(sym: str) -> dict:
+            t = yf.Ticker(sym)
+            h = t.history(period="5d")
+            if h is None or len(h) < 2:
+                return {}
+            last = float(h["Close"].iloc[-1])
+            prev = float(h["Close"].iloc[-2])
+            chg = last - prev
+            chg_pct = (chg / prev * 100) if prev else 0
+            # YTD
+            ytd_h = t.history(period="ytd")
+            ytd_start = float(ytd_h["Close"].iloc[0]) if ytd_h is not None and len(ytd_h) > 0 else last
+            ytd_pct = ((last - ytd_start) / ytd_start * 100) if ytd_start else 0
+            return {
+                "price": round(last, 2),
+                "change": round(chg, 2),
+                "changePct": round(chg_pct, 2),
+                "ytdPct": round(ytd_pct, 2),
+            }
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            idx_futs = {pool.submit(_fetch_quote, sym): name for sym, name in zip(idx_symbols, idx_names)}
+            for fut in as_completed(idx_futs):
+                name = idx_futs[fut]
+                try:
+                    data = fut.result()
+                    if data:
+                        indices.append({"name": name, **data})
+                except Exception:
+                    pass
+
+        # ── Sector performance ──
+        sectors = []
+        sec_items = list(SECTOR_ETFS.items())
+
+        def _fetch_sector(pair):
+            name, sym = pair
+            try:
+                t = yf.Ticker(sym)
+                h = t.history(period="5d")
+                if h is None or len(h) < 2:
+                    return None
+                last = float(h["Close"].iloc[-1])
+                prev = float(h["Close"].iloc[-2])
+                chg_pct = ((last - prev) / prev * 100) if prev else 0
+                # 1-month
+                h_1m = t.history(period="1mo")
+                start_1m = float(h_1m["Close"].iloc[0]) if h_1m is not None and len(h_1m) > 0 else last
+                mo_pct = ((last - start_1m) / start_1m * 100) if start_1m else 0
+                return {
+                    "sector": name,
+                    "etf": sym,
+                    "price": round(last, 2),
+                    "dayChangePct": round(chg_pct, 2),
+                    "monthChangePct": round(mo_pct, 2),
+                }
+            except Exception:
+                return None
+
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            sec_futs = list(pool.map(_fetch_sector, sec_items))
+        sectors = [s for s in sec_futs if s]
+        sectors.sort(key=lambda x: x["dayChangePct"], reverse=True)
+
+        # ── Treasury yields & VIX ──
+        bond_vix = {}
+        for label, sym in [("treasury10Y", "^TNX"), ("treasury2Y", "^IRX"), ("vix", "^VIX")]:
+            try:
+                t = yf.Ticker(sym)
+                h = t.history(period="5d")
+                if h is not None and len(h) >= 2:
+                    last = float(h["Close"].iloc[-1])
+                    prev = float(h["Close"].iloc[-2])
+                    bond_vix[label] = {
+                        "value": round(last, 2),
+                        "change": round(last - prev, 2),
+                        "changePct": round((last - prev) / prev * 100, 2) if prev else 0,
+                    }
+            except Exception:
+                pass
+
+        # ── Market health assessment ──
+        up_sectors = sum(1 for s in sectors if s["dayChangePct"] > 0)
+        vix_val = bond_vix.get("vix", {}).get("value", 20)
+        if vix_val < 15 and up_sectors >= 7:
+            health = {"status": "Strong", "color": "green", "summary": "Low volatility, broad sector strength"}
+        elif vix_val < 25 and up_sectors >= 5:
+            health = {"status": "Stable", "color": "blue", "summary": "Normal conditions with mixed signals"}
+        elif vix_val < 30:
+            health = {"status": "Cautious", "color": "orange", "summary": "Elevated volatility, selective opportunities"}
+        else:
+            health = {"status": "Stressed", "color": "red", "summary": "High volatility, defensive positioning recommended"}
+
+        result = {
+            "indices": indices,
+            "sectors": sectors,
+            "yields": {
+                "treasury10Y": bond_vix.get("treasury10Y"),
+                "treasury2Y": bond_vix.get("treasury2Y"),
+            },
+            "vix": bond_vix.get("vix"),
+            "marketHealth": health,
+            "sectorCount": {"up": up_sectors, "down": len(sectors) - up_sectors},
+            "timestamp": datetime.now().isoformat(),
+        }
+        _econ_cache = result
+        _econ_cache_time = now
+        return result
+    except Exception as e:
+        logger.error(f"Error in economic dashboard: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ────────────────────────────────────────────────────────────────
+#  ECONOMIC IMPACT ANALYSIS — how macro affects a specific stock
+# ────────────────────────────────────────────────────────────────
+@app.get("/economic-impact/{symbol}")
+async def economic_impact(symbol: str):
+    """Analyse how economic conditions affect a company's performance & outlook."""
+    try:
+        stock = yf.Ticker(symbol.upper())
+        info = stock.info
+        sector = info.get("sector", "Unknown")
+        industry = info.get("industry", "Unknown")
+        beta = info.get("beta", 1.0) or 1.0
+        current_price = info.get("currentPrice") or info.get("regularMarketPrice") or 0
+
+        # ── Company financials snapshot ──
+        revenue = info.get("totalRevenue", 0) or 0
+        net_income = info.get("netIncomeToCommon", 0) or 0
+        fcf = info.get("freeCashflow", 0) or 0
+        op_margin = info.get("operatingMargins", 0) or 0
+        revenue_growth = info.get("revenueGrowth", 0) or 0
+        earnings_growth = info.get("earningsGrowth", 0) or 0
+        debt_to_equity = info.get("debtToEquity", 0) or 0
+        forward_pe = info.get("forwardPE", 0) or 0
+        trailing_pe = info.get("trailingPE", 0) or 0
+
+        # ── Fetch macro context in parallel ──
+        macro = {}
+
+        def _get_vix():
+            h = yf.Ticker("^VIX").history(period="5d")
+            if h is not None and len(h) > 0:
+                return round(float(h["Close"].iloc[-1]), 2)
+            return None
+
+        def _get_yield_10y():
+            h = yf.Ticker("^TNX").history(period="5d")
+            if h is not None and len(h) > 0:
+                return round(float(h["Close"].iloc[-1]), 2)
+            return None
+
+        def _get_sp500_ytd():
+            t = yf.Ticker("^GSPC")
+            h = t.history(period="ytd")
+            if h is not None and len(h) > 1:
+                return round((float(h["Close"].iloc[-1]) / float(h["Close"].iloc[0]) - 1) * 100, 2)
+            return None
+
+        def _get_sector_perf():
+            etf = SECTOR_ETFS.get(sector)
+            if not etf:
+                return None
+            h = yf.Ticker(etf).history(period="1mo")
+            if h is not None and len(h) > 1:
+                return round((float(h["Close"].iloc[-1]) / float(h["Close"].iloc[0]) - 1) * 100, 2)
+            return None
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            f_vix = pool.submit(_get_vix)
+            f_yield = pool.submit(_get_yield_10y)
+            f_sp = pool.submit(_get_sp500_ytd)
+            f_sec = pool.submit(_get_sector_perf)
+            macro["vix"] = f_vix.result()
+            macro["treasury10Y"] = f_yield.result()
+            macro["sp500YTD"] = f_sp.result()
+            macro["sectorMonthPct"] = f_sec.result()
+
+        # ── Interest rate sensitivity ──
+        rate_sensitivity = "low"
+        rate_impact = "neutral"
+        if sector in ["Real Estate", "Utilities", "Financials"]:
+            rate_sensitivity = "high"
+            rate_impact = "Rising rates pressure valuations and borrowing costs"
+        elif sector in ["Technology", "Consumer Discretionary"]:
+            rate_sensitivity = "medium"
+            rate_impact = "Higher rates compress growth multiples"
+        elif debt_to_equity > 150:
+            rate_sensitivity = "high"
+            rate_impact = "Heavy debt load makes interest expense a significant factor"
+        else:
+            rate_impact = "Limited direct impact from rate changes"
+
+        # ── Inflation exposure ──
+        if sector in ["Energy", "Materials"]:
+            inflation_exposure = {"level": "beneficiary", "detail": "Commodity-linked revenue tends to rise with inflation"}
+        elif sector in ["Consumer Staples"]:
+            inflation_exposure = {"level": "moderate", "detail": "Pricing power but margin pressure from input costs"}
+        elif sector in ["Technology"]:
+            inflation_exposure = {"level": "low", "detail": "Digital products have low input-cost sensitivity"}
+        elif op_margin and op_margin > 0.25:
+            inflation_exposure = {"level": "resilient", "detail": "High margins provide buffer against cost increases"}
+        else:
+            inflation_exposure = {"level": "moderate", "detail": "Some margin pressure possible from rising costs"}
+
+        # ── Earnings outlook factors ──
+        factors = []
+        # 1. Revenue momentum
+        if revenue_growth and revenue_growth > 0.1:
+            factors.append({"factor": "Revenue Growth", "signal": "positive", "detail": f"Strong {round(revenue_growth*100,1)}% growth supports earnings expansion"})
+        elif revenue_growth and revenue_growth > 0:
+            factors.append({"factor": "Revenue Growth", "signal": "neutral", "detail": f"Modest {round(revenue_growth*100,1)}% growth — stable but not accelerating"})
+        else:
+            factors.append({"factor": "Revenue Growth", "signal": "negative", "detail": f"Revenue declining at {round((revenue_growth or 0)*100,1)}% — earnings at risk"})
+
+        # 2. Margin health
+        if op_margin and op_margin > 0.20:
+            factors.append({"factor": "Operating Margin", "signal": "positive", "detail": f"{round(op_margin*100,1)}% margins — strong pricing power and cost control"})
+        elif op_margin and op_margin > 0.10:
+            factors.append({"factor": "Operating Margin", "signal": "neutral", "detail": f"{round(op_margin*100,1)}% margins — adequate but limited cushion"})
+        else:
+            factors.append({"factor": "Operating Margin", "signal": "negative", "detail": f"Thin {round((op_margin or 0)*100,1)}% margins — vulnerable to cost pressures"})
+
+        # 3. Market volatility
+        vix = macro.get("vix", 20)
+        if vix and vix < 15:
+            factors.append({"factor": "Market Volatility (VIX)", "signal": "positive", "detail": f"VIX at {vix} — low fear, supportive of equity valuations"})
+        elif vix and vix < 25:
+            factors.append({"factor": "Market Volatility (VIX)", "signal": "neutral", "detail": f"VIX at {vix} — normal range, standard uncertainty"})
+        else:
+            factors.append({"factor": "Market Volatility (VIX)", "signal": "negative", "detail": f"VIX at {vix} — elevated fear may compress multiples"})
+
+        # 4. Interest rates
+        t10 = macro.get("treasury10Y", 4.0)
+        if t10 and t10 > 4.5:
+            factors.append({"factor": "Interest Rates (10Y)", "signal": "negative", "detail": f"Yields at {t10}% — high discount rate lowers present value of future cash flows"})
+        elif t10 and t10 > 3.5:
+            factors.append({"factor": "Interest Rates (10Y)", "signal": "neutral", "detail": f"Yields at {t10}% — moderate, balanced impact"})
+        else:
+            factors.append({"factor": "Interest Rates (10Y)", "signal": "positive", "detail": f"Yields at {t10}% — low rates supportive for growth stocks"})
+
+        # 5. Sector momentum
+        sec_pct = macro.get("sectorMonthPct")
+        if sec_pct is not None:
+            if sec_pct > 3:
+                factors.append({"factor": "Sector Momentum", "signal": "positive", "detail": f"{sector} ETF up {sec_pct}% this month — strong sector tailwind"})
+            elif sec_pct > -3:
+                factors.append({"factor": "Sector Momentum", "signal": "neutral", "detail": f"{sector} ETF {sec_pct:+.1f}% this month — muted sector trend"})
+            else:
+                factors.append({"factor": "Sector Momentum", "signal": "negative", "detail": f"{sector} ETF {sec_pct:+.1f}% this month — sector headwind"})
+
+        # 6. Free cash flow strength
+        if fcf and revenue:
+            fcf_margin = fcf / revenue
+            if fcf_margin > 0.15:
+                factors.append({"factor": "Free Cash Flow", "signal": "positive", "detail": f"{round(fcf_margin*100,1)}% FCF margin — excellent cash generation for reinvestment & dividends"})
+            elif fcf_margin > 0.05:
+                factors.append({"factor": "Free Cash Flow", "signal": "neutral", "detail": f"{round(fcf_margin*100,1)}% FCF margin — adequate cash generation"})
+            else:
+                factors.append({"factor": "Free Cash Flow", "signal": "negative", "detail": f"{round(fcf_margin*100,1)}% FCF margin — limited cash for growth or shareholder returns"})
+
+        # Overall economic outlook score
+        pos = sum(1 for f in factors if f["signal"] == "positive")
+        neg = sum(1 for f in factors if f["signal"] == "negative")
+        total = len(factors)
+        outlook_score = round((pos - neg) / total * 100) if total else 0
+        if outlook_score > 30:
+            outlook = "Favorable"
+        elif outlook_score > -30:
+            outlook = "Mixed"
+        else:
+            outlook = "Challenging"
+
+        # ── Cash flow projection (simplified) ──
+        cf_projections = []
+        if fcf and revenue:
+            base_growth = revenue_growth if revenue_growth else 0.05
+            base_fcf = fcf
+            for yr in range(1, 6):
+                # Adjust growth for macro conditions
+                macro_adj = 0
+                if vix and vix > 25:
+                    macro_adj -= 0.02
+                if t10 and t10 > 4.5:
+                    macro_adj -= 0.01
+                if sec_pct and sec_pct > 0:
+                    macro_adj += 0.01
+                adj_growth = base_growth + macro_adj
+                # Decay growth toward terminal rate
+                yr_growth = adj_growth * (0.85 ** (yr - 1))
+                base_fcf = base_fcf * (1 + yr_growth)
+                cf_projections.append({
+                    "year": yr,
+                    "projectedFCF": round(base_fcf / 1e9, 2),
+                    "growthRate": round(yr_growth * 100, 1),
+                })
+
+        return {
+            "symbol": symbol.upper(),
+            "companyName": info.get("shortName", symbol),
+            "sector": sector,
+            "industry": industry,
+            "beta": round(beta, 2),
+            "macro": macro,
+            "interestRateSensitivity": {
+                "level": rate_sensitivity,
+                "detail": rate_impact,
+            },
+            "inflationExposure": inflation_exposure,
+            "earningsFactors": factors,
+            "outlookScore": outlook_score,
+            "outlook": outlook,
+            "cashFlowProjections": cf_projections,
+            "financials": {
+                "revenue": revenue,
+                "netIncome": net_income,
+                "freeCashFlow": fcf,
+                "operatingMargin": round(op_margin * 100, 1) if op_margin else None,
+                "revenueGrowth": round(revenue_growth * 100, 1) if revenue_growth else None,
+                "earningsGrowth": round(earnings_growth * 100, 1) if earnings_growth else None,
+                "debtToEquity": round(debt_to_equity, 1),
+                "forwardPE": round(forward_pe, 1) if forward_pe else None,
+                "trailingPE": round(trailing_pe, 1) if trailing_pe else None,
+            },
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"Error in economic impact for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ────────────────────────────────────────────────────────────────
+#  NEWS IMPACT ON EARNINGS & CASH FLOW
+# ────────────────────────────────────────────────────────────────
+
+_ECON_KEYWORDS_POS = {"growth", "expansion", "strong", "recovery", "stimulus", "rate cut", "easing", "surge", "hiring", "boost"}
+_ECON_KEYWORDS_NEG = {"recession", "contraction", "weak", "slowdown", "rate hike", "tightening", "inflation", "layoffs", "tariff", "shutdown", "crisis"}
+_INDUSTRY_FACTORS = {
+    "Technology": {"drivers": ["AI adoption", "cloud spending", "chip demand", "digital transformation"], "risks": ["regulation", "antitrust", "ad spending cuts"]},
+    "Healthcare": {"drivers": ["aging population", "drug approvals", "M&A"], "risks": ["drug pricing reform", "patent cliffs", "trial failures"]},
+    "Financials": {"drivers": ["rate environment", "loan demand", "capital markets"], "risks": ["credit losses", "regulation", "rate cuts"]},
+    "Energy": {"drivers": ["oil prices", "demand recovery", "LNG exports"], "risks": ["renewable transition", "oversupply", "regulation"]},
+    "Consumer Discretionary": {"drivers": ["consumer confidence", "employment", "wage growth"], "risks": ["inflation", "consumer debt", "spending pullback"]},
+    "Consumer Staples": {"drivers": ["pricing power", "volume stability", "defensive demand"], "risks": ["input costs", "private labels", "margin pressure"]},
+    "Industrials": {"drivers": ["infrastructure spending", "reshoring", "defense budgets"], "risks": ["supply chain", "labor costs", "economic slowdown"]},
+    "Materials": {"drivers": ["commodity prices", "construction demand", "EV materials"], "risks": ["oversupply", "China slowdown", "environmental regulation"]},
+    "Utilities": {"drivers": ["rate base growth", "renewables transition", "stable demand"], "risks": ["rate cases", "regulation", "extreme weather costs"]},
+    "Real Estate": {"drivers": ["population growth", "occupancy rates", "rent growth"], "risks": ["rising rates", "remote work", "overbuilding"]},
+    "Communication Services": {"drivers": ["streaming growth", "digital ads", "5G", "content"], "risks": ["subscriber churn", "regulation", "competition"]},
+}
+
+
+def _score_text_impact(text: str) -> dict:
+    """Score a piece of text for positive/negative economic signals."""
+    lower = text.lower()
+    pos = sum(1 for w in _ECON_KEYWORDS_POS if w in lower)
+    neg = sum(1 for w in _ECON_KEYWORDS_NEG if w in lower)
+    if pos > neg:
+        return {"sentiment": "positive", "score": min(pos, 5)}
+    elif neg > pos:
+        return {"sentiment": "negative", "score": -min(neg, 5)}
+    return {"sentiment": "neutral", "score": 0}
+
+
+@app.get("/news-impact/{symbol}")
+async def news_impact_analysis(symbol: str):
+    """3-layer news impact: economy → industry → company, with earnings/cash flow projection."""
+    try:
+        stock = yf.Ticker(symbol.upper())
+        info = stock.info
+        sector = info.get("sector", "Unknown")
+        industry = info.get("industry", "Unknown")
+        company_name = info.get("shortName", symbol)
+        revenue = info.get("totalRevenue", 0) or 0
+        fcf = info.get("freeCashflow", 0) or 0
+        eps = info.get("trailingEps", 0) or 0
+        forward_eps = info.get("forwardEps", 0) or 0
+
+        from news_integration import _get_news, _score_sentiment
+
+        # ── Layer 1: Economy news ──
+        econ_news_raw = _get_news("US economy GDP inflation interest rates Federal Reserve", 10)
+        econ_articles = []
+        econ_score_total = 0
+        for art in econ_news_raw:
+            impact = _score_text_impact(art.get("title", "") + " " + (art.get("summary", "") or ""))
+            art["impact"] = impact
+            art["sentiment"] = _score_sentiment(art.get("title", ""))
+            econ_articles.append(art)
+            econ_score_total += impact["score"]
+        econ_sentiment = "positive" if econ_score_total > 1 else ("negative" if econ_score_total < -1 else "neutral")
+
+        # ── Layer 2: Industry/Sector news ──
+        industry_news_raw = _get_news(f"{sector} {industry} sector industry outlook", 10)
+        industry_articles = []
+        industry_score_total = 0
+        for art in industry_news_raw:
+            impact = _score_text_impact(art.get("title", "") + " " + (art.get("summary", "") or ""))
+            art["impact"] = impact
+            art["sentiment"] = _score_sentiment(art.get("title", ""))
+            industry_articles.append(art)
+            industry_score_total += impact["score"]
+        industry_sentiment = "positive" if industry_score_total > 1 else ("negative" if industry_score_total < -1 else "neutral")
+
+        # ── Layer 3: Company news ──
+        company_news_raw = _get_news(f"{symbol} {company_name} stock", 10, symbol=symbol.upper())
+        company_articles = []
+        company_score_total = 0
+        for art in company_news_raw:
+            impact = _score_text_impact(art.get("title", "") + " " + (art.get("summary", "") or ""))
+            art["impact"] = impact
+            art["sentiment"] = _score_sentiment(art.get("title", ""))
+            company_articles.append(art)
+            company_score_total += impact["score"]
+        company_sentiment = "positive" if company_score_total > 1 else ("negative" if company_score_total < -1 else "neutral")
+
+        # ── Composite impact score (-100 to +100) ──
+        # Weights: company 50%, industry 30%, economy 20%
+        max_possible = 50  # 10 articles * 5 max score
+        econ_norm = (econ_score_total / max_possible * 100) if max_possible else 0
+        ind_norm = (industry_score_total / max_possible * 100) if max_possible else 0
+        co_norm = (company_score_total / max_possible * 100) if max_possible else 0
+        composite = round(co_norm * 0.5 + ind_norm * 0.3 + econ_norm * 0.2)
+        composite = max(-100, min(100, composite))
+
+        # ── Projected earnings impact ──
+        # Translate composite score to earnings adjustment
+        earnings_adj_pct = composite * 0.05  # 1% earnings change per 20 pts
+        projected_eps = round(eps * (1 + earnings_adj_pct / 100), 2) if eps else None
+        projected_fcf = round(fcf * (1 + earnings_adj_pct / 100)) if fcf else None
+        projected_revenue = round(revenue * (1 + earnings_adj_pct / 200)) if revenue else None  # half as sensitive
+
+        # ── Industry-specific factors ──
+        ind_factors = _INDUSTRY_FACTORS.get(sector, {"drivers": ["Company-specific factors"], "risks": ["Market conditions"]})
+
+        # Overall signal
+        if composite > 20:
+            signal = {"direction": "Tailwind", "strength": "Strong" if composite > 40 else "Moderate", "color": "green"}
+        elif composite > -20:
+            signal = {"direction": "Neutral", "strength": "Mixed signals", "color": "blue"}
+        else:
+            signal = {"direction": "Headwind", "strength": "Strong" if composite < -40 else "Moderate", "color": "red"}
+
+        return {
+            "symbol": symbol.upper(),
+            "companyName": company_name,
+            "sector": sector,
+            "industry": industry,
+            "compositeScore": composite,
+            "signal": signal,
+            "layers": {
+                "economy": {
+                    "sentiment": econ_sentiment,
+                    "score": econ_score_total,
+                    "articles": econ_articles[:5],
+                    "articleCount": len(econ_articles),
+                },
+                "industry": {
+                    "sentiment": industry_sentiment,
+                    "score": industry_score_total,
+                    "articles": industry_articles[:5],
+                    "articleCount": len(industry_articles),
+                    "sectorDrivers": ind_factors["drivers"],
+                    "sectorRisks": ind_factors["risks"],
+                },
+                "company": {
+                    "sentiment": company_sentiment,
+                    "score": company_score_total,
+                    "articles": company_articles[:5],
+                    "articleCount": len(company_articles),
+                },
+            },
+            "earningsImpact": {
+                "adjustmentPct": round(earnings_adj_pct, 2),
+                "currentEPS": eps,
+                "forwardEPS": forward_eps,
+                "projectedEPS": projected_eps,
+                "currentFCF": fcf,
+                "projectedFCF": projected_fcf,
+                "currentRevenue": revenue,
+                "projectedRevenue": projected_revenue,
+            },
+            "sectorFactors": ind_factors,
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"Error in news impact for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ────────────────────────────────────────────────────────────────
+#  TRANSACTION HISTORY — local portfolio tracking
+# ────────────────────────────────────────────────────────────────
+TRANSACTIONS_FILE = Path(__file__).parent / "data" / "transactions.json"
+
+
+def _load_transactions() -> list:
+    if TRANSACTIONS_FILE.exists():
+        return json.loads(TRANSACTIONS_FILE.read_text())
+    return []
+
+
+def _save_transactions(txns: list):
+    TRANSACTIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    TRANSACTIONS_FILE.write_text(json.dumps(txns, indent=2, default=str))
+
+
+class TransactionRequest(BaseModel):
+    symbol: str
+    action: str  # "buy" or "sell"
+    shares: float
+    price: float
+    date: Optional[str] = None
+    notes: Optional[str] = None
+
+
+@app.post("/transactions")
+async def add_transaction(req: TransactionRequest):
+    """Record a buy/sell transaction."""
+    if req.action not in ("buy", "sell"):
+        raise HTTPException(status_code=400, detail="action must be 'buy' or 'sell'")
+    if req.shares <= 0 or req.price <= 0:
+        raise HTTPException(status_code=400, detail="shares and price must be positive")
+
+    txns = _load_transactions()
+    txn = {
+        "id": len(txns) + 1,
+        "symbol": req.symbol.upper(),
+        "action": req.action,
+        "shares": req.shares,
+        "price": req.price,
+        "total": round(req.shares * req.price, 2),
+        "date": req.date or datetime.now().strftime("%Y-%m-%d"),
+        "notes": req.notes,
+        "createdAt": datetime.now().isoformat(),
+    }
+    txns.append(txn)
+    _save_transactions(txns)
+    return {"message": "Transaction recorded", "transaction": txn}
+
+
+@app.get("/transactions")
+async def get_transactions(symbol: Optional[str] = None):
+    """Get transaction history, optionally filtered by symbol."""
+    txns = _load_transactions()
+    if symbol:
+        txns = [t for t in txns if t["symbol"] == symbol.upper()]
+
+    # Calculate per-symbol summary
+    holdings: Dict[str, Any] = {}
+    for t in txns:
+        sym = t["symbol"]
+        if sym not in holdings:
+            holdings[sym] = {"totalShares": 0, "totalCost": 0, "realized": 0}
+        if t["action"] == "buy":
+            holdings[sym]["totalShares"] += t["shares"]
+            holdings[sym]["totalCost"] += t["total"]
+        else:
+            holdings[sym]["totalShares"] -= t["shares"]
+            holdings[sym]["realized"] += t["total"]
+
+    summary = []
+    for sym, h in holdings.items():
+        avg_cost = h["totalCost"] / h["totalShares"] if h["totalShares"] > 0 else 0
+        # Get current price
+        try:
+            info = yf.Ticker(sym).info
+            curr_price = info.get("currentPrice") or info.get("regularMarketPrice") or 0
+        except Exception:
+            curr_price = 0
+        market_value = round(h["totalShares"] * curr_price, 2)
+        unrealized = round(market_value - h["totalCost"], 2) if h["totalShares"] > 0 else 0
+        summary.append({
+            "symbol": sym,
+            "shares": round(h["totalShares"], 4),
+            "avgCostBasis": round(avg_cost, 2),
+            "currentPrice": curr_price,
+            "marketValue": market_value,
+            "totalCost": round(h["totalCost"], 2),
+            "unrealizedPL": unrealized,
+            "unrealizedPLPct": round(unrealized / h["totalCost"] * 100, 1) if h["totalCost"] > 0 else 0,
+            "realizedPL": round(h["realized"], 2),
+        })
+
+    return {
+        "transactions": sorted(txns, key=lambda x: x.get("date", ""), reverse=True),
+        "summary": summary,
+        "totalTransactions": len(txns),
+    }
+
+
+@app.delete("/transactions/{txn_id}")
+async def delete_transaction(txn_id: int):
+    """Delete a transaction by ID."""
+    txns = _load_transactions()
+    original_len = len(txns)
+    txns = [t for t in txns if t.get("id") != txn_id]
+    if len(txns) == original_len:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    _save_transactions(txns)
+    return {"message": "Transaction deleted"}
 
 
 if __name__ == "__main__":

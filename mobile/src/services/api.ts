@@ -846,6 +846,43 @@ export class StockValuationAPI {
         if (years) params.years = years;
         return this.request<any>(`/dca/${symbol}`, { params });
     }
+
+    // ── Economic Dashboard ──────────────────────────────────────
+    async getEconomicDashboard(): Promise<any> {
+        return this.request<any>('/economic-dashboard');
+    }
+
+    // ── Economic Impact ─────────────────────────────────────────
+    async getEconomicImpact(symbol: string): Promise<any> {
+        return this.request<any>(`/economic-impact/${symbol}`);
+    }
+
+    // ── News Impact Analysis ────────────────────────────────────
+    async getNewsImpact(symbol: string): Promise<any> {
+        return this.request<any>(`/news-impact/${symbol}`);
+    }
+
+    // ── Transactions ────────────────────────────────────────────
+    async getTransactions(symbol?: string): Promise<any> {
+        const params: any = {};
+        if (symbol) params.symbol = symbol;
+        return this.request<any>('/transactions', { params });
+    }
+
+    async addTransaction(data: {
+        symbol: string;
+        action: string;
+        shares: number;
+        price: number;
+        date?: string;
+        notes?: string;
+    }): Promise<any> {
+        return this.request<any>('/transactions', { method: 'POST', data });
+    }
+
+    async deleteTransaction(id: number): Promise<any> {
+        return this.request<any>(`/transactions/${id}`, { method: 'DELETE' });
+    }
 }
 
 export const stockAPI = new StockValuationAPI();
