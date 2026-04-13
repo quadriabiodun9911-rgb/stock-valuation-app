@@ -27,6 +27,8 @@ from realtime_endpoints import router as realtime_router
 from news_integration import router as news_router
 from price_alerts import router as alerts_router
 from trade_reasons import router as trade_reasons_router
+from auth import router as auth_router, get_current_user, get_user_id
+import database as db
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -89,7 +91,11 @@ async def api_key_middleware(request: Request, call_next):
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
     return await call_next(request)
 
+# Initialize database
+db.init_db()
+
 # Include routers
+app.include_router(auth_router)
 app.include_router(ai_router)
 app.include_router(realtime_router)
 app.include_router(news_router)
@@ -143,25 +149,14 @@ class PortfolioData(BaseModel):
     cash: float = 0.0
     last_updated: Optional[str] = None
 
-PORTFOLIO_PATH = Path(__file__).parent / "data" / "portfolio.json"
-_portfolio_lock = threading.Lock()
+def _load_portfolio_data(user_id: int = 1) -> PortfolioData:
+    data = db.get_portfolio(user_id)
+    positions = [PortfolioPosition(**p) for p in data["positions"]]
+    return PortfolioData(positions=positions, cash=data["cash"], last_updated=data["last_updated"])
 
-def _load_portfolio_data() -> PortfolioData:
-    with _portfolio_lock:
-        if not PORTFOLIO_PATH.exists():
-            return PortfolioData(positions=[], cash=0.0, last_updated=datetime.now().isoformat())
-
-        with PORTFOLIO_PATH.open("r", encoding="utf-8") as handle:
-            payload = json.load(handle)
-        return PortfolioData(**payload)
-
-def _save_portfolio_data(data: PortfolioData) -> None:
-    with _portfolio_lock:
-        PORTFOLIO_PATH.parent.mkdir(parents=True, exist_ok=True)
-        payload = data.dict()
-        payload["last_updated"] = datetime.now().isoformat()
-        with PORTFOLIO_PATH.open("w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2)
+def _save_portfolio_data(data: PortfolioData, user_id: int = 1) -> None:
+    positions = [p.dict() for p in data.positions]
+    db.save_portfolio(user_id, positions, data.cash)
 
 def _get_price_on_or_after(history: pd.DataFrame, target_date: datetime) -> Optional[float]:
     if history is None or history.empty:
@@ -4239,21 +4234,8 @@ async def news_impact_analysis(symbol: str):
 
 
 # ────────────────────────────────────────────────────────────────
-#  TRANSACTION HISTORY — local portfolio tracking
+#  TRANSACTION HISTORY — SQLite backed
 # ────────────────────────────────────────────────────────────────
-TRANSACTIONS_FILE = Path(__file__).parent / "data" / "transactions.json"
-
-
-def _load_transactions() -> list:
-    if TRANSACTIONS_FILE.exists():
-        return json.loads(TRANSACTIONS_FILE.read_text())
-    return []
-
-
-def _save_transactions(txns: list):
-    TRANSACTIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    TRANSACTIONS_FILE.write_text(json.dumps(txns, indent=2, default=str))
-
 
 class TransactionRequest(BaseModel):
     symbol: str
@@ -4265,36 +4247,25 @@ class TransactionRequest(BaseModel):
 
 
 @app.post("/transactions")
-async def add_transaction(req: TransactionRequest):
+async def add_transaction_endpoint(req: TransactionRequest, request: Request):
     """Record a buy/sell transaction."""
     if req.action not in ("buy", "sell"):
         raise HTTPException(status_code=400, detail="action must be 'buy' or 'sell'")
     if req.shares <= 0 or req.price <= 0:
         raise HTTPException(status_code=400, detail="shares and price must be positive")
 
-    txns = _load_transactions()
-    txn = {
-        "id": len(txns) + 1,
-        "symbol": req.symbol.upper(),
-        "action": req.action,
-        "shares": req.shares,
-        "price": req.price,
-        "total": round(req.shares * req.price, 2),
-        "date": req.date or datetime.now().strftime("%Y-%m-%d"),
-        "notes": req.notes,
-        "createdAt": datetime.now().isoformat(),
-    }
-    txns.append(txn)
-    _save_transactions(txns)
+    user = await get_current_user(request)
+    user_id = get_user_id(user)
+    txn = db.add_transaction(user_id, req.symbol.upper(), req.action, req.shares, req.price, req.date, req.notes)
     return {"message": "Transaction recorded", "transaction": txn}
 
 
 @app.get("/transactions")
-async def get_transactions(symbol: Optional[str] = None):
+async def get_transactions_endpoint(symbol: Optional[str] = None, request: Request = None):
     """Get transaction history, optionally filtered by symbol."""
-    txns = _load_transactions()
-    if symbol:
-        txns = [t for t in txns if t["symbol"] == symbol.upper()]
+    user = await get_current_user(request)
+    user_id = get_user_id(user)
+    txns = db.get_transactions(user_id, symbol)
 
     # Calculate per-symbol summary
     holdings: Dict[str, Any] = {}
@@ -4312,7 +4283,6 @@ async def get_transactions(symbol: Optional[str] = None):
     summary = []
     for sym, h in holdings.items():
         avg_cost = h["totalCost"] / h["totalShares"] if h["totalShares"] > 0 else 0
-        # Get current price
         try:
             info = yf.Ticker(sym).info
             curr_price = info.get("currentPrice") or info.get("regularMarketPrice") or 0
@@ -4340,14 +4310,12 @@ async def get_transactions(symbol: Optional[str] = None):
 
 
 @app.delete("/transactions/{txn_id}")
-async def delete_transaction(txn_id: int):
+async def delete_transaction_endpoint(txn_id: int, request: Request):
     """Delete a transaction by ID."""
-    txns = _load_transactions()
-    original_len = len(txns)
-    txns = [t for t in txns if t.get("id") != txn_id]
-    if len(txns) == original_len:
+    user = await get_current_user(request)
+    user_id = get_user_id(user)
+    if not db.delete_transaction(user_id, txn_id):
         raise HTTPException(status_code=404, detail="Transaction not found")
-    _save_transactions(txns)
     return {"message": "Transaction deleted"}
 
 

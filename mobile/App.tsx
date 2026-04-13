@@ -1,11 +1,16 @@
 import React from 'react';
-import { View } from 'react-native';
+import { View, ActivityIndicator } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import ErrorBoundary from './src/components/ErrorBoundary';
+import { AuthProvider, useAuth } from './src/contexts/AuthContext';
+
+// Auth screens
+import LoginScreen from './src/screens/LoginScreen';
+import RegisterScreen from './src/screens/RegisterScreen';
 
 // Screens
 import HomeScreen from './src/screens/HomeScreen';
@@ -38,6 +43,7 @@ import TransactionScreen from './src/screens/TransactionScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
+const AuthStack = createStackNavigator();
 
 // All screens reachable from Home tab
 function HomeStack() {
@@ -71,34 +77,69 @@ function HomeStack() {
     );
 }
 
+// Main tabs (shown after auth)
+function MainTabs() {
+    return (
+        <Tab.Navigator
+            screenOptions={({ route }) => ({
+                tabBarIcon: ({ focused, color, size }) => {
+                    let iconName;
+                    if (route.name === 'Home') iconName = focused ? 'home' : 'home-outline';
+                    else if (route.name === 'Search') iconName = focused ? 'search' : 'search-outline';
+                    else if (route.name === 'Crowd') iconName = focused ? 'people' : 'people-outline';
+                    else if (route.name === 'Watchlist') iconName = focused ? 'bookmark' : 'bookmark-outline';
+                    return <Ionicons name={iconName} size={size} color={color} />;
+                },
+                tabBarActiveTintColor: '#2563eb',
+                tabBarInactiveTintColor: '#94a3b8',
+                headerShown: false,
+            })}
+        >
+            <Tab.Screen name="Home" component={HomeStack} />
+            <Tab.Screen name="Search" component={SearchScreen} />
+            <Tab.Screen name="Crowd" component={IntelligenceScreen} />
+            <Tab.Screen name="Watchlist" component={WatchlistScreen} />
+        </Tab.Navigator>
+    );
+}
+
+function RootNavigator() {
+    const { user, loading } = useAuth();
+
+    if (loading) {
+        return (
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f8fafc' }}>
+                <ActivityIndicator size="large" color="#2563eb" />
+            </View>
+        );
+    }
+
+    return (
+        <AuthStack.Navigator screenOptions={{ headerShown: false }}>
+            {user ? (
+                <AuthStack.Screen name="MainApp" component={MainTabs} />
+            ) : (
+                <>
+                    <AuthStack.Screen name="Login" component={LoginScreen} />
+                    <AuthStack.Screen name="Register" component={RegisterScreen} />
+                    <AuthStack.Screen name="MainApp" component={MainTabs} />
+                </>
+            )}
+        </AuthStack.Navigator>
+    );
+}
+
 export default function App() {
     return (
         <ErrorBoundary>
+        <AuthProvider>
         <View testID="app-root" style={{ flex: 1 }}>
             <NavigationContainer>
                 <StatusBar style="auto" />
-                <Tab.Navigator
-                    screenOptions={({ route }) => ({
-                        tabBarIcon: ({ focused, color, size }) => {
-                            let iconName;
-                            if (route.name === 'Home') iconName = focused ? 'home' : 'home-outline';
-                            else if (route.name === 'Search') iconName = focused ? 'search' : 'search-outline';
-                            else if (route.name === 'Crowd') iconName = focused ? 'people' : 'people-outline';
-                            else if (route.name === 'Watchlist') iconName = focused ? 'bookmark' : 'bookmark-outline';
-                            return <Ionicons name={iconName} size={size} color={color} />;
-                        },
-                        tabBarActiveTintColor: '#2563eb',
-                        tabBarInactiveTintColor: '#94a3b8',
-                        headerShown: false,
-                    })}
-                >
-                    <Tab.Screen name="Home" component={HomeStack} />
-                    <Tab.Screen name="Search" component={SearchScreen} />
-                    <Tab.Screen name="Crowd" component={IntelligenceScreen} />
-                    <Tab.Screen name="Watchlist" component={WatchlistScreen} />
-                </Tab.Navigator>
+                <RootNavigator />
             </NavigationContainer>
         </View>
+        </AuthProvider>
         </ErrorBoundary>
     );
 }

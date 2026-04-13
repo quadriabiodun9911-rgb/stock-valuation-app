@@ -519,12 +519,18 @@ export const AVAILABLE_MARKETS: Record<Market, MarketInfo> = {
 };
 
 type RequestOptions = {
-    method?: 'GET' | 'POST';
+    method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
     params?: Record<string, string | number | boolean | undefined>;
     body?: unknown;
 };
 
 export class StockValuationAPI {
+    private authToken: string | null = null;
+
+    setAuthToken(token: string | null) {
+        this.authToken = token;
+    }
+
     private async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
         const { method = 'GET', params, body } = options;
         const url = new URL(`${API_BASE_URL}${path}`);
@@ -541,11 +547,16 @@ export class StockValuationAPI {
         const timeoutId = setTimeout(() => controller.abort(), 30000);
 
         try {
+            const headers: Record<string, string> = {
+                'Content-Type': 'application/json',
+            };
+            if (this.authToken) {
+                headers['Authorization'] = `Bearer ${this.authToken}`;
+            }
+
             const response = await fetch(url.toString(), {
                 method,
-                headers: {
-                    'Content-Type': 'application/json',
-                },
+                headers,
                 body: body ? JSON.stringify(body) : undefined,
                 signal: controller.signal,
             });
@@ -836,7 +847,7 @@ export class StockValuationAPI {
         years: number;
         inflationRate?: number;
     }): Promise<any> {
-        return this.request<any>('/goal-planner', { method: 'POST', data: params });
+        return this.request<any>('/goal-planner', { method: 'POST', body: params });
     }
 
     // ── DCA Calculator ──────────────────────────────────────────
@@ -877,11 +888,28 @@ export class StockValuationAPI {
         date?: string;
         notes?: string;
     }): Promise<any> {
-        return this.request<any>('/transactions', { method: 'POST', data });
+        return this.request<any>('/transactions', { method: 'POST', body: data });
     }
 
     async deleteTransaction(id: number): Promise<any> {
         return this.request<any>(`/transactions/${id}`, { method: 'DELETE' });
+    }
+
+    // ── Auth ────────────────────────────────────────────────────
+    async login(email: string, password: string): Promise<any> {
+        return this.request<any>('/auth/login', { method: 'POST', body: { email, password } });
+    }
+
+    async register(email: string, username: string, password: string): Promise<any> {
+        return this.request<any>('/auth/register', { method: 'POST', body: { email, username, password } });
+    }
+
+    async getMe(): Promise<any> {
+        return this.request<any>('/auth/me');
+    }
+
+    async registerPushToken(token: string): Promise<any> {
+        return this.request<any>('/auth/push-token', { method: 'POST', body: { token } });
     }
 }
 
