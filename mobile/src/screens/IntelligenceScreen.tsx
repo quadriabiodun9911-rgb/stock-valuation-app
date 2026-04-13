@@ -17,6 +17,9 @@ import {
     MarketRankingsResponse,
     MarketSummaryResponse,
     PortfolioResponse,
+    TradeReasonEntry,
+    TradeReasonSummary,
+    TrendingTradeReason,
     stockAPI,
 } from '../services/api';
 
@@ -32,6 +35,20 @@ const IntelligenceScreen: React.FC = () => {
     const [intrinsicSymbol, setIntrinsicSymbol] = useState('');
     const [intrinsic, setIntrinsic] = useState<IntrinsicValueResponse | null>(null);
     const [intrinsicLoading, setIntrinsicLoading] = useState(false);
+
+    // Trade-reasons state
+    const [tradeSymbol, setTradeSymbol] = useState('');
+    const [tradeAction, setTradeAction] = useState<'buy' | 'sell'>('buy');
+    const [selectedReasons, setSelectedReasons] = useState<string[]>([]);
+    const [tradeNote, setTradeNote] = useState('');
+    const [tradeConfidence, setTradeConfidence] = useState(3);
+    const [buyTags, setBuyTags] = useState<string[]>([]);
+    const [sellTags, setSellTags] = useState<string[]>([]);
+    const [tradeSummary, setTradeSummary] = useState<TradeReasonSummary | null>(null);
+    const [summarySymbol, setSummarySymbol] = useState('');
+    const [summaryLoading, setSummaryLoading] = useState(false);
+    const [trending, setTrending] = useState<TrendingTradeReason[]>([]);
+    const [feed, setFeed] = useState<TradeReasonEntry[]>([]);
 
     useEffect(() => {
         loadData();
@@ -50,15 +67,22 @@ const IntelligenceScreen: React.FC = () => {
             setLoading(true);
             const portfolioData = await stockAPI.getPortfolio();
             const symbols = portfolioData.positions.map((pos) => pos.symbol);
-            const [marketData, alertData, rankingData] = await Promise.all([
+            const [marketData, alertData, rankingData, tagsData, trendingData, feedData] = await Promise.all([
                 stockAPI.getNgxMarketSummary(symbols.length ? symbols : undefined),
                 stockAPI.getNgxMarketAlerts(symbols.length ? symbols : undefined, false),
                 stockAPI.getNgxMarketRankings(),
+                stockAPI.getTradeReasonTags(),
+                stockAPI.getTrendingTradeReasons(10),
+                stockAPI.getTradeReasonFeed(20),
             ]);
             setPortfolio(portfolioData);
             setMarket(marketData);
             setAlerts(alertData);
             setRankings(rankingData);
+            setBuyTags(tagsData.buy_reasons);
+            setSellTags(tagsData.sell_reasons);
+            setTrending(trendingData.trending);
+            setFeed(feedData.feed);
         } catch (error) {
             Alert.alert('Error', 'Unable to load market intelligence data.');
         } finally {
@@ -145,6 +169,61 @@ const IntelligenceScreen: React.FC = () => {
         }
     };
 
+    const toggleReason = (reason: string) => {
+        setSelectedReasons((prev) =>
+            prev.includes(reason) ? prev.filter((r) => r !== reason) : prev.length < 5 ? [...prev, reason] : prev
+        );
+    };
+
+    const handleSubmitReason = async () => {
+        const trimmed = tradeSymbol.trim().toUpperCase();
+        if (!trimmed) {
+            Alert.alert('Missing symbol', 'Enter a stock symbol.');
+            return;
+        }
+        if (!selectedReasons.length) {
+            Alert.alert('Select reasons', 'Pick at least one reason.');
+            return;
+        }
+        try {
+            await stockAPI.submitTradeReason({
+                symbol: trimmed,
+                action: tradeAction,
+                reasons: selectedReasons,
+                note: tradeNote || undefined,
+                confidence: tradeConfidence,
+            });
+            Alert.alert('Saved', `Your ${tradeAction} reasoning for ${trimmed} has been recorded.`);
+            setTradeSymbol('');
+            setSelectedReasons([]);
+            setTradeNote('');
+            setTradeConfidence(3);
+            // Refresh trending & feed
+            const [trendingData, feedData] = await Promise.all([
+                stockAPI.getTrendingTradeReasons(10),
+                stockAPI.getTradeReasonFeed(20),
+            ]);
+            setTrending(trendingData.trending);
+            setFeed(feedData.feed);
+        } catch {
+            Alert.alert('Error', 'Failed to save reasoning.');
+        }
+    };
+
+    const handleLookupSummary = async () => {
+        const trimmed = summarySymbol.trim().toUpperCase();
+        if (!trimmed) return;
+        try {
+            setSummaryLoading(true);
+            const data = await stockAPI.getTradeReasonSummary(trimmed);
+            setTradeSummary(data);
+        } catch {
+            Alert.alert('Error', 'Failed to load reasoning for that symbol.');
+        } finally {
+            setSummaryLoading(false);
+        }
+    };
+
     if (loading) {
         return (
             <View style={styles.loadingContainer}>
@@ -158,8 +237,211 @@ const IntelligenceScreen: React.FC = () => {
         <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
             <LinearGradient colors={['#0f172a', '#1e293b']} style={styles.header}>
                 <Text style={styles.headerTitle}>Market Intelligence</Text>
-                <Text style={styles.headerSubtitle}>NGX live insights and portfolio analytics</Text>
+                <Text style={styles.headerSubtitle}>NGX live insights, portfolio analytics & crowd intelligence</Text>
             </LinearGradient>
+
+            {/* ── Why People Buy & Sell ─────────────────────── */}
+            <View style={styles.section}>
+                <Text style={styles.sectionTitle}>
+                    <Ionicons name="people" size={18} color="#2563eb" /> Why People Buy & Sell
+                </Text>
+
+                {/* Action toggle (Buy / Sell) */}
+                <View style={styles.toggleRow}>
+                    <TouchableOpacity
+                        style={[styles.toggleButton, tradeAction === 'buy' && styles.toggleActive]}
+                        onPress={() => { setTradeAction('buy'); setSelectedReasons([]); }}
+                    >
+                        <Ionicons name="trending-up" size={16} color={tradeAction === 'buy' ? '#fff' : '#16a34a'} />
+                        <Text style={[styles.toggleText, tradeAction === 'buy' && styles.toggleTextActive]}>Buying</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={[styles.toggleButton, tradeAction === 'sell' && styles.toggleActiveSell]}
+                        onPress={() => { setTradeAction('sell'); setSelectedReasons([]); }}
+                    >
+                        <Ionicons name="trending-down" size={16} color={tradeAction === 'sell' ? '#fff' : '#dc2626'} />
+                        <Text style={[styles.toggleText, tradeAction === 'sell' && styles.toggleTextActive]}>Selling</Text>
+                    </TouchableOpacity>
+                </View>
+
+                <View style={styles.formCard}>
+                    <TextInput
+                        style={styles.input}
+                        placeholder="Stock symbol (e.g., AAPL)"
+                        value={tradeSymbol}
+                        onChangeText={setTradeSymbol}
+                        autoCapitalize="characters"
+                    />
+
+                    {/* Reason tags */}
+                    <Text style={styles.subTitle}>Select your reasons (up to 5)</Text>
+                    <View style={styles.tagWrap}>
+                        {(tradeAction === 'buy' ? buyTags : sellTags).map((tag) => (
+                            <TouchableOpacity
+                                key={tag}
+                                style={[styles.tag, selectedReasons.includes(tag) && (tradeAction === 'buy' ? styles.tagSelectedBuy : styles.tagSelectedSell)]}
+                                onPress={() => toggleReason(tag)}
+                            >
+                                <Text style={[styles.tagText, selectedReasons.includes(tag) && styles.tagTextSelected]}>
+                                    {tag}
+                                </Text>
+                            </TouchableOpacity>
+                        ))}
+                    </View>
+
+                    {/* Confidence */}
+                    <Text style={styles.subTitle}>Confidence level</Text>
+                    <View style={styles.confidenceRow}>
+                        {[1, 2, 3, 4, 5].map((level) => (
+                            <TouchableOpacity
+                                key={level}
+                                onPress={() => setTradeConfidence(level)}
+                                style={[styles.confDot, tradeConfidence >= level && styles.confDotActive]}
+                            >
+                                <Text style={[styles.confText, tradeConfidence >= level && styles.confTextActive]}>{level}</Text>
+                            </TouchableOpacity>
+                        ))}
+                    </View>
+
+                    {/* Optional note */}
+                    <TextInput
+                        style={[styles.input, { minHeight: 48 }]}
+                        placeholder="Add a brief note (optional)"
+                        value={tradeNote}
+                        onChangeText={setTradeNote}
+                        maxLength={280}
+                        multiline
+                    />
+
+                    <TouchableOpacity style={[styles.primaryButton, tradeAction === 'sell' && { backgroundColor: '#dc2626' }]} onPress={handleSubmitReason}>
+                        <Ionicons name="send" size={16} color="#fff" />
+                        <Text style={styles.primaryButtonText}>Submit {tradeAction === 'buy' ? 'Buy' : 'Sell'} Reasoning</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
+
+            {/* ── Lookup crowd reasoning for a stock ──────── */}
+            <View style={styles.section}>
+                <Text style={styles.sectionTitle}>
+                    <Ionicons name="search" size={18} color="#2563eb" /> Crowd Reasoning Lookup
+                </Text>
+                <View style={styles.formCard}>
+                    <TextInput
+                        style={styles.input}
+                        placeholder="Stock symbol (e.g., AAPL)"
+                        value={summarySymbol}
+                        onChangeText={setSummarySymbol}
+                        autoCapitalize="characters"
+                    />
+                    <TouchableOpacity style={styles.primaryButton} onPress={handleLookupSummary}>
+                        <Ionicons name="bar-chart" size={16} color="#fff" />
+                        <Text style={styles.primaryButtonText}>See Why People Trade This</Text>
+                    </TouchableOpacity>
+                    {summaryLoading && (
+                        <View style={styles.inlineLoading}>
+                            <ActivityIndicator size="small" color="#2563eb" />
+                        </View>
+                    )}
+                    {tradeSummary && (
+                        <View style={styles.card}>
+                            <Text style={styles.subTitle}>{tradeSummary.symbol} — {tradeSummary.total_submissions} submissions</Text>
+
+                            <View style={styles.sentimentBar}>
+                                <View style={[styles.sentimentBuy, { flex: tradeSummary.buy.count || 0.1 }]} />
+                                <View style={[styles.sentimentSell, { flex: tradeSummary.sell.count || 0.1 }]} />
+                            </View>
+                            <View style={styles.rowBetween}>
+                                <Text style={styles.positiveValue}>{tradeSummary.buy.count} buy</Text>
+                                <Text style={styles.negativeValue}>{tradeSummary.sell.count} sell</Text>
+                            </View>
+
+                            {tradeSummary.buy.top_reasons.length > 0 && (
+                                <>
+                                    <Text style={styles.subTitle}>Top Buy Reasons</Text>
+                                    {tradeSummary.buy.top_reasons.slice(0, 5).map((r) => (
+                                        <View key={r.reason} style={styles.rowBetween}>
+                                            <Text style={styles.cardLabel}>{r.reason}</Text>
+                                            <Text style={styles.positiveValue}>{r.pct}%</Text>
+                                        </View>
+                                    ))}
+                                </>
+                            )}
+
+                            {tradeSummary.sell.top_reasons.length > 0 && (
+                                <>
+                                    <Text style={styles.subTitle}>Top Sell Reasons</Text>
+                                    {tradeSummary.sell.top_reasons.slice(0, 5).map((r) => (
+                                        <View key={r.reason} style={styles.rowBetween}>
+                                            <Text style={styles.cardLabel}>{r.reason}</Text>
+                                            <Text style={styles.negativeValue}>{r.pct}%</Text>
+                                        </View>
+                                    ))}
+                                </>
+                            )}
+
+                            {tradeSummary.recent.length > 0 && (
+                                <>
+                                    <Text style={styles.subTitle}>Recent Activity</Text>
+                                    {tradeSummary.recent.slice(0, 5).map((entry, idx) => (
+                                        <View key={idx} style={styles.feedItem}>
+                                            <View style={styles.rowBetween}>
+                                                <Text style={entry.action === 'buy' ? styles.positiveValue : styles.negativeValue}>
+                                                    {entry.action.toUpperCase()}
+                                                </Text>
+                                                <Text style={styles.feedTime}>{new Date(entry.timestamp).toLocaleDateString()}</Text>
+                                            </View>
+                                            <Text style={styles.feedReasons}>{entry.reasons.join(', ')}</Text>
+                                            {entry.note ? <Text style={styles.feedNote}>"{entry.note}"</Text> : null}
+                                        </View>
+                                    ))}
+                                </>
+                            )}
+                        </View>
+                    )}
+                </View>
+            </View>
+
+            {/* ── Trending trade activity ─────────────────── */}
+            {trending.length > 0 && (
+                <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>
+                        <Ionicons name="flame" size={18} color="#f97316" /> Trending — Most Discussed
+                    </Text>
+                    <View style={styles.card}>
+                        {trending.map((t) => (
+                            <View key={t.symbol} style={styles.rowBetween}>
+                                <Text style={styles.cardLabel}>{t.symbol}</Text>
+                                <Text style={styles.positiveValue}>{t.buy} buy</Text>
+                                <Text style={styles.negativeValue}>{t.sell} sell</Text>
+                            </View>
+                        ))}
+                    </View>
+                </View>
+            )}
+
+            {/* ── Live feed ───────────────────────────────── */}
+            {feed.length > 0 && (
+                <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>
+                        <Ionicons name="chatbubbles" size={18} color="#2563eb" /> Live Feed
+                    </Text>
+                    <View style={styles.card}>
+                        {feed.slice(0, 10).map((entry, idx) => (
+                            <View key={idx} style={styles.feedItem}>
+                                <View style={styles.rowBetween}>
+                                    <Text style={styles.cardLabel}>{entry.symbol}</Text>
+                                    <Text style={entry.action === 'buy' ? styles.positiveValue : styles.negativeValue}>
+                                        {entry.action.toUpperCase()}
+                                    </Text>
+                                    <Text style={styles.feedTime}>{new Date(entry.timestamp).toLocaleDateString()}</Text>
+                                </View>
+                                <Text style={styles.feedReasons}>{entry.reasons.join(', ')}</Text>
+                                {entry.note ? <Text style={styles.feedNote}>"{entry.note}"</Text> : null}
+                            </View>
+                        ))}
+                    </View>
+                </View>
+            )}
 
             {performanceSummary && (
                 <View style={styles.section}>
@@ -528,6 +810,122 @@ const styles = StyleSheet.create({
     inlineLoading: {
         paddingVertical: 8,
         alignItems: 'center',
+    },
+    toggleRow: {
+        flexDirection: 'row',
+        gap: 10,
+        marginBottom: 12,
+    },
+    toggleButton: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        paddingVertical: 10,
+        borderRadius: 10,
+        backgroundColor: '#f1f5f9',
+    },
+    toggleActive: {
+        backgroundColor: '#16a34a',
+    },
+    toggleActiveSell: {
+        backgroundColor: '#dc2626',
+    },
+    toggleText: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#475569',
+    },
+    toggleTextActive: {
+        color: '#fff',
+    },
+    tagWrap: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+        marginBottom: 10,
+    },
+    tag: {
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 20,
+        backgroundColor: '#f1f5f9',
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+    },
+    tagSelectedBuy: {
+        backgroundColor: '#dcfce7',
+        borderColor: '#16a34a',
+    },
+    tagSelectedSell: {
+        backgroundColor: '#fee2e2',
+        borderColor: '#dc2626',
+    },
+    tagText: {
+        fontSize: 12,
+        color: '#475569',
+        fontWeight: '600',
+    },
+    tagTextSelected: {
+        color: '#0f172a',
+    },
+    confidenceRow: {
+        flexDirection: 'row',
+        gap: 10,
+        marginBottom: 12,
+    },
+    confDot: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        backgroundColor: '#f1f5f9',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    confDotActive: {
+        backgroundColor: '#2563eb',
+    },
+    confText: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#475569',
+    },
+    confTextActive: {
+        color: '#fff',
+    },
+    sentimentBar: {
+        flexDirection: 'row',
+        height: 8,
+        borderRadius: 4,
+        overflow: 'hidden',
+        marginVertical: 8,
+    },
+    sentimentBuy: {
+        backgroundColor: '#16a34a',
+    },
+    sentimentSell: {
+        backgroundColor: '#dc2626',
+    },
+    feedItem: {
+        paddingVertical: 8,
+        borderBottomWidth: 1,
+        borderBottomColor: '#f1f5f9',
+    },
+    feedTime: {
+        fontSize: 12,
+        color: '#94a3b8',
+    },
+    feedReasons: {
+        fontSize: 12,
+        color: '#475569',
+        marginTop: 2,
+    },
+    feedNote: {
+        fontSize: 12,
+        fontStyle: 'italic',
+        color: '#64748b',
+        marginTop: 2,
     },
 });
 

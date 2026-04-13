@@ -397,6 +397,53 @@ export interface ScreenerResponse {
 
 export type Market = 'US' | 'NGX' | 'UK' | 'EU' | 'ASIA' | 'EMERGING';
 
+// ── Trade Reasons types ──────────────────────────────────────────
+export interface TradeReasonTagsResponse {
+    buy_reasons: string[];
+    sell_reasons: string[];
+}
+
+export interface TradeReasonSubmit {
+    symbol: string;
+    action: 'buy' | 'sell';
+    reasons: string[];
+    note?: string;
+    confidence?: number;
+}
+
+export interface TradeReasonEntry {
+    symbol: string;
+    action: 'buy' | 'sell';
+    reasons: string[];
+    note?: string;
+    confidence?: number;
+    timestamp: string;
+}
+
+export interface TradeReasonSummary {
+    symbol: string;
+    total_submissions: number;
+    buy: {
+        count: number;
+        avg_confidence: number;
+        top_reasons: { reason: string; count: number; pct: number }[];
+    };
+    sell: {
+        count: number;
+        avg_confidence: number;
+        top_reasons: { reason: string; count: number; pct: number }[];
+    };
+    recent: TradeReasonEntry[];
+}
+
+export interface TrendingTradeReason {
+    symbol: string;
+    buy: number;
+    sell: number;
+    total: number;
+    latest: string;
+}
+
 export interface MarketInfo {
     code: Market;
     name: string;
@@ -720,6 +767,34 @@ export class StockValuationAPI {
     async getSmartStrategy(symbols?: string[]): Promise<{ stocks: any[]; total: number; last_updated: string }> {
         return this.request<{ stocks: any[]; total: number; last_updated: string }>('/smart-strategy', {
             params: { symbols: symbols?.join(',') }
+        });
+    }
+
+    // ── Trade Reasons (crowd intelligence) ───────────────────────
+    async getTradeReasonTags(): Promise<TradeReasonTagsResponse> {
+        return this.request<TradeReasonTagsResponse>('/api/trade-reasons/tags');
+    }
+
+    async submitTradeReason(body: TradeReasonSubmit): Promise<{ status: string; entry: any }> {
+        return this.request<{ status: string; entry: any }>('/api/trade-reasons/submit', {
+            method: 'POST',
+            body: JSON.stringify(body),
+        });
+    }
+
+    async getTradeReasonSummary(symbol: string): Promise<TradeReasonSummary> {
+        return this.request<TradeReasonSummary>(`/api/trade-reasons/summary/${symbol}`);
+    }
+
+    async getTradeReasonFeed(limit: number = 30): Promise<{ feed: TradeReasonEntry[] }> {
+        return this.request<{ feed: TradeReasonEntry[] }>('/api/trade-reasons/feed', {
+            params: { limit },
+        });
+    }
+
+    async getTrendingTradeReasons(limit: number = 10): Promise<{ trending: TrendingTradeReason[] }> {
+        return this.request<{ trending: TrendingTradeReason[] }>('/api/trade-reasons/trending', {
+            params: { limit },
         });
     }
 }

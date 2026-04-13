@@ -26,6 +26,7 @@ from ai_endpoints import router as ai_router
 from realtime_endpoints import router as realtime_router
 from news_integration import router as news_router
 from price_alerts import router as alerts_router
+from trade_reasons import router as trade_reasons_router
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -93,6 +94,7 @@ app.include_router(ai_router)
 app.include_router(realtime_router)
 app.include_router(news_router)
 app.include_router(alerts_router)
+app.include_router(trade_reasons_router)
 
 # Pydantic models
 class StockSymbol(BaseModel):
