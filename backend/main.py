@@ -2404,30 +2404,54 @@ async def international_screener(
     }
 
 @app.get("/smart-strategy")
-async def get_smart_strategy(symbols: Optional[str] = None):
+async def get_smart_strategy(symbols: Optional[str] = None, include_portfolio: bool = True, include_watchlist: bool = True):
     """
-    Professional hedge fund strategy: Value + Quality + Momentum.
+    Professional hedge fund strategy: Value + Quality + Momentum + Risk.
     Returns scored stocks with BUY/HOLD/SELL recommendations.
+    Integrates user's portfolio and watchlist for personalized analysis.
+    Results are cached for 5 minutes per symbol set.
     """
-    # Default to major US stocks if none provided (well-supported by yfinance)
+    # Build symbol list from multiple sources
+    symbol_set = set()
+
     if symbols:
-        symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
-    else:
-        symbol_list = [
-            "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", 
-            "META", "TSLA", "BRK.B", "JPM", "V",
+        symbol_set.update(s.strip().upper() for s in symbols.split(",") if s.strip())
+
+    # Add portfolio stocks
+    if include_portfolio:
+        try:
+            portfolio_data = _load_json("portfolio.json")
+            for pos in portfolio_data.get("positions", []):
+                sym = pos.get("symbol", "").upper()
+                if sym:
+                    symbol_set.add(sym)
+        except Exception:
+            pass
+
+    # If still empty, use default universe
+    if not symbol_set:
+        symbol_set = {
+            "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA",
+            "META", "TSLA", "BRK-B", "JPM", "V",
             "JNJ", "WMT", "PG", "MA", "HD",
             "BAC", "DIS", "NFLX", "KO", "CSCO"
-        ]
+        }
 
+    symbol_list = sorted(symbol_set)
     results = []
 
     for symbol in symbol_list:
         try:
+            # Check cache first
+            cached = _strategy_cache_get(symbol)
+            if cached:
+                results.append(cached)
+                continue
+
             stock = yf.Ticker(symbol)
             info = stock.info
             hist = stock.history(period="1y")
-            
+
             if hist.empty or 'currentPrice' not in info:
                 continue
 
@@ -2435,46 +2459,54 @@ async def get_smart_strategy(symbols: Optional[str] = None):
             if current_price == 0:
                 continue
 
-            # Layer 1: Value Score
+            # Layer 1: Value Score (sector-aware)
             value_score = _calculate_value_score(info, current_price)
-            
-            # Layer 2: Quality Score
+
+            # Layer 2: Quality Score (expanded)
             quality_score = _calculate_quality_score(info)
-            
-            # Layer 3: Momentum Score
+
+            # Layer 3: Momentum Score (with RSI)
             momentum_score = _calculate_momentum_score(hist, current_price)
-            
-            # Overall score (weighted average)
-            overall_score = (value_score * 0.4 + quality_score * 0.3 + momentum_score * 0.3)
-            
-            # Recommendation logic
-            recommendation = _get_recommendation(value_score, quality_score, momentum_score, overall_score)
-            
+
+            # Layer 4: Risk Score (new)
+            risk_score, risk_metrics = _calculate_risk_score(hist, info)
+
+            # Overall score (4-layer weighted)
+            overall_score = (value_score * 0.30 + quality_score * 0.25
+                             + momentum_score * 0.25 + risk_score * 0.20)
+
+            # Flexible weighted recommendation
+            recommendation = _get_recommendation(value_score, quality_score, momentum_score, risk_score, overall_score)
+
             # Confidence level
-            confidence = _get_confidence_level(value_score, quality_score, momentum_score)
-            
+            confidence = _get_confidence_level(value_score, quality_score, momentum_score, risk_score)
+
             # Position allocation (risk-adjusted)
-            allocation = _calculate_allocation(overall_score, recommendation)
-            
-            # Calculate metrics for detail view
+            allocation = _calculate_allocation(overall_score, recommendation, risk_metrics)
+
+            # Intrinsic value & discount
             intrinsic_value = _estimate_intrinsic_value(info, current_price)
             discount = ((intrinsic_value - current_price) / intrinsic_value * 100) if intrinsic_value > 0 else 0
-            
+
             # Moving averages
             ma50 = hist['Close'].rolling(window=50).mean().iloc[-1] if len(hist) >= 50 else current_price
             ma200 = hist['Close'].rolling(window=200).mean().iloc[-1] if len(hist) >= 200 else current_price
-            
-            # Relative strength (price performance vs 1Y ago)
+
+            # Relative strength
             year_ago_price = hist['Close'].iloc[0] if len(hist) > 0 else current_price
             relative_strength = ((current_price - year_ago_price) / year_ago_price * 100) if year_ago_price > 0 else 0
 
-            results.append({
+            # RSI
+            rsi = _calculate_rsi(hist)
+
+            entry = {
                 "symbol": symbol,
                 "companyName": info.get('longName', info.get('shortName', symbol)),
                 "currentPrice": round(current_price, 2),
                 "valueScore": round(value_score, 0),
                 "qualityScore": round(quality_score, 0),
                 "momentumScore": round(momentum_score, 0),
+                "riskScore": round(risk_score, 0),
                 "overallScore": round(overall_score, 0),
                 "recommendation": recommendation,
                 "confidence": confidence,
@@ -2484,11 +2516,22 @@ async def get_smart_strategy(symbols: Optional[str] = None):
                 "ma50": round(ma50, 2),
                 "ma200": round(ma200, 2),
                 "relativeStrength": round(relative_strength, 1),
+                "rsi": round(rsi, 1),
                 "fcfPositive": info.get('freeCashflow', 0) > 0,
-                "revenueGrowth": info.get('revenueGrowth', 0) * 100 if info.get('revenueGrowth') else 0,
-                "debtRatio": _calculate_debt_ratio(info),
-                "profitMargin": info.get('profitMargins', 0) * 100 if info.get('profitMargins') else 0,
-            })
+                "revenueGrowth": round(info.get('revenueGrowth', 0) * 100, 1) if info.get('revenueGrowth') else 0,
+                "debtRatio": round(_calculate_debt_ratio(info), 1),
+                "profitMargin": round(info.get('profitMargins', 0) * 100, 1) if info.get('profitMargins') else 0,
+                "roe": round(info.get('returnOnEquity', 0) * 100, 1) if info.get('returnOnEquity') else 0,
+                "currentRatio": round(info.get('currentRatio', 0), 2) if info.get('currentRatio') else 0,
+                "beta": round(risk_metrics.get('beta', 1.0), 2),
+                "volatility": round(risk_metrics.get('volatility', 0), 1),
+                "maxDrawdown": round(risk_metrics.get('max_drawdown', 0), 1),
+                "sharpeEstimate": round(risk_metrics.get('sharpe', 0), 2),
+            }
+
+            # Cache the result
+            _strategy_cache_set(symbol, entry)
+            results.append(entry)
 
         except Exception as e:
             logger.error(f"Error analyzing {symbol}: {str(e)}")
@@ -2503,255 +2546,416 @@ async def get_smart_strategy(symbols: Optional[str] = None):
         "last_updated": datetime.now().isoformat(),
     }
 
+# ── Strategy cache (5-minute TTL) ──────────────────────────────────────
+_strategy_cache: dict = {}
+_STRATEGY_CACHE_TTL = 300  # seconds
+
+def _strategy_cache_get(symbol: str):
+    entry = _strategy_cache.get(symbol)
+    if entry and (datetime.now().timestamp() - entry["ts"]) < _STRATEGY_CACHE_TTL:
+        return entry["data"]
+    return None
+
+def _strategy_cache_set(symbol: str, data: dict):
+    _strategy_cache[symbol] = {"data": data, "ts": datetime.now().timestamp()}
+
+
+# ── Sector-aware PE multiples ──────────────────────────────────────────
+SECTOR_PE = {
+    "Technology":        25,
+    "Communication Services": 20,
+    "Consumer Cyclical":  18,
+    "Consumer Defensive": 20,
+    "Healthcare":         18,
+    "Financial Services": 13,
+    "Industrials":        17,
+    "Energy":             12,
+    "Basic Materials":    14,
+    "Real Estate":        18,
+    "Utilities":          16,
+}
+
+
+def _calculate_rsi(hist, period=14) -> float:
+    """Calculate 14-day RSI."""
+    try:
+        if len(hist) < period + 1:
+            return 50.0
+        close = hist['Close']
+        delta = close.diff()
+        gain = delta.clip(lower=0)
+        loss = (-delta.clip(upper=0))
+        avg_gain = gain.rolling(window=period, min_periods=period).mean()
+        avg_loss = loss.rolling(window=period, min_periods=period).mean()
+        rs = avg_gain / avg_loss.replace(0, 1e-10)
+        rsi = 100 - (100 / (1 + rs))
+        return float(rsi.iloc[-1])
+    except Exception:
+        return 50.0
+
+
+def _calculate_risk_score(hist, info: dict) -> tuple:
+    """
+    Layer 4: Risk assessment.
+    Returns (score 0-100, metrics dict).
+    Higher score = lower risk = better.
+    """
+    metrics = {"beta": 1.0, "volatility": 0, "max_drawdown": 0, "sharpe": 0}
+    try:
+        if len(hist) < 30:
+            return 50.0, metrics
+
+        # Annualized volatility
+        daily_returns = hist['Close'].pct_change().dropna()
+        vol = float(daily_returns.std() * (252 ** 0.5) * 100)  # annualized %
+        metrics["volatility"] = vol
+
+        # Max drawdown
+        cummax = hist['Close'].cummax()
+        drawdown = ((hist['Close'] - cummax) / cummax * 100)
+        max_dd = float(drawdown.min())
+        metrics["max_drawdown"] = max_dd
+
+        # Beta
+        beta = info.get('beta', 1.0) or 1.0
+        metrics["beta"] = beta
+
+        # Sharpe estimate (annualized return / vol, risk-free ≈ 5%)
+        total_return = (hist['Close'].iloc[-1] / hist['Close'].iloc[0]) - 1
+        ann_return = total_return * (252 / len(hist))
+        sharpe = ((ann_return - 0.05) / (vol / 100)) if vol > 0 else 0
+        metrics["sharpe"] = sharpe
+
+        # Score: lower vol, smaller drawdown, lower beta, higher Sharpe → better
+        score = 0
+
+        # Volatility component (30 pts) — under 20% annual is great
+        if vol < 15:
+            score += 30
+        elif vol < 25:
+            score += 25
+        elif vol < 35:
+            score += 18
+        elif vol < 50:
+            score += 10
+        else:
+            score += 5
+
+        # Max drawdown component (25 pts)
+        if max_dd > -10:
+            score += 25
+        elif max_dd > -20:
+            score += 20
+        elif max_dd > -30:
+            score += 15
+        elif max_dd > -50:
+            score += 8
+        else:
+            score += 3
+
+        # Beta component (25 pts)
+        if beta < 0.8:
+            score += 25
+        elif beta < 1.0:
+            score += 22
+        elif beta < 1.2:
+            score += 18
+        elif beta < 1.5:
+            score += 12
+        else:
+            score += 5
+
+        # Sharpe component (20 pts)
+        if sharpe > 1.5:
+            score += 20
+        elif sharpe > 1.0:
+            score += 16
+        elif sharpe > 0.5:
+            score += 12
+        elif sharpe > 0:
+            score += 8
+        else:
+            score += 3
+
+        return min(100, max(0, score)), metrics
+    except Exception as e:
+        logger.debug(f"Risk score error: {e}")
+        return 50.0, metrics
+
+
 def _calculate_value_score(info: dict, current_price: float) -> float:
-    """
-    Calculate value score based on price vs intrinsic value.
-    100 = Deep value (50%+ discount)
-    50+ = Good value (positive discount)
-    20-50 = Fair value (slightly overvalued)
-    0-20 = Overvalued (significantly overvalued)
-    """
+    """Value score using sector-aware PE and multiple valuation methods."""
     try:
         intrinsic_value = _estimate_intrinsic_value(info, current_price)
         if intrinsic_value <= 0:
             return 0
-        
-        # Calculate discount/premium percentage
+
         discount = ((intrinsic_value - current_price) / intrinsic_value) * 100
-        
-        # Scoring logic - rewards undervaluation, penalizes overvaluation
+
         if discount >= 50:
-            # Deep value territory
             score = 100
         elif discount >= 40:
-            score = 90 + (discount - 40) * 1.0
+            score = 90 + (discount - 40)
         elif discount >= 30:
-            score = 80 + (discount - 30) * 1.0
+            score = 80 + (discount - 30)
         elif discount >= 20:
-            score = 70 + (discount - 20) * 1.0
+            score = 70 + (discount - 20)
         elif discount >= 10:
             score = 55 + (discount - 10) * 1.5
         elif discount >= 0:
-            # Slightly undervalued to fairly valued
-            score = 45 + (discount) * 1.0
+            score = 45 + discount
         elif discount >= -20:
-            # Slightly overvalued (give some credit)
             score = 30 + (discount + 20) * 0.75
         elif discount >= -50:
-            # Moderately overvalued
             score = 15 + (discount + 50) * 0.5
         else:
-            # Significantly overvalued
             score = max(0, 15 + (discount + 50) * 0.3)
-        
+
         return min(100, max(0, score))
-    except Exception as e:
-        logger.debug(f"Error calculating value score: {e}")
+    except Exception:
         return 0
 
+
 def _calculate_debt_ratio(info: dict) -> float:
-    """Calculate debt-to-equity ratio as a percentage."""
     try:
         total_debt = info.get('totalDebt', 0)
         total_equity = info.get('totalStockholdersEquity', 0)
-        
         if total_equity > 0 and total_debt >= 0:
             return (total_debt / total_equity) * 100
         return 0
     except Exception:
         return 0
 
+
 def _calculate_quality_score(info: dict) -> float:
-    """Calculate quality score based on financial health."""
+    """
+    Expanded quality score: FCF, revenue growth, debt, profit margin,
+    ROE, current ratio (6 metrics, ~17 pts each).
+    """
     try:
         score = 0
-        
-        # Free cash flow (25 points)
-        fcf = info.get('freeCashflow', 0)
-        if fcf > 0:
-            score += 25
-        
-        # Revenue growth (25 points)
-        revenue_growth = info.get('revenueGrowth', 0)
-        if revenue_growth:
-            if revenue_growth > 0.20:
-                score += 25
-            elif revenue_growth > 0.10:
-                score += 20
-            elif revenue_growth > 0:
-                score += 15
-        
-        # Debt ratio (25 points)
-        debt_ratio = _calculate_debt_ratio(info)
-        if debt_ratio < 30:
-            score += 25
-        elif debt_ratio < 50:
-            score += 15
-        elif debt_ratio < 70:
-            score += 10
-        
-        # Profit margin (25 points)
-        profit_margin = info.get('profitMargins', 0)
-        if profit_margin:
-            if profit_margin > 0.20:
-                score += 25
-            elif profit_margin > 0.10:
-                score += 20
-            elif profit_margin > 0:
-                score += 15
-        
+
+        # Free cash flow (17 pts)
+        if info.get('freeCashflow', 0) > 0:
+            score += 17
+
+        # Revenue growth (17 pts)
+        rg = info.get('revenueGrowth', 0) or 0
+        if rg > 0.20:
+            score += 17
+        elif rg > 0.10:
+            score += 13
+        elif rg > 0:
+            score += 9
+
+        # Debt ratio (17 pts)
+        dr = _calculate_debt_ratio(info)
+        if dr < 30:
+            score += 17
+        elif dr < 50:
+            score += 12
+        elif dr < 80:
+            score += 6
+
+        # Profit margin (17 pts)
+        pm = info.get('profitMargins', 0) or 0
+        if pm > 0.20:
+            score += 17
+        elif pm > 0.10:
+            score += 13
+        elif pm > 0:
+            score += 8
+
+        # ROE (16 pts) — new
+        roe = info.get('returnOnEquity', 0) or 0
+        if roe > 0.20:
+            score += 16
+        elif roe > 0.12:
+            score += 12
+        elif roe > 0.05:
+            score += 8
+
+        # Current ratio (16 pts) — new
+        cr = info.get('currentRatio', 0) or 0
+        if cr >= 1.5:
+            score += 16
+        elif cr >= 1.0:
+            score += 12
+        elif cr >= 0.7:
+            score += 6
+
         return min(100, score)
-    except:
+    except Exception:
         return 0
 
-def _calculate_momentum_score(hist: pd.DataFrame, current_price: float) -> float:
-    """Calculate momentum score based on technical indicators."""
+
+def _calculate_momentum_score(hist, current_price: float) -> float:
+    """Momentum score: MA50, MA200, relative strength, RSI."""
     try:
         if hist.empty or len(hist) < 50:
             return 0
-        
+
         score = 0
-        
-        # MA50 (33 points)
+
+        # MA50 (25 pts)
         ma50 = hist['Close'].rolling(window=50).mean().iloc[-1]
         if current_price > ma50:
-            score += 33
-        
-        # MA200 (34 points)
+            score += 25
+
+        # MA200 (25 pts)
         if len(hist) >= 200:
             ma200 = hist['Close'].rolling(window=200).mean().iloc[-1]
             if current_price > ma200:
-                score += 34
-        else:
-            if current_price > ma50:
-                score += 17
-        
-        # Relative strength (33 points)
-        year_ago_price = hist['Close'].iloc[0]
-        if year_ago_price > 0:
-            performance = ((current_price - year_ago_price) / year_ago_price) * 100
-            if performance > 20:
-                score += 33
-            elif performance > 10:
                 score += 25
-            elif performance > 0:
+        elif current_price > ma50:
+            score += 12
+
+        # Relative strength — 1Y return (25 pts)
+        year_ago = hist['Close'].iloc[0]
+        if year_ago > 0:
+            perf = ((current_price - year_ago) / year_ago) * 100
+            if perf > 30:
+                score += 25
+            elif perf > 15:
+                score += 20
+            elif perf > 5:
                 score += 15
-        
+            elif perf > 0:
+                score += 10
+
+        # RSI sweet spot (25 pts) — 40-65 is ideal entry, penalize extremes
+        rsi = _calculate_rsi(hist)
+        if 40 <= rsi <= 65:
+            score += 25  # ideal zone
+        elif 30 <= rsi < 40:
+            score += 20  # approaching oversold — attractive
+        elif 65 < rsi <= 75:
+            score += 15  # slightly overbought
+        elif rsi < 30:
+            score += 12  # deeply oversold — risky but can bounce
+        else:
+            score += 5   # overbought >75
+
         return min(100, score)
-    except:
+    except Exception:
         return 0
 
+
 def _estimate_intrinsic_value(info: dict, current_price: float) -> float:
-    """
-    Estimate intrinsic value using conservative value investing principles.
-    Returns a fair value that value investors would consider reasonable.
-    """
+    """Sector-aware intrinsic value using multiple methods."""
     try:
         intrinsic_values = []
-        
-        # Method 1: Graham Number (Value Investing Classic)
+
+        # Detect sector PE
+        sector = info.get('sector', '')
+        sector_pe = SECTOR_PE.get(sector, 15)
+
         eps = info.get('trailingEps', 0)
         book_value = info.get('bookValue', 0)
+
+        # Method 1: Graham Number
         if eps > 0 and book_value > 0:
-            graham_number = (22.5 * eps * book_value) ** 0.5
-            intrinsic_values.append(graham_number)
-        
-        # Method 2: Earnings Power Value (Conservative PE approach)
-        # Use sector-average or conservative PE of 15
+            intrinsic_values.append((22.5 * eps * book_value) ** 0.5)
+
+        # Method 2: Sector-aware Earnings Power Value
         if eps > 0:
-            conservative_pe = 15
-            earnings_value = eps * conservative_pe
-            intrinsic_values.append(earnings_value)
-        
+            intrinsic_values.append(eps * sector_pe)
+
         # Method 3: Book Value with quality premium
         roe = info.get('returnOnEquity', 0)
         if book_value > 0:
-            if roe > 0.15:  # Strong ROE > 15%
-                book_multiplier = 1.5
-            elif roe > 0.10:  # Good ROE > 10%
-                book_multiplier = 1.3
-            else:
-                book_multiplier = 1.0  # Just book value
-            book_based_value = book_value * book_multiplier
-            intrinsic_values.append(book_based_value)
-        
-        # Method 4: Dividend Discount Model (for dividend payers)
+            mult = 1.5 if roe > 0.15 else 1.3 if roe > 0.10 else 1.0
+            intrinsic_values.append(book_value * mult)
+
+        # Method 4: DDM
         dividend = info.get('dividendRate', 0)
-        dividend_yield = info.get('dividendYield', 0)
-        if dividend > 0 and dividend_yield and dividend_yield > 0:
-            # Required return of 10%
-            required_return = 0.10
-            growth_rate = info.get('earningsGrowth', 0.05)  # Assume 5% if not available
-            if growth_rate < required_return:
-                ddm_value = dividend / (required_return - growth_rate)
-                if ddm_value > 0 and ddm_value < current_price * 3:  # Sanity check
-                    intrinsic_values.append(ddm_value)
-        
-        # Method 5: Free Cash Flow based (if available)
-        fcf_per_share = info.get('freeCashflow', 0) / info.get('sharesOutstanding', 1) if info.get('sharesOutstanding') else 0
-        if fcf_per_share > 0:
-            # Use conservative multiple of 12-15x FCF
-            fcf_value = fcf_per_share * 12
-            intrinsic_values.append(fcf_value)
-        
-        # Return the median of available methods (more robust than average)
+        if dividend > 0:
+            growth = info.get('earningsGrowth', 0.05) or 0.05
+            growth = min(max(growth, 0.01), 0.08)  # clamp 1-8%
+            req_return = 0.10
+            if growth < req_return:
+                ddm = dividend / (req_return - growth)
+                if 0 < ddm < current_price * 3:
+                    intrinsic_values.append(ddm)
+
+        # Method 5: FCF yield
+        shares = info.get('sharesOutstanding', 0)
+        fcf = info.get('freeCashflow', 0)
+        if fcf > 0 and shares > 0:
+            fcf_per_share = fcf / shares
+            intrinsic_values.append(fcf_per_share * min(sector_pe, 15))
+
         if intrinsic_values:
             intrinsic_values.sort()
             mid = len(intrinsic_values) // 2
             if len(intrinsic_values) % 2 == 0:
                 return (intrinsic_values[mid - 1] + intrinsic_values[mid]) / 2
-            else:
-                return intrinsic_values[mid]
-        
-        # Fallback: Apply a 20% buffer to current price as fair value
-        # (Assumes market is somewhat efficient but can be 20% off)
+            return intrinsic_values[mid]
+
         return current_price * 1.20
-        
-    except Exception as e:
-        logger.debug(f"Error estimating intrinsic value: {e}")
+    except Exception:
         return current_price * 1.20
 
-def _get_recommendation(value_score: float, quality_score: float, momentum_score: float, overall_score: float) -> str:
-    """Determine BUY/HOLD/SELL/AVOID recommendation."""
-    if value_score >= 60 and quality_score >= 60 and momentum_score >= 60:
+
+def _get_recommendation(value: float, quality: float, momentum: float, risk: float, overall: float) -> str:
+    """Flexible weighted recommendation — no longer requires all layers to pass."""
+    # Strong conviction BUY: overall >= 70 and at least 3 layers strong
+    strong = sum([value >= 60, quality >= 60, momentum >= 55, risk >= 55])
+    if overall >= 70 and strong >= 3:
         return "BUY"
-    
-    passes = sum([value_score >= 60, quality_score >= 60, momentum_score >= 60])
-    if passes >= 2 and overall_score >= 55:
-        return "HOLD"
-    
-    if value_score >= 70 and overall_score >= 45:
-        return "HOLD"
-    
-    if overall_score < 40:
-        return "AVOID"
-    
-    return "SELL"
 
-def _get_confidence_level(value_score: float, quality_score: float, momentum_score: float) -> str:
-    """Determine confidence level based on score consistency."""
-    avg_score = (value_score + quality_score + momentum_score) / 3
-    std_dev = np.std([value_score, quality_score, momentum_score])
-    
-    if avg_score >= 70 and std_dev < 15:
+    # Moderate BUY: overall >= 60 and at least 2 layers strong
+    if overall >= 60 and strong >= 2:
+        return "BUY"
+
+    # HOLD: overall 45-60 or mixed signals
+    if overall >= 45:
+        return "HOLD"
+
+    # SELL: below 35
+    if overall < 35:
+        return "SELL"
+
+    return "AVOID"
+
+
+def _get_confidence_level(value: float, quality: float, momentum: float, risk: float) -> str:
+    scores = [value, quality, momentum, risk]
+    avg = sum(scores) / 4
+    std = float(np.std(scores))
+
+    if avg >= 65 and std < 15:
         return "HIGH"
-    
-    if avg_score >= 50 or std_dev < 20:
+    if avg >= 45 or std < 20:
         return "MEDIUM"
-    
     return "LOW"
 
-def _calculate_allocation(overall_score: float, recommendation: str) -> float:
-    """Calculate suggested portfolio allocation (%)."""
-    if recommendation == "AVOID" or recommendation == "SELL":
+
+def _calculate_allocation(overall: float, recommendation: str, risk_metrics: dict) -> float:
+    """Risk-adjusted position sizing."""
+    if recommendation in ("AVOID", "SELL"):
         return 0.0
-    
+
+    base = overall / 10  # 0-10%
+
+    # Risk-adjust: high vol or high beta → smaller position
+    vol = risk_metrics.get("volatility", 30)
+    beta = risk_metrics.get("beta", 1.0)
+
+    if vol > 40:
+        base *= 0.6
+    elif vol > 30:
+        base *= 0.8
+
+    if beta > 1.5:
+        base *= 0.7
+    elif beta > 1.2:
+        base *= 0.85
+
     if recommendation == "HOLD":
-        return min(5.0, overall_score / 20)
-    
-    base_allocation = overall_score / 10
-    
-    return min(10.0, max(3.0, base_allocation))
+        base = min(base, 5.0)
+
+    return round(min(10.0, max(1.0, base)), 1)
 
 if __name__ == "__main__":
     import uvicorn

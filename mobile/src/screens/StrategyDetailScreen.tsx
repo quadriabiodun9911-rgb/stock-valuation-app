@@ -134,12 +134,12 @@ const StrategyDetailScreen: React.FC<Props> = ({ route, navigation }) => {
                     [
                         {
                             label: 'Intrinsic Value',
-                            value: `₦${stock.intrinsicValue.toFixed(2)}`,
+                            value: `$${stock.intrinsicValue.toFixed(2)}`,
                             good: true,
                         },
                         {
                             label: 'Current Price',
-                            value: `₦${stock.currentPrice.toFixed(2)}`,
+                            value: `$${stock.currentPrice.toFixed(2)}`,
                             good: stock.discountToFairValue >= 30,
                         },
                         {
@@ -169,18 +169,28 @@ const StrategyDetailScreen: React.FC<Props> = ({ route, navigation }) => {
                         },
                         {
                             label: 'Revenue Growth',
-                            value: `${stock.revenueGrowth.toFixed(1)}%`,
-                            good: stock.revenueGrowth > 0,
+                            value: `${(stock.revenueGrowth ?? 0).toFixed(1)}%`,
+                            good: (stock.revenueGrowth ?? 0) > 0,
                         },
                         {
                             label: 'Debt Ratio',
-                            value: `${stock.debtRatio.toFixed(1)}%`,
-                            good: stock.debtRatio < 50,
+                            value: `${(stock.debtRatio ?? 0).toFixed(1)}%`,
+                            good: (stock.debtRatio ?? 0) < 50,
                         },
                         {
                             label: 'Profit Margin',
-                            value: `${stock.profitMargin.toFixed(1)}%`,
-                            good: stock.profitMargin > 0,
+                            value: `${(stock.profitMargin ?? 0).toFixed(1)}%`,
+                            good: (stock.profitMargin ?? 0) > 0,
+                        },
+                        {
+                            label: 'Return on Equity',
+                            value: `${((stock.roe ?? 0) * 100).toFixed(1)}%`,
+                            good: (stock.roe ?? 0) > 0.15,
+                        },
+                        {
+                            label: 'Current Ratio',
+                            value: `${(stock.currentRatio ?? 0).toFixed(2)}`,
+                            good: (stock.currentRatio ?? 0) >= 1.0,
                         },
                     ]
                 )}
@@ -194,12 +204,12 @@ const StrategyDetailScreen: React.FC<Props> = ({ route, navigation }) => {
                     [
                         {
                             label: '50-Day MA',
-                            value: `₦${stock.ma50.toFixed(2)}`,
+                            value: `$${stock.ma50.toFixed(2)}`,
                             good: stock.currentPrice > stock.ma50,
                         },
                         {
                             label: '200-Day MA',
-                            value: `₦${stock.ma200.toFixed(2)}`,
+                            value: `$${stock.ma200.toFixed(2)}`,
                             good: stock.currentPrice > stock.ma200,
                         },
                         {
@@ -211,9 +221,44 @@ const StrategyDetailScreen: React.FC<Props> = ({ route, navigation }) => {
                             good: stock.currentPrice > stock.ma50,
                         },
                         {
+                            label: 'RSI (14)',
+                            value: `${(stock.rsi ?? 50).toFixed(0)}`,
+                            good: (stock.rsi ?? 50) >= 30 && (stock.rsi ?? 50) <= 70,
+                        },
+                        {
                             label: 'Relative Strength',
                             value: `${stock.relativeStrength.toFixed(0)}`,
                             good: stock.relativeStrength > 50,
+                        },
+                    ]
+                )}
+
+                {/* Layer 4: Risk */}
+                {renderLayer(
+                    'Layer 4: Risk Assessment',
+                    'warning',
+                    '#8B5CF6',
+                    stock.riskScore ?? 0,
+                    [
+                        {
+                            label: 'Beta',
+                            value: `${(stock.beta ?? 1).toFixed(2)}`,
+                            good: (stock.beta ?? 1) <= 1.5,
+                        },
+                        {
+                            label: 'Volatility',
+                            value: `${((stock.volatility ?? 0) * 100).toFixed(1)}%`,
+                            good: (stock.volatility ?? 0) < 0.4,
+                        },
+                        {
+                            label: 'Max Drawdown',
+                            value: `${((stock.maxDrawdown ?? 0) * 100).toFixed(1)}%`,
+                            good: Math.abs(stock.maxDrawdown ?? 0) < 0.3,
+                        },
+                        {
+                            label: 'Sharpe Estimate',
+                            value: `${(stock.sharpeEstimate ?? 0).toFixed(2)}`,
+                            good: (stock.sharpeEstimate ?? 0) > 0.5,
                         },
                     ]
                 )}
@@ -228,7 +273,7 @@ const StrategyDetailScreen: React.FC<Props> = ({ route, navigation }) => {
                         <View style={styles.exitRule}>
                             <Ionicons name="checkmark-circle" size={18} color="#999" />
                             <Text style={styles.exitRuleText}>
-                                Sell when price reaches ₦{stock.intrinsicValue.toFixed(2)}
+                                Sell when price reaches ${stock.intrinsicValue.toFixed(2)}
                             </Text>
                         </View>
                         <View style={styles.exitRule}>
