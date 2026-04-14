@@ -94,6 +94,65 @@ def init_db():
             confidence INTEGER,
             timestamp  TEXT NOT NULL DEFAULT (datetime('now'))
         );
+
+        -- Social: Posts (X-like feed)
+        CREATE TABLE IF NOT EXISTS social_posts (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id    INTEGER NOT NULL,
+            content    TEXT NOT NULL,
+            symbol     TEXT,
+            image_url  TEXT,
+            likes      INTEGER NOT NULL DEFAULT 0,
+            reposts    INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        );
+
+        -- Social: Comments on posts
+        CREATE TABLE IF NOT EXISTS social_comments (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            post_id    INTEGER NOT NULL,
+            user_id    INTEGER NOT NULL,
+            content    TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (post_id) REFERENCES social_posts(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        );
+
+        -- Social: Likes
+        CREATE TABLE IF NOT EXISTS social_likes (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            post_id    INTEGER NOT NULL,
+            user_id    INTEGER NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (post_id) REFERENCES social_posts(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id),
+            UNIQUE(post_id, user_id)
+        );
+
+        -- Social: Friend requests & relationships
+        CREATE TABLE IF NOT EXISTS friendships (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            requester_id INTEGER NOT NULL,
+            addressee_id INTEGER NOT NULL,
+            status       TEXT NOT NULL DEFAULT 'pending',
+            created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (requester_id) REFERENCES users(id),
+            FOREIGN KEY (addressee_id) REFERENCES users(id),
+            UNIQUE(requester_id, addressee_id)
+        );
+
+        -- Social: Chat messages
+        CREATE TABLE IF NOT EXISTS chat_messages (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            sender_id   INTEGER NOT NULL,
+            receiver_id INTEGER NOT NULL,
+            content     TEXT NOT NULL,
+            read        INTEGER NOT NULL DEFAULT 0,
+            created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (sender_id) REFERENCES users(id),
+            FOREIGN KEY (receiver_id) REFERENCES users(id)
+        );
     """)
     conn.commit()
     _migrate_json_data(conn)
@@ -426,3 +485,226 @@ def get_trending_reasons(limit: int = 10) -> List[Dict[str, Any]]:
     """, (limit,)).fetchall()
     return [{"symbol": r["symbol"], "buy": r["buy_count"], "sell": r["sell_count"],
              "total": r["total"], "latest": r["latest"]} for r in rows]
+
+
+# ── Social Posts CRUD ─────────────────────────────────────────────
+
+def create_post(user_id: int, content: str, symbol: Optional[str] = None,
+                image_url: Optional[str] = None) -> Dict[str, Any]:
+    conn = _get_conn()
+    cur = conn.execute(
+        "INSERT INTO social_posts (user_id, content, symbol, image_url) VALUES (?, ?, ?, ?)",
+        (user_id, content, symbol.upper() if symbol else None, image_url),
+    )
+    conn.commit()
+    return get_post(cur.lastrowid, user_id)
+
+
+def get_post(post_id: int, viewer_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    conn = _get_conn()
+    row = conn.execute("""
+        SELECT p.*, u.username,
+               (SELECT COUNT(*) FROM social_likes WHERE post_id = p.id) as like_count,
+               (SELECT COUNT(*) FROM social_comments WHERE post_id = p.id) as comment_count
+        FROM social_posts p
+        JOIN users u ON p.user_id = u.id
+        WHERE p.id = ?
+    """, (post_id,)).fetchone()
+    if not row:
+        return None
+    d = dict(row)
+    if viewer_id:
+        liked = conn.execute(
+            "SELECT 1 FROM social_likes WHERE post_id = ? AND user_id = ?", (post_id, viewer_id)
+        ).fetchone()
+        d["liked_by_me"] = liked is not None
+    else:
+        d["liked_by_me"] = False
+    return d
+
+
+def get_social_feed(user_id: int, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+    conn = _get_conn()
+    rows = conn.execute("""
+        SELECT p.*, u.username,
+               (SELECT COUNT(*) FROM social_likes WHERE post_id = p.id) as like_count,
+               (SELECT COUNT(*) FROM social_comments WHERE post_id = p.id) as comment_count
+        FROM social_posts p
+        JOIN users u ON p.user_id = u.id
+        ORDER BY p.created_at DESC
+        LIMIT ? OFFSET ?
+    """, (limit, offset)).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        liked = conn.execute(
+            "SELECT 1 FROM social_likes WHERE post_id = ? AND user_id = ?", (d["id"], user_id)
+        ).fetchone()
+        d["liked_by_me"] = liked is not None
+        result.append(d)
+    return result
+
+
+def toggle_like(post_id: int, user_id: int) -> Dict[str, Any]:
+    conn = _get_conn()
+    existing = conn.execute(
+        "SELECT id FROM social_likes WHERE post_id = ? AND user_id = ?", (post_id, user_id)
+    ).fetchone()
+    if existing:
+        conn.execute("DELETE FROM social_likes WHERE id = ?", (existing["id"],))
+        liked = False
+    else:
+        conn.execute("INSERT INTO social_likes (post_id, user_id) VALUES (?, ?)", (post_id, user_id))
+        liked = True
+    conn.commit()
+    count = conn.execute("SELECT COUNT(*) as c FROM social_likes WHERE post_id = ?", (post_id,)).fetchone()["c"]
+    return {"liked": liked, "like_count": count}
+
+
+def add_comment(post_id: int, user_id: int, content: str) -> Dict[str, Any]:
+    conn = _get_conn()
+    cur = conn.execute(
+        "INSERT INTO social_comments (post_id, user_id, content) VALUES (?, ?, ?)",
+        (post_id, user_id, content),
+    )
+    conn.commit()
+    row = conn.execute("""
+        SELECT c.*, u.username FROM social_comments c
+        JOIN users u ON c.user_id = u.id WHERE c.id = ?
+    """, (cur.lastrowid,)).fetchone()
+    return dict(row)
+
+
+def get_comments(post_id: int, limit: int = 50) -> List[Dict[str, Any]]:
+    conn = _get_conn()
+    rows = conn.execute("""
+        SELECT c.*, u.username FROM social_comments c
+        JOIN users u ON c.user_id = u.id
+        WHERE c.post_id = ?
+        ORDER BY c.created_at ASC LIMIT ?
+    """, (post_id, limit)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_post(post_id: int, user_id: int) -> bool:
+    conn = _get_conn()
+    cur = conn.execute("DELETE FROM social_posts WHERE id = ? AND user_id = ?", (post_id, user_id))
+    conn.commit()
+    return cur.rowcount > 0
+
+
+# ── Friendships CRUD ──────────────────────────────────────────────
+
+def send_friend_request(requester_id: int, addressee_id: int) -> Dict[str, Any]:
+    conn = _get_conn()
+    # Check if already exists in either direction
+    existing = conn.execute("""
+        SELECT * FROM friendships
+        WHERE (requester_id = ? AND addressee_id = ?) OR (requester_id = ? AND addressee_id = ?)
+    """, (requester_id, addressee_id, addressee_id, requester_id)).fetchone()
+    if existing:
+        return {"status": dict(existing)["status"], "message": "Friendship already exists"}
+    conn.execute(
+        "INSERT INTO friendships (requester_id, addressee_id, status) VALUES (?, ?, 'pending')",
+        (requester_id, addressee_id),
+    )
+    conn.commit()
+    return {"status": "pending", "message": "Friend request sent"}
+
+
+def respond_friend_request(friendship_id: int, user_id: int, accept: bool) -> Dict[str, Any]:
+    conn = _get_conn()
+    row = conn.execute("SELECT * FROM friendships WHERE id = ? AND addressee_id = ?",
+                       (friendship_id, user_id)).fetchone()
+    if not row:
+        return {"error": "Request not found"}
+    new_status = "accepted" if accept else "rejected"
+    conn.execute("UPDATE friendships SET status = ? WHERE id = ?", (new_status, friendship_id))
+    conn.commit()
+    return {"status": new_status}
+
+
+def get_friends(user_id: int) -> List[Dict[str, Any]]:
+    conn = _get_conn()
+    rows = conn.execute("""
+        SELECT u.id, u.username, u.email, f.created_at as friends_since
+        FROM friendships f
+        JOIN users u ON (CASE WHEN f.requester_id = ? THEN f.addressee_id ELSE f.requester_id END) = u.id
+        WHERE (f.requester_id = ? OR f.addressee_id = ?) AND f.status = 'accepted'
+    """, (user_id, user_id, user_id)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_friend_requests(user_id: int) -> List[Dict[str, Any]]:
+    conn = _get_conn()
+    rows = conn.execute("""
+        SELECT f.id, f.requester_id, u.username, f.created_at
+        FROM friendships f
+        JOIN users u ON f.requester_id = u.id
+        WHERE f.addressee_id = ? AND f.status = 'pending'
+        ORDER BY f.created_at DESC
+    """, (user_id,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def search_users(query: str, current_user_id: int, limit: int = 20) -> List[Dict[str, Any]]:
+    conn = _get_conn()
+    rows = conn.execute("""
+        SELECT id, username, email FROM users
+        WHERE id != ? AND (username LIKE ? OR email LIKE ?)
+        LIMIT ?
+    """, (current_user_id, f"%{query}%", f"%{query}%", limit)).fetchall()
+    return [dict(r) for r in rows]
+
+
+# ── Chat Messages CRUD ───────────────────────────────────────────
+
+def send_message(sender_id: int, receiver_id: int, content: str) -> Dict[str, Any]:
+    conn = _get_conn()
+    cur = conn.execute(
+        "INSERT INTO chat_messages (sender_id, receiver_id, content) VALUES (?, ?, ?)",
+        (sender_id, receiver_id, content),
+    )
+    conn.commit()
+    row = conn.execute("""
+        SELECT m.*, u.username as sender_username FROM chat_messages m
+        JOIN users u ON m.sender_id = u.id WHERE m.id = ?
+    """, (cur.lastrowid,)).fetchone()
+    return dict(row)
+
+
+def get_conversations(user_id: int) -> List[Dict[str, Any]]:
+    """Get list of conversations with last message preview."""
+    conn = _get_conn()
+    rows = conn.execute("""
+        SELECT
+            CASE WHEN m.sender_id = ? THEN m.receiver_id ELSE m.sender_id END as other_user_id,
+            u.username as other_username,
+            m.content as last_message,
+            m.created_at as last_message_at,
+            (SELECT COUNT(*) FROM chat_messages
+             WHERE sender_id = u.id AND receiver_id = ? AND read = 0) as unread_count
+        FROM chat_messages m
+        JOIN users u ON (CASE WHEN m.sender_id = ? THEN m.receiver_id ELSE m.sender_id END) = u.id
+        WHERE m.sender_id = ? OR m.receiver_id = ?
+        GROUP BY other_user_id
+        ORDER BY m.created_at DESC
+    """, (user_id, user_id, user_id, user_id, user_id)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_messages(user_id: int, other_user_id: int, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+    conn = _get_conn()
+    # Mark messages as read
+    conn.execute(
+        "UPDATE chat_messages SET read = 1 WHERE sender_id = ? AND receiver_id = ? AND read = 0",
+        (other_user_id, user_id),
+    )
+    conn.commit()
+    rows = conn.execute("""
+        SELECT m.*, u.username as sender_username FROM chat_messages m
+        JOIN users u ON m.sender_id = u.id
+        WHERE (m.sender_id = ? AND m.receiver_id = ?) OR (m.sender_id = ? AND m.receiver_id = ?)
+        ORDER BY m.created_at DESC LIMIT ? OFFSET ?
+    """, (user_id, other_user_id, other_user_id, user_id, limit, offset)).fetchall()
+    return [dict(r) for r in reversed(rows)]

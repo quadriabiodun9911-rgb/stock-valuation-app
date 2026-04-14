@@ -1,5 +1,5 @@
 // Real-time WebSocket service for stock price updates and alerts
-import { API_BASE_URL } from './api';
+import { API_URL as API_BASE_URL } from './api';
 
 export interface PriceUpdate {
   symbol: string;
@@ -61,7 +61,7 @@ class WebSocketManager {
 
         this.symbol = symbol.toUpperCase();
         const wsUrl = `${this.url}/realtime/ws/price/${this.symbol}`;
-        
+
         console.log(`[WebSocket] Connecting to ${wsUrl}`);
         this.ws = new WebSocket(wsUrl);
 
@@ -76,7 +76,7 @@ class WebSocketManager {
         this.ws.onmessage = (event: WebSocketMessageEvent) => {
           try {
             const message = JSON.parse(event.data);
-            
+
             if (message.type === 'price_update') {
               console.log(`[WebSocket] Price update for ${message.data.symbol}:`, message.data.price);
               this.priceHandlers.forEach(handler => handler(message.data));
@@ -129,7 +129,7 @@ class WebSocketManager {
    */
   onPriceUpdate(handler: MessageHandler): () => void {
     this.priceHandlers.add(handler);
-    
+
     // Return unsubscribe function
     return () => {
       this.priceHandlers.delete(handler);
@@ -141,7 +141,7 @@ class WebSocketManager {
    */
   onAlert(handler: MessageHandler): () => void {
     this.alertHandlers.add(handler);
-    
+
     // Return unsubscribe function
     return () => {
       this.alertHandlers.delete(handler);
@@ -196,7 +196,7 @@ class WebSocketManager {
       this.reconnectAttempts++;
       const delay = this.reconnectDelay * this.reconnectAttempts;
       console.log(`[WebSocket] Attempting to reconnect in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
-      
+
       setTimeout(() => {
         if (this.symbol) {
           this.connect(this.symbol).catch(error => {

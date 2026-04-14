@@ -4,6 +4,7 @@ import {
     Text,
     StyleSheet,
     ScrollView,
+    RefreshControl,
     TouchableOpacity,
     FlatList,
     Alert,
@@ -69,8 +70,9 @@ const PortfolioQuick: React.FC<Props> = ({ navigation }) => {
 
             <ScrollView
                 showsVerticalScrollIndicator={false}
-                refreshing={refreshing}
-                onRefresh={onRefresh}
+                refreshControl={
+                    <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+                }
             >
                 {/* Main Stats */}
                 <LinearGradient

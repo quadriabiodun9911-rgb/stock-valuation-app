@@ -11,8 +11,13 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { stockAPI } from '../services/api';
+import SocialFeedScreen from './SocialFeedScreen';
+import ChatScreen from './ChatScreen';
 
-const IntelligenceScreen: React.FC = () => {
+type CrowdTab = 'social' | 'intelligence' | 'chat';
+
+const IntelligenceScreen: React.FC<{ navigation?: any }> = ({ navigation }) => {
+    const [activeTab, setActiveTab] = useState<CrowdTab>('social');
     const [loading, setLoading] = useState(true);
 
     // Trade reason submission
@@ -98,163 +103,205 @@ const IntelligenceScreen: React.FC = () => {
         );
     }
 
-    return (
-        <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-            {/* Header */}
+    const renderTab = (tab: CrowdTab, icon: string, label: string) => (
+        <TouchableOpacity
+            key={tab}
+            style={[styles.tabItem, activeTab === tab && styles.tabItemActive]}
+            onPress={() => setActiveTab(tab)}
+        >
+            <Ionicons name={icon as any} size={18} color={activeTab === tab ? '#2563eb' : '#94a3b8'} />
+            <Text style={[styles.tabLabel, activeTab === tab && styles.tabLabelActive]}>{label}</Text>
+        </TouchableOpacity>
+    );
+
+    const TabHeader = () => (
+        <>
             <View style={styles.header}>
-                <Text style={styles.headerTitle}>Crowd Intelligence</Text>
-                <Text style={styles.headerSub}>See why people buy & sell</Text>
+                <Text style={styles.headerTitle}>Community</Text>
+                <Text style={styles.headerSub}>Connect with traders</Text>
             </View>
-
-            {/* ── Submit Trade Reasoning ── */}
-            <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Share Your Trade Reasoning</Text>
-
-                <View style={styles.toggleRow}>
-                    <TouchableOpacity
-                        style={[styles.toggle, tradeAction === 'buy' && styles.toggleBuyActive]}
-                        onPress={() => { setTradeAction('buy'); setSelectedReasons([]); }}
-                    >
-                        <Ionicons name="trending-up" size={16} color={tradeAction === 'buy' ? '#fff' : '#16a34a'} />
-                        <Text style={[styles.toggleLabel, tradeAction === 'buy' && styles.toggleLabelActive]}>Buy</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                        style={[styles.toggle, tradeAction === 'sell' && styles.toggleSellActive]}
-                        onPress={() => { setTradeAction('sell'); setSelectedReasons([]); }}
-                    >
-                        <Ionicons name="trending-down" size={16} color={tradeAction === 'sell' ? '#fff' : '#dc2626'} />
-                        <Text style={[styles.toggleLabel, tradeAction === 'sell' && styles.toggleLabelActive]}>Sell</Text>
-                    </TouchableOpacity>
-                </View>
-
-                <View style={styles.card}>
-                    <TextInput style={styles.input} placeholder="Stock symbol (e.g., AAPL)" value={tradeSymbol}
-                        onChangeText={setTradeSymbol} autoCapitalize="characters" />
-
-                    <Text style={styles.subLabel}>Select reasons (up to 5)</Text>
-                    <View style={styles.tagWrap}>
-                        {(tradeAction === 'buy' ? buyTags : sellTags).map((tag) => (
-                            <TouchableOpacity key={tag}
-                                style={[styles.tag, selectedReasons.includes(tag) && (tradeAction === 'buy' ? styles.tagBuy : styles.tagSell)]}
-                                onPress={() => toggleReason(tag)}>
-                                <Text style={[styles.tagText, selectedReasons.includes(tag) && styles.tagTextActive]}>{tag}</Text>
-                            </TouchableOpacity>
-                        ))}
-                    </View>
-
-                    <Text style={styles.subLabel}>Confidence</Text>
-                    <View style={styles.confRow}>
-                        {[1, 2, 3, 4, 5].map((l) => (
-                            <TouchableOpacity key={l} onPress={() => setTradeConfidence(l)}
-                                style={[styles.confDot, tradeConfidence >= l && styles.confDotActive]}>
-                                <Text style={[styles.confNum, tradeConfidence >= l && styles.confNumActive]}>{l}</Text>
-                            </TouchableOpacity>
-                        ))}
-                    </View>
-
-                    <TextInput style={[styles.input, { minHeight: 48 }]} placeholder="Brief note (optional)"
-                        value={tradeNote} onChangeText={setTradeNote} maxLength={280} multiline />
-
-                    <TouchableOpacity style={[styles.btn, tradeAction === 'sell' && { backgroundColor: '#dc2626' }]}
-                        onPress={handleSubmitReason}>
-                        <Ionicons name="send" size={16} color="#fff" />
-                        <Text style={styles.btnText}>Submit {tradeAction === 'buy' ? 'Buy' : 'Sell'} Reasoning</Text>
-                    </TouchableOpacity>
-                </View>
+            <View style={styles.tabBar}>
+                {renderTab('social', 'logo-twitter', 'Feed')}
+                {renderTab('intelligence', 'analytics', 'Intelligence')}
+                {renderTab('chat', 'chatbubbles', 'Chat')}
             </View>
+        </>
+    );
 
-            {/* ── Crowd Lookup ── */}
-            <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Crowd Reasoning Lookup</Text>
-                <View style={styles.card}>
-                    <TextInput style={styles.input} placeholder="Stock symbol (e.g., AAPL)" value={summarySymbol}
-                        onChangeText={setSummarySymbol} autoCapitalize="characters" />
-                    <TouchableOpacity style={styles.btn} onPress={handleLookupSummary}>
-                        <Ionicons name="bar-chart" size={16} color="#fff" />
-                        <Text style={styles.btnText}>See Why People Trade This</Text>
-                    </TouchableOpacity>
-
-                    {summaryLoading && <ActivityIndicator size="small" color="#2563eb" style={{ marginTop: 12 }} />}
-
-                    {tradeSummary && (
-                        <View style={styles.summaryWrap}>
-                            <Text style={styles.subLabel}>{tradeSummary.symbol} — {tradeSummary.total_submissions} submissions</Text>
-                            <View style={styles.sentimentBar}>
-                                <View style={[styles.sentBuy, { flex: tradeSummary.buy.count || 0.1 }]} />
-                                <View style={[styles.sentSell, { flex: tradeSummary.sell.count || 0.1 }]} />
-                            </View>
-                            <View style={styles.row}>
-                                <Text style={styles.green}>{tradeSummary.buy.count} buy</Text>
-                                <Text style={styles.red}>{tradeSummary.sell.count} sell</Text>
-                            </View>
-
-                            {tradeSummary.buy.top_reasons.length > 0 && (
-                                <>
-                                    <Text style={styles.subLabel}>Top Buy Reasons</Text>
-                                    {tradeSummary.buy.top_reasons.slice(0, 5).map((r: any) => (
-                                        <View key={r.reason} style={styles.row}>
-                                            <Text style={styles.label}>{r.reason}</Text>
-                                            <Text style={styles.green}>{r.pct}%</Text>
-                                        </View>
-                                    ))}
-                                </>
-                            )}
-                            {tradeSummary.sell.top_reasons.length > 0 && (
-                                <>
-                                    <Text style={styles.subLabel}>Top Sell Reasons</Text>
-                                    {tradeSummary.sell.top_reasons.slice(0, 5).map((r: any) => (
-                                        <View key={r.reason} style={styles.row}>
-                                            <Text style={styles.label}>{r.reason}</Text>
-                                            <Text style={styles.red}>{r.pct}%</Text>
-                                        </View>
-                                    ))}
-                                </>
-                            )}
-                        </View>
-                    )}
-                </View>
+    if (activeTab === 'social') {
+        return (
+            <View style={{ flex: 1, backgroundColor: '#f8fafc' }}>
+                <TabHeader />
+                <SocialFeedScreen navigation={navigation} />
             </View>
+        );
+    }
 
-            {/* ── Trending ── */}
-            {trending.length > 0 && (
+    if (activeTab === 'chat') {
+        return (
+            <View style={{ flex: 1, backgroundColor: '#f8fafc' }}>
+                <TabHeader />
+                <ChatScreen navigation={navigation} />
+            </View>
+        );
+    }
+
+    // ── Intelligence tab (original content) ──
+    return (
+        <View style={{ flex: 1, backgroundColor: '#f8fafc' }}>
+            <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+                <TabHeader />
+
+                {/* ── Submit Trade Reasoning ── */}
                 <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>
-                        <Ionicons name="flame" size={18} color="#f97316" /> Trending
-                    </Text>
-                    <View style={styles.card}>
-                        {trending.map((t) => (
-                            <View key={t.symbol} style={styles.row}>
-                                <Text style={styles.label}>{t.symbol}</Text>
-                                <Text style={styles.green}>{t.buy} buy</Text>
-                                <Text style={styles.red}>{t.sell} sell</Text>
-                            </View>
-                        ))}
-                    </View>
-                </View>
-            )}
+                    <Text style={styles.sectionTitle}>Share Your Trade Reasoning</Text>
 
-            {/* ── Live Feed ── */}
-            {feed.length > 0 && (
-                <View style={[styles.section, { marginBottom: 40 }]}>
-                    <Text style={styles.sectionTitle}>Live Feed</Text>
+                    <View style={styles.toggleRow}>
+                        <TouchableOpacity
+                            style={[styles.toggle, tradeAction === 'buy' && styles.toggleBuyActive]}
+                            onPress={() => { setTradeAction('buy'); setSelectedReasons([]); }}
+                        >
+                            <Ionicons name="trending-up" size={16} color={tradeAction === 'buy' ? '#fff' : '#16a34a'} />
+                            <Text style={[styles.toggleLabel, tradeAction === 'buy' && styles.toggleLabelActive]}>Buy</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={[styles.toggle, tradeAction === 'sell' && styles.toggleSellActive]}
+                            onPress={() => { setTradeAction('sell'); setSelectedReasons([]); }}
+                        >
+                            <Ionicons name="trending-down" size={16} color={tradeAction === 'sell' ? '#fff' : '#dc2626'} />
+                            <Text style={[styles.toggleLabel, tradeAction === 'sell' && styles.toggleLabelActive]}>Sell</Text>
+                        </TouchableOpacity>
+                    </View>
+
                     <View style={styles.card}>
-                        {feed.slice(0, 10).map((entry, idx) => (
-                            <View key={idx} style={styles.feedItem}>
-                                <View style={styles.row}>
-                                    <Text style={styles.label}>{entry.symbol}</Text>
-                                    <Text style={entry.action === 'buy' ? styles.green : styles.red}>
-                                        {entry.action.toUpperCase()}
-                                    </Text>
-                                    <Text style={styles.feedTime}>{new Date(entry.timestamp).toLocaleDateString()}</Text>
-                                </View>
-                                <Text style={styles.feedReasons}>{entry.reasons.join(', ')}</Text>
-                                {entry.note ? <Text style={styles.feedNote}>"{entry.note}"</Text> : null}
-                            </View>
-                        ))}
+                        <TextInput style={styles.input} placeholder="Stock symbol (e.g., AAPL)" value={tradeSymbol}
+                            onChangeText={setTradeSymbol} autoCapitalize="characters" />
+
+                        <Text style={styles.subLabel}>Select reasons (up to 5)</Text>
+                        <View style={styles.tagWrap}>
+                            {(tradeAction === 'buy' ? buyTags : sellTags).map((tag) => (
+                                <TouchableOpacity key={tag}
+                                    style={[styles.tag, selectedReasons.includes(tag) && (tradeAction === 'buy' ? styles.tagBuy : styles.tagSell)]}
+                                    onPress={() => toggleReason(tag)}>
+                                    <Text style={[styles.tagText, selectedReasons.includes(tag) && styles.tagTextActive]}>{tag}</Text>
+                                </TouchableOpacity>
+                            ))}
+                        </View>
+
+                        <Text style={styles.subLabel}>Confidence</Text>
+                        <View style={styles.confRow}>
+                            {[1, 2, 3, 4, 5].map((l) => (
+                                <TouchableOpacity key={l} onPress={() => setTradeConfidence(l)}
+                                    style={[styles.confDot, tradeConfidence >= l && styles.confDotActive]}>
+                                    <Text style={[styles.confNum, tradeConfidence >= l && styles.confNumActive]}>{l}</Text>
+                                </TouchableOpacity>
+                            ))}
+                        </View>
+
+                        <TextInput style={[styles.input, { minHeight: 48 }]} placeholder="Brief note (optional)"
+                            value={tradeNote} onChangeText={setTradeNote} maxLength={280} multiline />
+
+                        <TouchableOpacity style={[styles.btn, tradeAction === 'sell' && { backgroundColor: '#dc2626' }]}
+                            onPress={handleSubmitReason}>
+                            <Ionicons name="send" size={16} color="#fff" />
+                            <Text style={styles.btnText}>Submit {tradeAction === 'buy' ? 'Buy' : 'Sell'} Reasoning</Text>
+                        </TouchableOpacity>
                     </View>
                 </View>
-            )}
-        </ScrollView>
+
+                {/* ── Crowd Lookup ── */}
+                <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Crowd Reasoning Lookup</Text>
+                    <View style={styles.card}>
+                        <TextInput style={styles.input} placeholder="Stock symbol (e.g., AAPL)" value={summarySymbol}
+                            onChangeText={setSummarySymbol} autoCapitalize="characters" />
+                        <TouchableOpacity style={styles.btn} onPress={handleLookupSummary}>
+                            <Ionicons name="bar-chart" size={16} color="#fff" />
+                            <Text style={styles.btnText}>See Why People Trade This</Text>
+                        </TouchableOpacity>
+
+                        {summaryLoading && <ActivityIndicator size="small" color="#2563eb" style={{ marginTop: 12 }} />}
+
+                        {tradeSummary && (
+                            <View style={styles.summaryWrap}>
+                                <Text style={styles.subLabel}>{tradeSummary.symbol} — {tradeSummary.total_submissions} submissions</Text>
+                                <View style={styles.sentimentBar}>
+                                    <View style={[styles.sentBuy, { flex: tradeSummary.buy.count || 0.1 }]} />
+                                    <View style={[styles.sentSell, { flex: tradeSummary.sell.count || 0.1 }]} />
+                                </View>
+                                <View style={styles.row}>
+                                    <Text style={styles.green}>{tradeSummary.buy.count} buy</Text>
+                                    <Text style={styles.red}>{tradeSummary.sell.count} sell</Text>
+                                </View>
+
+                                {tradeSummary.buy.top_reasons.length > 0 && (
+                                    <>
+                                        <Text style={styles.subLabel}>Top Buy Reasons</Text>
+                                        {tradeSummary.buy.top_reasons.slice(0, 5).map((r: any) => (
+                                            <View key={r.reason} style={styles.row}>
+                                                <Text style={styles.label}>{r.reason}</Text>
+                                                <Text style={styles.green}>{r.pct}%</Text>
+                                            </View>
+                                        ))}
+                                    </>
+                                )}
+                                {tradeSummary.sell.top_reasons.length > 0 && (
+                                    <>
+                                        <Text style={styles.subLabel}>Top Sell Reasons</Text>
+                                        {tradeSummary.sell.top_reasons.slice(0, 5).map((r: any) => (
+                                            <View key={r.reason} style={styles.row}>
+                                                <Text style={styles.label}>{r.reason}</Text>
+                                                <Text style={styles.red}>{r.pct}%</Text>
+                                            </View>
+                                        ))}
+                                    </>
+                                )}
+                            </View>
+                        )}
+                    </View>
+                </View>
+
+                {/* ── Trending ── */}
+                {trending.length > 0 && (
+                    <View style={styles.section}>
+                        <Text style={styles.sectionTitle}>
+                            <Ionicons name="flame" size={18} color="#f97316" /> Trending
+                        </Text>
+                        <View style={styles.card}>
+                            {trending.map((t) => (
+                                <View key={t.symbol} style={styles.row}>
+                                    <Text style={styles.label}>{t.symbol}</Text>
+                                    <Text style={styles.green}>{t.buy} buy</Text>
+                                    <Text style={styles.red}>{t.sell} sell</Text>
+                                </View>
+                            ))}
+                        </View>
+                    </View>
+                )}
+
+                {/* ── Live Feed ── */}
+                {feed.length > 0 && (
+                    <View style={[styles.section, { marginBottom: 40 }]}>
+                        <Text style={styles.sectionTitle}>Live Feed</Text>
+                        <View style={styles.card}>
+                            {feed.slice(0, 10).map((entry, idx) => (
+                                <View key={idx} style={styles.feedItem}>
+                                    <View style={styles.row}>
+                                        <Text style={styles.label}>{entry.symbol}</Text>
+                                        <Text style={entry.action === 'buy' ? styles.green : styles.red}>
+                                            {entry.action.toUpperCase()}
+                                        </Text>
+                                        <Text style={styles.feedTime}>{new Date(entry.timestamp).toLocaleDateString()}</Text>
+                                    </View>
+                                    <Text style={styles.feedReasons}>{entry.reasons.join(', ')}</Text>
+                                    {entry.note ? <Text style={styles.feedNote}>"{entry.note}"</Text> : null}
+                                </View>
+                            ))}
+                        </View>
+                    </View>
+                )}
+            </ScrollView>
+        </View>
     );
 };
 
@@ -266,6 +313,13 @@ const styles = StyleSheet.create({
     header: { paddingTop: 60, paddingBottom: 16, paddingHorizontal: 20, backgroundColor: '#fff' },
     headerTitle: { fontSize: 22, fontWeight: '800', color: '#0f172a' },
     headerSub: { fontSize: 14, color: '#94a3b8', marginTop: 4 },
+
+    // Tab bar
+    tabBar: { flexDirection: 'row', backgroundColor: '#fff', paddingHorizontal: 8, paddingBottom: 8, gap: 4, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
+    tabItem: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10, borderRadius: 10, backgroundColor: '#f8fafc' },
+    tabItemActive: { backgroundColor: '#eff6ff' },
+    tabLabel: { fontSize: 13, fontWeight: '700', color: '#94a3b8' },
+    tabLabelActive: { color: '#2563eb' },
 
     section: { paddingHorizontal: 16, paddingTop: 16 },
     sectionTitle: { fontSize: 17, fontWeight: '700', color: '#0f172a', marginBottom: 10 },

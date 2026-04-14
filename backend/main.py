@@ -28,6 +28,10 @@ from news_integration import router as news_router
 from price_alerts import router as alerts_router
 from trade_reasons import router as trade_reasons_router
 from auth import router as auth_router, get_current_user, get_user_id
+from portfolio_tracker import router as portfolio_tracker_router
+from enhanced_charting import router as charting_router
+from backtesting_engine import router as backtest_router
+from social import router as social_router
 import database as db
 
 # Set up logging
@@ -101,6 +105,10 @@ app.include_router(realtime_router)
 app.include_router(news_router)
 app.include_router(alerts_router)
 app.include_router(trade_reasons_router)
+app.include_router(portfolio_tracker_router)
+app.include_router(charting_router)
+app.include_router(backtest_router)
+app.include_router(social_router)
 
 # Pydantic models
 class StockSymbol(BaseModel):

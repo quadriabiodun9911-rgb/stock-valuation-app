@@ -7,10 +7,10 @@ const resolveApiBaseUrl = () => {
 
     const hostUri =
         Constants.expoConfig?.hostUri ||
-        Constants.expoConfig?.debuggerHost ||
-        Constants.manifest?.hostUri ||
-        Constants.manifest?.debuggerHost ||
-        Constants.manifest2?.extra?.expoClient?.hostUri;
+        (Constants.expoConfig as any)?.debuggerHost ||
+        (Constants as any).manifest?.hostUri ||
+        (Constants as any).manifest?.debuggerHost ||
+        (Constants as any).manifest2?.extra?.expoClient?.hostUri;
     if (hostUri) {
         const host = hostUri.split(':')[0];
         return `http://${host}:8000`;
@@ -175,6 +175,10 @@ export interface TechnicalResult {
         indicator: string;
         description: string;
     }>;
+    trend: {
+        direction: string;
+        strength: string;
+    };
 }
 
 export interface ComprehensiveResult {
@@ -257,6 +261,10 @@ export interface PortfolioPosition {
     profit: number;
     profit_pct: number;
     sector: string;
+    quantity: number;
+    purchase_price: number;
+    current_value: number;
+    return_pct: number;
 }
 
 export interface PortfolioSummary {
@@ -289,6 +297,8 @@ export interface PortfolioAllocationEntry {
 export interface PortfolioResponse {
     positions: PortfolioPosition[];
     cash: number;
+    portfolio_value: number;
+    total_invested: number;
     summary: PortfolioSummary;
     performance: {
         monthly: PortfolioPerformance;
@@ -401,6 +411,8 @@ export type Market = 'US' | 'NGX' | 'UK' | 'EU' | 'ASIA' | 'EMERGING';
 export interface TradeReasonTagsResponse {
     buy_reasons: string[];
     sell_reasons: string[];
+    buy?: string[];
+    sell?: string[];
 }
 
 export interface TradeReasonSubmit {
@@ -910,6 +922,77 @@ export class StockValuationAPI {
 
     async registerPushToken(token: string): Promise<any> {
         return this.request<any>('/auth/push-token', { method: 'POST', body: { token } });
+    }
+
+    // ── Social Feed ─────────────────────────────────────────────
+    async createPost(content: string, symbol?: string): Promise<any> {
+        return this.request<any>('/api/social/posts', {
+            method: 'POST', body: { content, symbol: symbol || undefined },
+        });
+    }
+
+    async getSocialFeed(limit: number = 50, offset: number = 0): Promise<{ posts: any[] }> {
+        return this.request<{ posts: any[] }>('/api/social/feed', { params: { limit, offset } });
+    }
+
+    async getPost(postId: number): Promise<any> {
+        return this.request<any>(`/api/social/posts/${postId}`);
+    }
+
+    async deletePost(postId: number): Promise<any> {
+        return this.request<any>(`/api/social/posts/${postId}`, { method: 'DELETE' });
+    }
+
+    async toggleLike(postId: number): Promise<{ liked: boolean; like_count: number }> {
+        return this.request<{ liked: boolean; like_count: number }>(`/api/social/posts/${postId}/like`, { method: 'POST' });
+    }
+
+    async getComments(postId: number): Promise<{ comments: any[] }> {
+        return this.request<{ comments: any[] }>(`/api/social/posts/${postId}/comments`);
+    }
+
+    async addComment(postId: number, content: string): Promise<any> {
+        return this.request<any>(`/api/social/posts/${postId}/comments`, {
+            method: 'POST', body: { content },
+        });
+    }
+
+    // ── Friends ─────────────────────────────────────────────────
+    async getFriends(): Promise<{ friends: any[] }> {
+        return this.request<{ friends: any[] }>('/api/social/friends');
+    }
+
+    async getFriendRequests(): Promise<{ requests: any[] }> {
+        return this.request<{ requests: any[] }>('/api/social/friends/requests');
+    }
+
+    async sendFriendRequest(userId: number): Promise<any> {
+        return this.request<any>(`/api/social/friends/${userId}`, { method: 'POST' });
+    }
+
+    async respondFriendRequest(requestId: number, accept: boolean): Promise<any> {
+        return this.request<any>(`/api/social/friends/requests/${requestId}`, {
+            method: 'PUT', body: { accept },
+        });
+    }
+
+    async searchUsers(query: string): Promise<{ users: any[] }> {
+        return this.request<{ users: any[] }>('/api/social/users/search', { params: { q: query } });
+    }
+
+    // ── Chat ────────────────────────────────────────────────────
+    async getConversations(): Promise<{ conversations: any[] }> {
+        return this.request<{ conversations: any[] }>('/api/social/chat/conversations');
+    }
+
+    async getMessages(otherUserId: number, limit: number = 50, offset: number = 0): Promise<{ messages: any[] }> {
+        return this.request<{ messages: any[] }>(`/api/social/chat/${otherUserId}`, { params: { limit, offset } });
+    }
+
+    async sendChatMessage(receiverId: number, content: string): Promise<any> {
+        return this.request<any>(`/api/social/chat/${receiverId}`, {
+            method: 'POST', body: { content },
+        });
     }
 }
 

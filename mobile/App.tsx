@@ -40,6 +40,14 @@ import DCAScreen from './src/screens/DCAScreen';
 import EconomicDashboardScreen from './src/screens/EconomicDashboardScreen';
 import EconomicImpactScreen from './src/screens/EconomicImpactScreen';
 import TransactionScreen from './src/screens/TransactionScreen';
+import PortfolioTrackerScreen from './src/screens/PortfolioTrackerScreen';
+import PriceAlertsScreen from './src/screens/PriceAlertsScreen';
+import NewsIntegrationScreen from './src/screens/NewsIntegrationScreen';
+import EnhancedChartingScreen from './src/screens/EnhancedChartingScreen';
+import BacktestingScreen from './src/screens/BacktestingScreen';
+import SocialFeedScreen from './src/screens/SocialFeedScreen';
+import ChatScreen from './src/screens/ChatScreen';
+import FriendsScreen from './src/screens/FriendsScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -73,6 +81,14 @@ function HomeStack() {
             <Stack.Screen name="Alerts" component={AlertsScreen} options={{ title: 'Price Alerts' }} />
             <Stack.Screen name="Education" component={EducationScreen} options={{ title: 'Learn' }} />
             <Stack.Screen name="Analysis" component={AnalysisScreen} options={{ title: 'Market Analysis' }} />
+            <Stack.Screen name="PortfolioTracker" component={PortfolioTrackerScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="PriceAlerts" component={PriceAlertsScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="NewsIntegration" component={NewsIntegrationScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="EnhancedCharting" component={EnhancedChartingScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="Backtesting" component={BacktestingScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="SocialFeed" component={SocialFeedScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="ChatScreen" component={ChatScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="FriendsScreen" component={FriendsScreen} options={{ headerShown: false }} />
         </Stack.Navigator>
     );
 }
@@ -86,6 +102,7 @@ function MainTabs() {
                     let iconName;
                     if (route.name === 'Home') iconName = focused ? 'home' : 'home-outline';
                     else if (route.name === 'Search') iconName = focused ? 'search' : 'search-outline';
+                    else if (route.name === 'Charts') iconName = focused ? 'bar-chart' : 'bar-chart-outline';
                     else if (route.name === 'Crowd') iconName = focused ? 'people' : 'people-outline';
                     else if (route.name === 'Watchlist') iconName = focused ? 'bookmark' : 'bookmark-outline';
                     return <Ionicons name={iconName} size={size} color={color} />;
@@ -97,6 +114,7 @@ function MainTabs() {
         >
             <Tab.Screen name="Home" component={HomeStack} />
             <Tab.Screen name="Search" component={SearchScreen} />
+            <Tab.Screen name="Charts" component={EnhancedChartingScreen} />
             <Tab.Screen name="Crowd" component={IntelligenceScreen} />
             <Tab.Screen name="Watchlist" component={WatchlistScreen} />
         </Tab.Navigator>
@@ -132,14 +150,14 @@ function RootNavigator() {
 export default function App() {
     return (
         <ErrorBoundary>
-        <AuthProvider>
-        <View testID="app-root" style={{ flex: 1 }}>
-            <NavigationContainer>
-                <StatusBar style="auto" />
-                <RootNavigator />
-            </NavigationContainer>
-        </View>
-        </AuthProvider>
+            <AuthProvider>
+                <View testID="app-root" style={{ flex: 1 }}>
+                    <NavigationContainer>
+                        <StatusBar style="auto" />
+                        <RootNavigator />
+                    </NavigationContainer>
+                </View>
+            </AuthProvider>
         </ErrorBoundary>
     );
 }
