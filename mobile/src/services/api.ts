@@ -536,6 +536,66 @@ type RequestOptions = {
     body?: unknown;
 };
 
+// ── Financial Upload Types ──────────────────────────────────────
+
+export interface GrowthMetric {
+    values: (number | null)[];
+    yoy_growth_pct: number[];
+    cagr_pct: number | null;
+    latest: number | null;
+}
+
+export interface DCFUploadResult {
+    current_fcf: number;
+    implied_growth_rate: number;
+    projected_fcf: number[];
+    pv_fcf: number[];
+    terminal_value: number;
+    pv_terminal: number;
+    enterprise_value: number;
+    equity_value: number;
+    intrinsic_value_per_share: number | null;
+    shares_outstanding: number;
+    total_cash: number;
+    total_debt: number;
+    assumptions: {
+        discount_rate: number;
+        terminal_growth_rate: number;
+        years_projected: number;
+    };
+    error?: string;
+}
+
+export interface FinancialUploadResult {
+    id: number;
+    company_name: string;
+    symbol: string;
+    dcf: DCFUploadResult;
+    growth: Record<string, GrowthMetric>;
+    periods: string[];
+}
+
+export interface FinancialUploadSummary {
+    id: number;
+    company_name: string;
+    symbol: string | null;
+    statement_type: string;
+    created_at: string;
+    has_dcf: boolean;
+    has_growth: boolean;
+}
+
+export interface FinancialUploadDetail {
+    id: number;
+    company_name: string;
+    symbol: string | null;
+    statement_type: string;
+    created_at: string;
+    data: any;
+    dcf: DCFUploadResult | null;
+    growth: Record<string, GrowthMetric> | null;
+}
+
 export class StockValuationAPI {
     private authToken: string | null = null;
 
@@ -993,6 +1053,105 @@ export class StockValuationAPI {
         return this.request<any>(`/api/social/chat/${receiverId}`, {
             method: 'POST', body: { content },
         });
+    }
+
+    // ── Financial Statement Upload & Analysis ─────────────────────
+
+    async uploadFinancialStatement(
+        fileUri: string,
+        fileName: string,
+        companyName: string,
+        symbol: string = '',
+        discountRate: number = 0.10,
+        terminalGrowthRate: number = 0.03,
+    ): Promise<FinancialUploadResult> {
+        const formData = new FormData();
+        formData.append('file', {
+            uri: fileUri,
+            name: fileName,
+            type: 'text/csv',
+        } as any);
+        formData.append('company_name', companyName);
+        formData.append('symbol', symbol);
+        formData.append('discount_rate', String(discountRate));
+        formData.append('terminal_growth_rate', String(terminalGrowthRate));
+
+        const url = `${API_BASE_URL}/financial-upload`;
+        const headers: Record<string, string> = {};
+        if (this.authToken) {
+            headers['Authorization'] = `Bearer ${this.authToken}`;
+        }
+        const response = await fetch(url, {
+            method: 'POST',
+            headers,
+            body: formData,
+        });
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(errText || `Upload failed with status ${response.status}`);
+        }
+        return response.json() as Promise<FinancialUploadResult>;
+    }
+
+    async getFinancialUploads(): Promise<{ uploads: FinancialUploadSummary[] }> {
+        return this.request<{ uploads: FinancialUploadSummary[] }>('/financial-uploads');
+    }
+
+    async getFinancialUploadDetail(uploadId: number): Promise<FinancialUploadDetail> {
+        return this.request<FinancialUploadDetail>(`/financial-uploads/${uploadId}`);
+    }
+
+    async deleteFinancialUpload(uploadId: number): Promise<{ message: string }> {
+        return this.request<{ message: string }>(`/financial-uploads/${uploadId}`, { method: 'DELETE' });
+    }
+
+    // ── Achievements ──
+    async getAchievements(): Promise<any> {
+        return this.request<any>('/achievements');
+    }
+
+    // ── Daily Briefing ──
+    async getDailyBriefing(): Promise<any> {
+        return this.request<any>('/daily-briefing');
+    }
+
+    // ── Earnings Calendar ──
+    async getEarningsCalendar(days: number = 14): Promise<any> {
+        return this.request<any>('/earnings-calendar', { params: { days: String(days) } });
+    }
+
+    // ── Stock Recommendations ──
+    async getRecommendations(): Promise<any> {
+        return this.request<any>('/recommendations');
+    }
+
+    // ── AI Chat ──
+    async sendAIChat(message: string, symbol?: string): Promise<any> {
+        return this.request<any>('/ai-chat', {
+            method: 'POST',
+            body: { message, symbol },
+        });
+    }
+
+    // ── Options Calculator ──
+    async calculateOptions(params: {
+        symbol: string;
+        option_type: string;
+        strike_price: number;
+        premium: number;
+        contracts: number;
+        expiry_days: number;
+    }): Promise<any> {
+        return this.request<any>('/options-calculator', { method: 'POST', body: params });
+    }
+
+    // ── Referral System ──
+    async getReferralCode(): Promise<any> {
+        return this.request<any>('/referrals/my-code');
+    }
+
+    async redeemReferral(code: string): Promise<any> {
+        return this.request<any>('/referrals/redeem', { method: 'POST', body: { code } });
     }
 }
 

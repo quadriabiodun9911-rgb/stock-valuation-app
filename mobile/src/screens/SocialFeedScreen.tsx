@@ -5,8 +5,10 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { stockAPI } from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
 
 const SocialFeedScreen: React.FC<{ navigation?: any }> = ({ navigation }) => {
+    const { user } = useAuth();
     const [posts, setPosts] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
@@ -166,7 +168,11 @@ const SocialFeedScreen: React.FC<{ navigation?: any }> = ({ navigation }) => {
             <View style={styles.composer}>
                 <View style={styles.composerRow}>
                     <View style={[styles.avatar, styles.avatarSmall]}>
-                        <Ionicons name="person" size={16} color="#fff" />
+                        {user?.username ? (
+                            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>{user.username[0].toUpperCase()}</Text>
+                        ) : (
+                            <Ionicons name="person" size={16} color="#fff" />
+                        )}
                     </View>
                     <TextInput
                         style={styles.composerInput}

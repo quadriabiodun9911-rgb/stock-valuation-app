@@ -11,12 +11,14 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { stockAPI } from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
 import SocialFeedScreen from './SocialFeedScreen';
 import ChatScreen from './ChatScreen';
 
 type CrowdTab = 'social' | 'intelligence' | 'chat';
 
 const IntelligenceScreen: React.FC<{ navigation?: any }> = ({ navigation }) => {
+    const { user } = useAuth();
     const [activeTab, setActiveTab] = useState<CrowdTab>('social');
     const [loading, setLoading] = useState(true);
 
@@ -117,7 +119,17 @@ const IntelligenceScreen: React.FC<{ navigation?: any }> = ({ navigation }) => {
     const TabHeader = () => (
         <>
             <View style={styles.header}>
-                <Text style={styles.headerTitle}>Community</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <Text style={styles.headerTitle}>Community</Text>
+                    {user?.username && (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#eff6ff', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6 }}>
+                            <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#2563eb', alignItems: 'center', justifyContent: 'center', marginRight: 6 }}>
+                                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>{user.username[0].toUpperCase()}</Text>
+                            </View>
+                            <Text style={{ color: '#2563eb', fontWeight: '600', fontSize: 13 }}>@{user.username}</Text>
+                        </View>
+                    )}
+                </View>
                 <Text style={styles.headerSub}>Connect with traders</Text>
             </View>
             <View style={styles.tabBar}>

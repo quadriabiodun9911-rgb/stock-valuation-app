@@ -153,6 +153,20 @@ def init_db():
             FOREIGN KEY (sender_id) REFERENCES users(id),
             FOREIGN KEY (receiver_id) REFERENCES users(id)
         );
+
+        -- Uploaded financial statements for DCF / growth analysis
+        CREATE TABLE IF NOT EXISTS financial_uploads (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id         INTEGER NOT NULL DEFAULT 1,
+            company_name    TEXT NOT NULL,
+            symbol          TEXT,
+            statement_type  TEXT NOT NULL DEFAULT 'income_statement',
+            data_json       TEXT NOT NULL,
+            dcf_result_json TEXT,
+            growth_json     TEXT,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        );
     """)
     conn.commit()
     _migrate_json_data(conn)
@@ -708,3 +722,48 @@ def get_messages(user_id: int, other_user_id: int, limit: int = 50, offset: int 
         ORDER BY m.created_at DESC LIMIT ? OFFSET ?
     """, (user_id, other_user_id, other_user_id, user_id, limit, offset)).fetchall()
     return [dict(r) for r in reversed(rows)]
+
+
+# ── Financial Uploads ─────────────────────────────────────────────
+
+def save_financial_upload(user_id: int, company_name: str, symbol: Optional[str],
+                          statement_type: str, data_json: str,
+                          dcf_result_json: Optional[str] = None,
+                          growth_json: Optional[str] = None) -> int:
+    conn = _get_conn()
+    cur = conn.execute(
+        """INSERT INTO financial_uploads
+           (user_id, company_name, symbol, statement_type, data_json, dcf_result_json, growth_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (user_id, company_name, symbol, statement_type, data_json, dcf_result_json, growth_json),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def get_financial_uploads(user_id: int, limit: int = 20) -> List[Dict[str, Any]]:
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT * FROM financial_uploads WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+        (user_id, limit),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_financial_upload(upload_id: int, user_id: int) -> Optional[Dict[str, Any]]:
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT * FROM financial_uploads WHERE id = ? AND user_id = ?",
+        (upload_id, user_id),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def delete_financial_upload(upload_id: int, user_id: int) -> bool:
+    conn = _get_conn()
+    cur = conn.execute(
+        "DELETE FROM financial_uploads WHERE id = ? AND user_id = ?",
+        (upload_id, user_id),
+    )
+    conn.commit()
+    return cur.rowcount > 0

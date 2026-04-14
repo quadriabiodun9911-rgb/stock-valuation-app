@@ -14,12 +14,17 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MarketSummaryResponse, stockAPI, SearchResult, Market, AVAILABLE_MARKETS, PortfolioResponse } from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
+import { useTheme } from '../contexts/ThemeContext';
+import { SkeletonCard } from '../components/SkeletonLoader';
 
 interface Props {
     navigation: any;
 }
 
 const HomeScreen: React.FC<Props> = ({ navigation }) => {
+    const { user } = useAuth();
+    const { isDark, toggleTheme } = useTheme();
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedMarket, setSelectedMarket] = useState<Market>('US');
     const [loading, setLoading] = useState(false);
@@ -29,6 +34,8 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
     const [portfolio, setPortfolio] = useState<PortfolioResponse | null>(null);
     const [portfolioLoading, setPortfolioLoading] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
+    const [briefing, setBriefing] = useState<any>(null);
+    const [briefingLoading, setBriefingLoading] = useState(false);
 
     const fadeAnim = useRef(new Animated.Value(0)).current;
 
@@ -48,6 +55,7 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
     const loadAll = async () => {
         loadMarketSummary();
         loadPortfolioSnapshot();
+        loadBriefing();
     };
 
     const onRefresh = async () => {
@@ -76,6 +84,17 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
             setPortfolio(null);
         } finally {
             setPortfolioLoading(false);
+        }
+    };
+
+    const loadBriefing = async () => {
+        try {
+            setBriefingLoading(true);
+            setBriefing(await stockAPI.getDailyBriefing());
+        } catch (e) {
+            console.error('Briefing error:', e);
+        } finally {
+            setBriefingLoading(false);
         }
     };
 
@@ -120,14 +139,22 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
     }, [marketSummary]);
 
     const quickActions = [
+        { icon: 'swap-horizontal' as const, label: 'Simulator', screen: 'TradingSimulator', color: '#059669', gradient: ['#059669', '#10b981'] as const },
         { icon: 'flash' as const, label: 'Strategy', screen: 'AnalysisSmartStrategy', color: '#6366f1', gradient: ['#6366f1', '#818cf8'] as const },
-        { icon: 'globe' as const, label: 'Economy', screen: 'EconomicDashboard', color: '#0f172a', gradient: ['#1e293b', '#475569'] as const },
-        { icon: 'calculator' as const, label: 'Valuation', screen: 'Valuation', color: '#0ea5e9', gradient: ['#0ea5e9', '#38bdf8'] as const },
-        { icon: 'flag' as const, label: 'Goal Plan', screen: 'GoalPlanner', color: '#2563eb', gradient: ['#2563eb', '#3b82f6'] as const },
+        { icon: 'git-compare' as const, label: 'Compare', screen: 'StockComparison', color: '#8b5cf6', gradient: ['#8b5cf6', '#a78bfa'] as const },
         { icon: 'wallet' as const, label: 'Portfolio', screen: 'Dashboard', color: '#f59e0b', gradient: ['#f59e0b', '#fbbf24'] as const },
+        { icon: 'calculator' as const, label: 'Valuation', screen: 'Valuation', color: '#0ea5e9', gradient: ['#0ea5e9', '#38bdf8'] as const },
+        { icon: 'globe' as const, label: 'Economy', screen: 'EconomicDashboard', color: '#0f172a', gradient: ['#1e293b', '#475569'] as const },
+        { icon: 'flag' as const, label: 'Goal Plan', screen: 'GoalPlanner', color: '#2563eb', gradient: ['#2563eb', '#3b82f6'] as const },
         { icon: 'receipt' as const, label: 'Trades', screen: 'Transactions', color: '#1a1a2e', gradient: ['#1a1a2e', '#334155'] as const },
         { icon: 'repeat' as const, label: 'DCA', screen: 'DCA', color: '#7c3aed', gradient: ['#7c3aed', '#8b5cf6'] as const },
+        { icon: 'document-text' as const, label: 'Upload Fin.', screen: 'FinancialUpload', color: '#14b8a6', gradient: ['#14b8a6', '#2dd4bf'] as const },
         { icon: 'school' as const, label: 'Learn', screen: 'Education', color: '#ec4899', gradient: ['#ec4899', '#f472b6'] as const },
+        { icon: 'sparkles' as const, label: 'AI Chat', screen: 'AIChat', color: '#8b5cf6', gradient: ['#8b5cf6', '#a78bfa'] as const },
+        { icon: 'trophy' as const, label: 'Badges', screen: 'Achievements', color: '#f59e0b', gradient: ['#f59e0b', '#fbbf24'] as const },
+        { icon: 'calendar' as const, label: 'Earnings', screen: 'EarningsCalendar', color: '#0ea5e9', gradient: ['#0ea5e9', '#38bdf8'] as const },
+        { icon: 'options' as const, label: 'Options', screen: 'OptionsCalculator', color: '#ef4444', gradient: ['#ef4444', '#f87171'] as const },
+        { icon: 'gift' as const, label: 'Invite', screen: 'Referral', color: '#10b981', gradient: ['#10b981', '#34d399'] as const },
     ];
 
     const greeting = new Date().getHours() < 12 ? 'Good Morning' : new Date().getHours() < 18 ? 'Good Afternoon' : 'Good Evening';
@@ -142,9 +169,14 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
                 <LinearGradient colors={['#0f172a', '#1e3a5f']} style={styles.header}>
                     <View style={styles.headerTop}>
                         <View>
-                            <Text style={styles.greeting}>{greeting}</Text>
+                            <Text style={styles.greeting}>{greeting}{user?.username ? `, ${user.username}` : ''}</Text>
                             <Text style={styles.headerTitle}>StockVal</Text>
                         </View>
+                        <TouchableOpacity onPress={toggleTheme} style={styles.darkModeBtn}>
+                            <Ionicons name={isDark ? 'sunny' : 'moon'} size={18} color={isDark ? '#f59e0b' : '#94a3b8'} />
+                        </TouchableOpacity>
+                    </View>
+                    <View style={styles.marketToggleRow}>
                         <View style={styles.marketToggle}>
                             {Object.keys(AVAILABLE_MARKETS).map((m) => (
                                 <TouchableOpacity
@@ -249,6 +281,39 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
                         )}
                     </LinearGradient>
                 </TouchableOpacity>
+
+                {/* Daily Briefing Card */}
+                {briefingLoading ? (
+                    <SkeletonCard style={{ marginHorizontal: 16, marginTop: 12 }} />
+                ) : briefing ? (
+                    <View style={styles.card}>
+                        <View style={styles.cardTitleRow}>
+                            <Ionicons name="sunny" size={18} color="#f59e0b" />
+                            <Text style={styles.cardTitle}>Morning Briefing</Text>
+                            <View style={[styles.signalBadge, briefing.sentiment === 'Bullish' ? styles.greenBg : briefing.sentiment === 'Bearish' ? styles.redBg : styles.neutralBg]}>
+                                <Text style={styles.signalText}>{briefing.sentiment || 'Neutral'}</Text>
+                            </View>
+                        </View>
+                        {briefing.indices?.slice(0, 3).map((idx: any, i: number) => (
+                            <View key={i} style={styles.moverRow}>
+                                <Text style={styles.moverSymbol}>{idx.symbol}</Text>
+                                <View style={[styles.changePill, idx.change_pct >= 0 ? styles.greenPillBg : styles.redPillBg]}>
+                                    <Text style={[styles.changePillText, idx.change_pct >= 0 ? styles.greenText : styles.redText]}>
+                                        {idx.change_pct >= 0 ? '+' : ''}{idx.change_pct?.toFixed(2)}%
+                                    </Text>
+                                </View>
+                            </View>
+                        ))}
+                        {briefing.portfolio?.overnight_change_pct != null && (
+                            <View style={{ backgroundColor: '#f1f5f9', borderRadius: 10, padding: 10, marginTop: 8 }}>
+                                <Text style={{ fontSize: 12, color: '#64748b' }}>Your portfolio overnight</Text>
+                                <Text style={{ fontSize: 16, fontWeight: '700', color: briefing.portfolio.overnight_change_pct >= 0 ? '#10b981' : '#ef4444' }}>
+                                    {briefing.portfolio.overnight_change_pct >= 0 ? '+' : ''}{briefing.portfolio.overnight_change_pct?.toFixed(2)}%
+                                </Text>
+                            </View>
+                        )}
+                    </View>
+                ) : null}
 
                 {/* Quick Actions */}
                 <View style={styles.sectionHeader}>
@@ -404,6 +469,14 @@ const styles = StyleSheet.create({
         fontWeight: '900',
         color: '#fff',
         letterSpacing: -0.5,
+    },
+    darkModeBtn: {
+        backgroundColor: 'rgba(255,255,255,0.1)',
+        padding: 8,
+        borderRadius: 10,
+    },
+    marketToggleRow: {
+        marginTop: 4,
     },
     marketToggle: {
         flexDirection: 'row',

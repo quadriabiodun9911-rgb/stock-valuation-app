@@ -3,10 +3,12 @@ Stock Valuation API Backend
 Comprehensive stock analysis and valuation platform
 """
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
+import csv
+import io
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -32,6 +34,10 @@ from portfolio_tracker import router as portfolio_tracker_router
 from enhanced_charting import router as charting_router
 from backtesting_engine import router as backtest_router
 from social import router as social_router
+from achievements import router as achievements_router
+from briefing import router as briefing_router
+from ai_chat import router as ai_chat_router
+from referral import router as referral_router
 import database as db
 
 # Set up logging
@@ -109,6 +115,10 @@ app.include_router(portfolio_tracker_router)
 app.include_router(charting_router)
 app.include_router(backtest_router)
 app.include_router(social_router)
+app.include_router(achievements_router)
+app.include_router(briefing_router)
+app.include_router(ai_chat_router)
+app.include_router(referral_router)
 
 # Pydantic models
 class StockSymbol(BaseModel):
@@ -186,7 +196,7 @@ def _get_price_on_or_after(history: pd.DataFrame, target_date: datetime) -> Opti
         return None
     return float(filtered["Close"].iloc[0])
 
-def _calculate_risk_score(volatility: Optional[float]) -> float:
+def _calculate_portfolio_risk_score(volatility: Optional[float]) -> float:
     if volatility is None:
         return 0.0
     score = min(10.0, max(0.0, (volatility / 0.4) * 10))
@@ -1904,7 +1914,7 @@ async def get_portfolio():
         "performance": performance,
         "risk": {
             "volatility": volatility,
-            "risk_score": _calculate_risk_score(volatility),
+            "risk_score": _calculate_portfolio_risk_score(volatility),
             "max_drawdown": avg_drawdown,
         },
         "allocation": {
@@ -4325,6 +4335,322 @@ async def delete_transaction_endpoint(txn_id: int, request: Request):
     if not db.delete_transaction(user_id, txn_id):
         raise HTTPException(status_code=404, detail="Transaction not found")
     return {"message": "Transaction deleted"}
+
+
+# ── Financial Statement Upload & DCF/Growth Analysis ──────────────
+
+ALLOWED_EXTENSIONS = {".csv"}
+MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
+
+
+def _parse_csv_financial_data(content: str) -> Dict[str, Any]:
+    """Parse a CSV financial statement into structured data.
+    
+    Supports two formats:
+    1. Row-per-metric: Column A = metric name, remaining columns = yearly values
+       e.g.  Revenue, 100000, 120000, 150000
+    2. Column-per-metric: Header row has metric names, each row is a year
+    """
+    reader = csv.reader(io.StringIO(content))
+    rows = [r for r in reader if any(cell.strip() for cell in r)]
+    if len(rows) < 2:
+        raise HTTPException(status_code=400, detail="CSV must have at least a header and one data row")
+
+    # Detect orientation: if first column of row 1 looks like a number/year, it's column-per-metric
+    header = [h.strip() for h in rows[0]]
+
+    def _try_float(s: str) -> Optional[float]:
+        s = s.strip().replace(",", "").replace("$", "").replace("(", "-").replace(")", "")
+        try:
+            return float(s)
+        except (ValueError, TypeError):
+            return None
+
+    # Heuristic: if header[0] is a number (year), treat as column-per-metric
+    if _try_float(header[0]) is not None or header[0].lower() in ("year", "period", "date"):
+        # Column-per-metric: header = [Year, Revenue, NetIncome, …]
+        years_data = []
+        for row in rows[1:]:
+            entry: Dict[str, Any] = {}
+            for i, col_name in enumerate(header):
+                val = row[i].strip() if i < len(row) else ""
+                num = _try_float(val)
+                entry[col_name] = num if num is not None else val
+            years_data.append(entry)
+        return {"format": "column_per_metric", "periods": years_data, "metrics": header}
+    else:
+        # Row-per-metric: each row = [MetricName, val1, val2, …]
+        periods = header[1:]  # e.g. ["2021", "2022", "2023"]
+        metrics: Dict[str, List[Optional[float]]] = {}
+        for row in rows[1:]:
+            name = row[0].strip() if row else ""
+            values = [_try_float(c) for c in row[1:]]
+            if name:
+                metrics[name] = values
+        return {"format": "row_per_metric", "periods": periods, "metrics": metrics}
+
+
+# Canonical metric name lookup
+_METRIC_ALIASES: Dict[str, List[str]] = {
+    "revenue": ["revenue", "total revenue", "total_revenue", "sales", "net sales", "net_sales", "total sales"],
+    "net_income": ["net income", "net_income", "earnings", "net earnings", "profit", "net profit"],
+    "free_cash_flow": ["free cash flow", "free_cash_flow", "fcf"],
+    "operating_income": ["operating income", "operating_income", "ebit", "operating profit"],
+    "total_debt": ["total debt", "total_debt", "long term debt", "long_term_debt", "debt"],
+    "cash": ["cash", "cash and equivalents", "cash_and_equivalents", "total cash"],
+    "shares_outstanding": ["shares outstanding", "shares_outstanding", "diluted shares", "diluted_shares", "shares"],
+    "capex": ["capex", "capital expenditures", "capital_expenditures", "capital expenditure", "capex_abs"],
+    "depreciation": ["depreciation", "depreciation and amortization", "d&a", "depreciation_and_amortization"],
+    "total_assets": ["total assets", "total_assets"],
+    "total_equity": ["total equity", "total_equity", "shareholders equity", "stockholders equity"],
+    "operating_cash_flow": ["operating cash flow", "operating_cash_flow", "cash from operations"],
+    "tax_rate": ["tax rate", "tax_rate", "effective tax rate"],
+}
+
+
+def _resolve_metric(parsed: Dict[str, Any], canonical: str) -> List[Optional[float]]:
+    """Find a metric by canonical name or alias in parsed data."""
+    aliases = _METRIC_ALIASES.get(canonical, [canonical])
+    if parsed["format"] == "row_per_metric":
+        for alias in aliases:
+            for key, vals in parsed["metrics"].items():
+                if key.lower().strip() == alias:
+                    return vals
+        return []
+    else:
+        # column_per_metric
+        for alias in aliases:
+            for metric_name in parsed["metrics"]:
+                if metric_name.lower().strip() == alias:
+                    return [p.get(metric_name) for p in parsed["periods"]]
+        return []
+
+
+def _compute_growth(values: List[Optional[float]]) -> Dict[str, Any]:
+    """Compute YoY growth rates and CAGR from a list of period values (oldest first)."""
+    clean = [(i, v) for i, v in enumerate(values) if v is not None and v != 0]
+    yoy = []
+    for j in range(1, len(clean)):
+        prev_val = clean[j - 1][1]
+        cur_val = clean[j][1]
+        if prev_val and prev_val != 0:
+            yoy.append(round((cur_val - prev_val) / abs(prev_val) * 100, 2))
+    cagr = None
+    if len(clean) >= 2:
+        first_val, last_val = clean[0][1], clean[-1][1]
+        n = clean[-1][0] - clean[0][0]
+        if n > 0 and first_val > 0 and last_val > 0:
+            cagr = round(((last_val / first_val) ** (1 / n) - 1) * 100, 2)
+    return {"values": values, "yoy_growth_pct": yoy, "cagr_pct": cagr, "latest": clean[-1][1] if clean else None}
+
+
+def _run_dcf_from_upload(parsed: Dict[str, Any], discount_rate: float = 0.10,
+                          terminal_growth_rate: float = 0.03, years: int = 5) -> Dict[str, Any]:
+    """Run a DCF valuation using uploaded financial statement data."""
+    fcf_values = _resolve_metric(parsed, "free_cash_flow")
+    # Fallback: operating_cash_flow - capex
+    if not any(v for v in fcf_values if v is not None):
+        ocf = _resolve_metric(parsed, "operating_cash_flow")
+        capex = _resolve_metric(parsed, "capex")
+        if ocf:
+            fcf_values = []
+            for i in range(len(ocf)):
+                o = ocf[i] if i < len(ocf) else None
+                c = abs(capex[i]) if (capex and i < len(capex) and capex[i] is not None) else 0
+                fcf_values.append(round(o - c, 2) if o is not None else None)
+
+    # Fallback: net_income + depreciation - capex
+    if not any(v for v in fcf_values if v is not None):
+        ni = _resolve_metric(parsed, "net_income")
+        dep = _resolve_metric(parsed, "depreciation")
+        capex = _resolve_metric(parsed, "capex")
+        if ni and any(v for v in ni if v is not None):
+            fcf_values = []
+            for i in range(len(ni)):
+                n = ni[i] if i < len(ni) else 0
+                d = dep[i] if (dep and i < len(dep) and dep[i]) else 0
+                c = abs(capex[i]) if (capex and i < len(capex) and capex[i]) else 0
+                fcf_values.append(round((n or 0) + (d or 0) - c, 2))
+
+    if not any(v for v in fcf_values if v is not None):
+        return {"error": "Could not determine Free Cash Flow from uploaded data. Include FCF, Operating Cash Flow, or Net Income columns."}
+
+    current_fcf = next((v for v in reversed(fcf_values) if v is not None), 0)
+    if current_fcf <= 0:
+        return {"error": f"Latest FCF is {current_fcf}. DCF requires positive free cash flow.", "current_fcf": current_fcf}
+
+    # Historical FCF growth rate
+    fcf_growth = _compute_growth(fcf_values)
+    implied_growth = (fcf_growth["cagr_pct"] / 100) if fcf_growth["cagr_pct"] and fcf_growth["cagr_pct"] > 0 else 0.05
+
+    projected_fcf = []
+    for yr in range(1, years + 1):
+        yr_growth = implied_growth * (0.9 ** (yr - 1))
+        projected_fcf.append(round(current_fcf * ((1 + yr_growth) ** yr), 2))
+
+    terminal_fcf = projected_fcf[-1] * (1 + terminal_growth_rate)
+    terminal_value = terminal_fcf / (discount_rate - terminal_growth_rate)
+
+    pv_fcf = [round(f / ((1 + discount_rate) ** yr), 2) for yr, f in enumerate(projected_fcf, 1)]
+    pv_terminal = round(terminal_value / ((1 + discount_rate) ** years), 2)
+
+    enterprise_value = round(sum(pv_fcf) + pv_terminal, 2)
+
+    # Equity value if debt/cash available
+    cash_vals = _resolve_metric(parsed, "cash")
+    debt_vals = _resolve_metric(parsed, "total_debt")
+    shares_vals = _resolve_metric(parsed, "shares_outstanding")
+
+    total_cash = next((v for v in reversed(cash_vals) if v is not None), 0) if cash_vals else 0
+    total_debt = next((v for v in reversed(debt_vals) if v is not None), 0) if debt_vals else 0
+    shares = next((v for v in reversed(shares_vals) if v is not None), 0) if shares_vals else 0
+
+    equity_value = round(enterprise_value + total_cash - total_debt, 2)
+    per_share = round(equity_value / shares, 2) if shares and shares > 0 else None
+
+    return {
+        "current_fcf": current_fcf,
+        "implied_growth_rate": round(implied_growth * 100, 2),
+        "projected_fcf": projected_fcf,
+        "pv_fcf": pv_fcf,
+        "terminal_value": round(terminal_value, 2),
+        "pv_terminal": pv_terminal,
+        "enterprise_value": enterprise_value,
+        "equity_value": equity_value,
+        "intrinsic_value_per_share": per_share,
+        "shares_outstanding": shares,
+        "total_cash": total_cash,
+        "total_debt": total_debt,
+        "assumptions": {
+            "discount_rate": discount_rate,
+            "terminal_growth_rate": terminal_growth_rate,
+            "years_projected": years,
+        },
+    }
+
+
+@app.post("/financial-upload")
+async def upload_financial_statement(
+    file: UploadFile = File(...),
+    company_name: str = Form(...),
+    symbol: str = Form(""),
+    discount_rate: float = Form(0.10),
+    terminal_growth_rate: float = Form(0.03),
+    request: Request = None,
+):
+    """Upload a CSV financial statement, run DCF valuation and growth analysis."""
+    # Validate file
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file provided")
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"Only CSV files are supported. Got: {ext}")
+
+    raw = await file.read()
+    if len(raw) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="File too large (max 5 MB)")
+
+    content = raw.decode("utf-8-sig", errors="replace")
+    parsed = _parse_csv_financial_data(content)
+
+    # DCF
+    dcf_result = _run_dcf_from_upload(parsed, discount_rate, terminal_growth_rate)
+
+    # Growth analysis for key metrics
+    growth_metrics = {}
+    for metric in ["revenue", "net_income", "free_cash_flow", "operating_income", "total_assets", "total_equity"]:
+        vals = _resolve_metric(parsed, metric)
+        if vals and any(v for v in vals if v is not None):
+            growth_metrics[metric] = _compute_growth(vals)
+
+    # Persist
+    user_id = 1
+    try:
+        user = await get_current_user(request)
+        user_id = get_user_id(user)
+    except Exception:
+        pass
+
+    upload_id = db.save_financial_upload(
+        user_id=user_id,
+        company_name=company_name,
+        symbol=symbol or None,
+        statement_type="financial_statement",
+        data_json=json.dumps(parsed),
+        dcf_result_json=json.dumps(dcf_result),
+        growth_json=json.dumps(growth_metrics),
+    )
+
+    return {
+        "id": upload_id,
+        "company_name": company_name,
+        "symbol": symbol,
+        "dcf": dcf_result,
+        "growth": growth_metrics,
+        "periods": parsed.get("periods", [p.get(parsed["metrics"][0]) for p in parsed.get("periods", [])] if parsed["format"] == "column_per_metric" else []),
+    }
+
+
+@app.get("/financial-uploads")
+async def list_financial_uploads(request: Request):
+    """List user's uploaded financial statements."""
+    user_id = 1
+    try:
+        user = await get_current_user(request)
+        user_id = get_user_id(user)
+    except Exception:
+        pass
+    uploads = db.get_financial_uploads(user_id)
+    results = []
+    for u in uploads:
+        results.append({
+            "id": u["id"],
+            "company_name": u["company_name"],
+            "symbol": u["symbol"],
+            "statement_type": u["statement_type"],
+            "created_at": u["created_at"],
+            "has_dcf": u["dcf_result_json"] is not None,
+            "has_growth": u["growth_json"] is not None,
+        })
+    return {"uploads": results}
+
+
+@app.get("/financial-uploads/{upload_id}")
+async def get_financial_upload_detail(upload_id: int, request: Request):
+    """Get full detail of an uploaded financial statement including DCF and growth results."""
+    user_id = 1
+    try:
+        user = await get_current_user(request)
+        user_id = get_user_id(user)
+    except Exception:
+        pass
+    record = db.get_financial_upload(upload_id, user_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Upload not found")
+    return {
+        "id": record["id"],
+        "company_name": record["company_name"],
+        "symbol": record["symbol"],
+        "statement_type": record["statement_type"],
+        "created_at": record["created_at"],
+        "data": json.loads(record["data_json"]) if record["data_json"] else None,
+        "dcf": json.loads(record["dcf_result_json"]) if record["dcf_result_json"] else None,
+        "growth": json.loads(record["growth_json"]) if record["growth_json"] else None,
+    }
+
+
+@app.delete("/financial-uploads/{upload_id}")
+async def delete_financial_upload_endpoint(upload_id: int, request: Request):
+    """Delete an uploaded financial statement."""
+    user_id = 1
+    try:
+        user = await get_current_user(request)
+        user_id = get_user_id(user)
+    except Exception:
+        pass
+    if not db.delete_financial_upload(upload_id, user_id):
+        raise HTTPException(status_code=404, detail="Upload not found")
+    return {"message": "Upload deleted"}
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, ActivityIndicator, StyleSheet, Platform } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -6,8 +6,10 @@ import { createStackNavigator } from '@react-navigation/stack';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import ErrorBoundary from './src/components/ErrorBoundary';
 import { AuthProvider, useAuth } from './src/contexts/AuthContext';
+import { ThemeProvider, useTheme } from './src/contexts/ThemeContext';
 
 // Auth screens
 import LoginScreen from './src/screens/LoginScreen';
@@ -49,6 +51,16 @@ import BacktestingScreen from './src/screens/BacktestingScreen';
 import SocialFeedScreen from './src/screens/SocialFeedScreen';
 import ChatScreen from './src/screens/ChatScreen';
 import FriendsScreen from './src/screens/FriendsScreen';
+import FinancialUploadScreen from './src/screens/FinancialUploadScreen';
+import TradingSimulatorScreen from './src/screens/TradingSimulatorScreen';
+import OnboardingScreen from './src/screens/OnboardingScreen';
+import LeaderboardScreen from './src/screens/LeaderboardScreen';
+import StockComparisonScreen from './src/screens/StockComparisonScreen';
+import AchievementsScreen from './src/screens/AchievementsScreen';
+import AIChatScreen from './src/screens/AIChatScreen';
+import EarningsCalendarScreen from './src/screens/EarningsCalendarScreen';
+import OptionsCalculatorScreen from './src/screens/OptionsCalculatorScreen';
+import ReferralScreen from './src/screens/ReferralScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -90,12 +102,22 @@ function HomeStack() {
             <Stack.Screen name="SocialFeed" component={SocialFeedScreen} options={{ headerShown: false }} />
             <Stack.Screen name="ChatScreen" component={ChatScreen} options={{ headerShown: false }} />
             <Stack.Screen name="FriendsScreen" component={FriendsScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="FinancialUpload" component={FinancialUploadScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="TradingSimulator" component={TradingSimulatorScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="Leaderboard" component={LeaderboardScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="StockComparison" component={StockComparisonScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="Achievements" component={AchievementsScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="AIChat" component={AIChatScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="EarningsCalendar" component={EarningsCalendarScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="OptionsCalculator" component={OptionsCalculatorScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="Referral" component={ReferralScreen} options={{ headerShown: false }} />
         </Stack.Navigator>
     );
 }
 
 // Main tabs (shown after auth)
 function MainTabs() {
+    const { theme, isDark } = useTheme();
     return (
         <Tab.Navigator
             screenOptions={({ route }) => ({
@@ -114,15 +136,16 @@ function MainTabs() {
                     );
                 },
                 tabBarActiveTintColor: '#2563eb',
-                tabBarInactiveTintColor: '#94a3b8',
+                tabBarInactiveTintColor: isDark ? '#64748b' : '#94a3b8',
                 tabBarLabelStyle: {
                     fontSize: 11,
                     fontWeight: '700',
                     marginTop: 2,
                 },
                 tabBarStyle: {
-                    backgroundColor: '#fff',
-                    borderTopWidth: 0,
+                    backgroundColor: theme.tabBar,
+                    borderTopWidth: isDark ? 1 : 0,
+                    borderTopColor: theme.border,
                     elevation: 20,
                     shadowColor: '#0f172a',
                     shadowOffset: { width: 0, height: -4 },
@@ -156,8 +179,15 @@ const tabStyles = StyleSheet.create({
 
 function RootNavigator() {
     const { user, loading } = useAuth();
+    const [onboarded, setOnboarded] = useState<boolean | null>(null);
 
-    if (loading) {
+    useEffect(() => {
+        AsyncStorage.getItem('onboarding_complete').then((val) => {
+            setOnboarded(val === 'true');
+        });
+    }, []);
+
+    if (loading || onboarded === null) {
         return (
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0f172a' }}>
                 <ActivityIndicator size="large" color="#2563eb" />
@@ -167,6 +197,9 @@ function RootNavigator() {
 
     return (
         <AuthStack.Navigator screenOptions={{ headerShown: false }}>
+            {!onboarded && (
+                <AuthStack.Screen name="Onboarding" component={OnboardingScreen} />
+            )}
             {user ? (
                 <AuthStack.Screen name="MainApp" component={MainTabs} />
             ) : (
@@ -183,14 +216,16 @@ function RootNavigator() {
 export default function App() {
     return (
         <ErrorBoundary>
-            <AuthProvider>
-                <View testID="app-root" style={{ flex: 1 }}>
-                    <NavigationContainer>
-                        <StatusBar style="light" />
-                        <RootNavigator />
-                    </NavigationContainer>
-                </View>
-            </AuthProvider>
+            <ThemeProvider>
+                <AuthProvider>
+                    <View testID="app-root" style={{ flex: 1 }}>
+                        <NavigationContainer>
+                            <StatusBar style="light" />
+                            <RootNavigator />
+                        </NavigationContainer>
+                    </View>
+                </AuthProvider>
+            </ThemeProvider>
         </ErrorBoundary>
     );
 }
