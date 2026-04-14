@@ -216,7 +216,7 @@ const SearchScreen: React.FC<Props> = ({ navigation }) => {
                             onPress={() => navigateToStock(symbol)}
                         >
                             <Text style={styles.popularSymbol}>{symbol}</Text>
-                            <Ionicons name="trending-up" size={20} color="#007AFF" />
+                            <Ionicons name="trending-up" size={20} color="#2563eb" />
                         </TouchableOpacity>
                     ))}
                 </View>
@@ -237,7 +237,7 @@ const SearchScreen: React.FC<Props> = ({ navigation }) => {
                 </View>
 
                 <View style={styles.tipCard}>
-                    <Ionicons name="analytics" size={24} color="#007AFF" />
+                    <Ionicons name="analytics" size={24} color="#2563eb" />
                     <View style={styles.tipContent}>
                         <Text style={styles.tipTitle}>Comprehensive Analysis</Text>
                         <Text style={styles.tipDescription}>
@@ -310,7 +310,7 @@ const styles = StyleSheet.create({
     searchButton: {
         width: 48,
         height: 48,
-        backgroundColor: '#007AFF',
+        backgroundColor: '#2563eb',
         borderRadius: 8,
         alignItems: 'center',
         justifyContent: 'center',
@@ -384,7 +384,7 @@ const styles = StyleSheet.create({
     stockPrice: {
         fontSize: 18,
         fontWeight: '600',
-        color: '#007AFF',
+        color: '#2563eb',
     },
     stockName: {
         fontSize: 14,

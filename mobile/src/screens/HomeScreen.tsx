@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
     View,
     Text,
@@ -8,8 +8,11 @@ import {
     TextInput,
     Alert,
     ActivityIndicator,
+    Animated,
+    RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { MarketSummaryResponse, stockAPI, SearchResult, Market, AVAILABLE_MARKETS, PortfolioResponse } from '../services/api';
 
 interface Props {
@@ -25,6 +28,13 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
     const [marketLoading, setMarketLoading] = useState(false);
     const [portfolio, setPortfolio] = useState<PortfolioResponse | null>(null);
     const [portfolioLoading, setPortfolioLoading] = useState(false);
+    const [refreshing, setRefreshing] = useState(false);
+
+    const fadeAnim = useRef(new Animated.Value(0)).current;
+
+    useEffect(() => {
+        Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: true }).start();
+    }, []);
 
     useEffect(() => {
         loadAll();
@@ -35,9 +45,15 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
         return () => clearInterval(id);
     }, [selectedMarket]);
 
-    const loadAll = () => {
+    const loadAll = async () => {
         loadMarketSummary();
         loadPortfolioSnapshot();
+    };
+
+    const onRefresh = async () => {
+        setRefreshing(true);
+        await loadAll();
+        setRefreshing(false);
     };
 
     const loadMarketSummary = async () => {
@@ -104,249 +120,309 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
     }, [marketSummary]);
 
     const quickActions = [
-        { icon: 'flash' as const, label: 'Strategy', screen: 'AnalysisSmartStrategy', color: '#6366f1' },
-        { icon: 'globe' as const, label: 'Economy', screen: 'EconomicDashboard', color: '#0f172a' },
-        { icon: 'calculator' as const, label: 'Valuation', screen: 'Valuation', color: '#0ea5e9' },
-        { icon: 'flag' as const, label: 'Goal Plan', screen: 'GoalPlanner', color: '#2563eb' },
-        { icon: 'wallet' as const, label: 'Portfolio', screen: 'Dashboard', color: '#f59e0b' },
-        { icon: 'receipt' as const, label: 'Trades', screen: 'Transactions', color: '#1a1a2e' },
-        { icon: 'repeat' as const, label: 'DCA', screen: 'DCA', color: '#7c3aed' },
-        { icon: 'school' as const, label: 'Learn', screen: 'Education', color: '#ec4899' },
+        { icon: 'flash' as const, label: 'Strategy', screen: 'AnalysisSmartStrategy', color: '#6366f1', gradient: ['#6366f1', '#818cf8'] as const },
+        { icon: 'globe' as const, label: 'Economy', screen: 'EconomicDashboard', color: '#0f172a', gradient: ['#1e293b', '#475569'] as const },
+        { icon: 'calculator' as const, label: 'Valuation', screen: 'Valuation', color: '#0ea5e9', gradient: ['#0ea5e9', '#38bdf8'] as const },
+        { icon: 'flag' as const, label: 'Goal Plan', screen: 'GoalPlanner', color: '#2563eb', gradient: ['#2563eb', '#3b82f6'] as const },
+        { icon: 'wallet' as const, label: 'Portfolio', screen: 'Dashboard', color: '#f59e0b', gradient: ['#f59e0b', '#fbbf24'] as const },
+        { icon: 'receipt' as const, label: 'Trades', screen: 'Transactions', color: '#1a1a2e', gradient: ['#1a1a2e', '#334155'] as const },
+        { icon: 'repeat' as const, label: 'DCA', screen: 'DCA', color: '#7c3aed', gradient: ['#7c3aed', '#8b5cf6'] as const },
+        { icon: 'school' as const, label: 'Learn', screen: 'Education', color: '#ec4899', gradient: ['#ec4899', '#f472b6'] as const },
     ];
 
+    const greeting = new Date().getHours() < 12 ? 'Good Morning' : new Date().getHours() < 18 ? 'Good Afternoon' : 'Good Evening';
+
     return (
-        <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-            {/* Header */}
-            <View style={styles.header}>
-                <Text style={styles.headerTitle}>Stock Valuation</Text>
-                <View style={styles.marketToggle}>
-                    {Object.keys(AVAILABLE_MARKETS).map((m) => (
-                        <TouchableOpacity
-                            key={m}
-                            style={[styles.marketPill, selectedMarket === m && styles.marketPillActive]}
-                            onPress={() => setSelectedMarket(m as Market)}
-                        >
-                            <Text style={[styles.marketPillText, selectedMarket === m && styles.marketPillTextActive]}>
-                                {m}
-                            </Text>
-                        </TouchableOpacity>
-                    ))}
-                </View>
-            </View>
-
-            {/* Search */}
-            <View style={styles.searchWrap}>
-                <Ionicons name="search" size={18} color="#94a3b8" style={{ marginRight: 10 }} />
-                <TextInput
-                    style={styles.searchInput}
-                    placeholder={`Search stocks (e.g. ${AVAILABLE_MARKETS[selectedMarket].featured_stocks[0]})`}
-                    placeholderTextColor="#94a3b8"
-                    value={searchQuery}
-                    onChangeText={setSearchQuery}
-                    onSubmitEditing={handleSearch}
-                    autoCapitalize="characters"
-                    returnKeyType="search"
-                />
-                {searchQuery.length > 0 && (
-                    <TouchableOpacity onPress={() => { setSearchQuery(''); setCompanyResults([]); }}>
-                        <Ionicons name="close-circle" size={20} color="#cbd5e1" />
-                    </TouchableOpacity>
-                )}
-            </View>
-
-            {/* Search Results */}
-            {companyResults.length > 0 && (
-                <View style={styles.card}>
-                    {companyResults.map((r, i) => (
-                        <TouchableOpacity
-                            key={`${r.symbol}-${i}`}
-                            style={styles.resultRow}
-                            onPress={() => { navigation.navigate('StockDetail', { symbol: r.symbol }); setCompanyResults([]); setSearchQuery(''); }}
-                        >
-                            <View style={{ flex: 1 }}>
-                                <Text style={styles.resultName} numberOfLines={1}>
-                                    {r.longname || r.shortname || r.symbol}
-                                </Text>
-                                <Text style={styles.resultMeta}>{r.symbol}{r.exchange ? ` · ${r.exchange}` : ''}</Text>
-                            </View>
-                            <Ionicons name="chevron-forward" size={16} color="#cbd5e1" />
-                        </TouchableOpacity>
-                    ))}
-                </View>
-            )}
-
-            {/* Portfolio Card */}
-            <TouchableOpacity style={styles.portfolioCard} onPress={() => navigation.navigate('Dashboard')} activeOpacity={0.7}>
-                {portfolioLoading ? (
-                    <ActivityIndicator color="#6366f1" />
-                ) : totalValue > 0 ? (
-                    <>
-                        <View style={styles.portfolioTop}>
-                            <View>
-                                <Text style={styles.portfolioLabel}>Portfolio Value</Text>
-                                <Text style={styles.portfolioValue}>{fmt(totalValue)}</Text>
-                            </View>
-                            <View style={styles.portfolioReturn}>
-                                <Text style={[styles.portfolioPct, totalPct >= 0 ? styles.green : styles.red]}>
-                                    {fmtPct(totalPct)}
-                                </Text>
-                                <Text style={[styles.portfolioPL, totalPL >= 0 ? styles.green : styles.red]}>
-                                    {fmt(totalPL)}
-                                </Text>
-                            </View>
+        <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
+            <ScrollView
+                showsVerticalScrollIndicator={false}
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#2563eb" />}
+            >
+                {/* Header */}
+                <LinearGradient colors={['#0f172a', '#1e3a5f']} style={styles.header}>
+                    <View style={styles.headerTop}>
+                        <View>
+                            <Text style={styles.greeting}>{greeting}</Text>
+                            <Text style={styles.headerTitle}>StockVal</Text>
                         </View>
-                        <View style={styles.portfolioBottom}>
-                            <Text style={styles.portfolioMeta}>{holdingsCount} holding{holdingsCount !== 1 ? 's' : ''}</Text>
-                            <Text style={styles.portfolioLink}>View details →</Text>
+                        <View style={styles.marketToggle}>
+                            {Object.keys(AVAILABLE_MARKETS).map((m) => (
+                                <TouchableOpacity
+                                    key={m}
+                                    style={[styles.marketPill, selectedMarket === m && styles.marketPillActive]}
+                                    onPress={() => setSelectedMarket(m as Market)}
+                                >
+                                    <Text style={[styles.marketPillText, selectedMarket === m && styles.marketPillTextActive]}>
+                                        {m}
+                                    </Text>
+                                </TouchableOpacity>
+                            ))}
                         </View>
-                    </>
-                ) : (
-                    <View style={styles.emptyPortfolio}>
-                        <Ionicons name="wallet-outline" size={28} color="#cbd5e1" />
-                        <Text style={styles.emptyPortfolioText}>No holdings yet</Text>
-                        <Text style={styles.portfolioLink}>Start building →</Text>
+                    </View>
+
+                    {/* Search */}
+                    <View style={styles.searchWrap}>
+                        <Ionicons name="search" size={18} color="#94a3b8" style={{ marginRight: 10 }} />
+                        <TextInput
+                            style={styles.searchInput}
+                            placeholder={`Search stocks (e.g. ${AVAILABLE_MARKETS[selectedMarket].featured_stocks[0]})`}
+                            placeholderTextColor="#64748b"
+                            value={searchQuery}
+                            onChangeText={setSearchQuery}
+                            onSubmitEditing={handleSearch}
+                            autoCapitalize="characters"
+                            returnKeyType="search"
+                        />
+                        {searchQuery.length > 0 && (
+                            <TouchableOpacity onPress={() => { setSearchQuery(''); setCompanyResults([]); }}>
+                                <Ionicons name="close-circle" size={20} color="#475569" />
+                            </TouchableOpacity>
+                        )}
+                    </View>
+                </LinearGradient>
+
+                {/* Search Results */}
+                {companyResults.length > 0 && (
+                    <View style={styles.card}>
+                        {companyResults.map((r, i) => (
+                            <TouchableOpacity
+                                key={`${r.symbol}-${i}`}
+                                style={styles.resultRow}
+                                onPress={() => { navigation.navigate('StockDetail', { symbol: r.symbol }); setCompanyResults([]); setSearchQuery(''); }}
+                            >
+                                <View style={styles.resultIcon}>
+                                    <Text style={styles.resultIconText}>{r.symbol.charAt(0)}</Text>
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                    <Text style={styles.resultName} numberOfLines={1}>
+                                        {r.longname || r.shortname || r.symbol}
+                                    </Text>
+                                    <Text style={styles.resultMeta}>{r.symbol}{r.exchange ? ` · ${r.exchange}` : ''}</Text>
+                                </View>
+                                <Ionicons name="chevron-forward" size={16} color="#cbd5e1" />
+                            </TouchableOpacity>
+                        ))}
                     </View>
                 )}
-            </TouchableOpacity>
 
-            {/* Quick Actions */}
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.actionsRow} contentContainerStyle={{ paddingHorizontal: 16 }}>
-                {quickActions.map((a) => (
-                    <TouchableOpacity
-                        key={a.screen}
-                        style={styles.actionChip}
-                        onPress={() => navigation.navigate(a.screen)}
+                {/* Portfolio Card */}
+                <TouchableOpacity style={styles.portfolioCard} onPress={() => navigation.navigate('Dashboard')} activeOpacity={0.8}>
+                    <LinearGradient
+                        colors={totalPL >= 0 ? ['#059669', '#10b981'] : ['#dc2626', '#ef4444']}
+                        style={styles.portfolioGrad}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
                     >
-                        <View style={[styles.actionIcon, { backgroundColor: a.color + '18' }]}>
-                            <Ionicons name={a.icon} size={18} color={a.color} />
-                        </View>
-                        <Text style={styles.actionLabel}>{a.label}</Text>
-                    </TouchableOpacity>
-                ))}
-            </ScrollView>
+                        {portfolioLoading ? (
+                            <ActivityIndicator color="#fff" />
+                        ) : totalValue > 0 ? (
+                            <>
+                                <View style={styles.portfolioTop}>
+                                    <View>
+                                        <Text style={styles.portfolioLabel}>Portfolio Value</Text>
+                                        <Text style={styles.portfolioValue}>{fmt(totalValue)}</Text>
+                                    </View>
+                                    <View style={styles.portfolioReturn}>
+                                        <View style={styles.portfolioBadge}>
+                                            <Ionicons name={totalPct >= 0 ? 'trending-up' : 'trending-down'} size={14} color="#fff" />
+                                            <Text style={styles.portfolioPct}>{fmtPct(totalPct)}</Text>
+                                        </View>
+                                        <Text style={styles.portfolioPL}>{fmt(totalPL)}</Text>
+                                    </View>
+                                </View>
+                                <View style={styles.portfolioBottom}>
+                                    <Text style={styles.portfolioMeta}>{holdingsCount} holding{holdingsCount !== 1 ? 's' : ''}</Text>
+                                    <View style={styles.portfolioArrow}>
+                                        <Text style={styles.portfolioLink}>View details</Text>
+                                        <Ionicons name="arrow-forward" size={14} color="rgba(255,255,255,0.9)" />
+                                    </View>
+                                </View>
+                            </>
+                        ) : (
+                            <View style={styles.emptyPortfolio}>
+                                <View style={styles.emptyIcon}>
+                                    <Ionicons name="wallet-outline" size={28} color="rgba(255,255,255,0.8)" />
+                                </View>
+                                <Text style={styles.emptyPortfolioText}>Start building your portfolio</Text>
+                                <Text style={styles.portfolioLink}>Get started →</Text>
+                            </View>
+                        )}
+                    </LinearGradient>
+                </TouchableOpacity>
 
-            {/* Market Pulse */}
-            <View style={styles.card}>
-                <View style={styles.cardHeader}>
-                    <Text style={styles.cardTitle}>Market Pulse</Text>
-                    {signal && (
-                        <View style={[styles.signalBadge, signal === 'Bullish' ? styles.greenBg : signal === 'Bearish' ? styles.redBg : styles.neutralBg]}>
-                            <Text style={styles.signalText}>{signal}</Text>
+                {/* Quick Actions */}
+                <View style={styles.sectionHeader}>
+                    <Text style={styles.sectionTitle}>Quick Actions</Text>
+                </View>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.actionsRow} contentContainerStyle={{ paddingHorizontal: 16 }}>
+                    {quickActions.map((a) => (
+                        <TouchableOpacity
+                            key={a.screen}
+                            style={styles.actionChip}
+                            onPress={() => navigation.navigate(a.screen)}
+                            activeOpacity={0.7}
+                        >
+                            <LinearGradient colors={[...a.gradient]} style={styles.actionIconGrad}>
+                                <Ionicons name={a.icon} size={20} color="#fff" />
+                            </LinearGradient>
+                            <Text style={styles.actionLabel}>{a.label}</Text>
+                        </TouchableOpacity>
+                    ))}
+                </ScrollView>
+
+                {/* Market Pulse */}
+                <View style={styles.card}>
+                    <View style={styles.cardHeader}>
+                        <View style={styles.cardTitleRow}>
+                            <Ionicons name="pulse" size={18} color="#2563eb" />
+                            <Text style={styles.cardTitle}>Market Pulse</Text>
                         </View>
+                        {signal && (
+                            <View style={[styles.signalBadge, signal === 'Bullish' ? styles.greenBg : signal === 'Bearish' ? styles.redBg : styles.neutralBg]}>
+                                <Ionicons name={signal === 'Bullish' ? 'trending-up' : signal === 'Bearish' ? 'trending-down' : 'remove'} size={12} color="#fff" />
+                                <Text style={styles.signalText}>{signal}</Text>
+                            </View>
+                        )}
+                    </View>
+                    {marketLoading ? (
+                        <ActivityIndicator color="#2563eb" style={{ paddingVertical: 20 }} />
+                    ) : marketSummary ? (
+                        <>
+                            {marketSummary.index?.price != null && (
+                                <View style={styles.indexRow}>
+                                    <View style={styles.indexLeft}>
+                                        <View style={styles.indexDot} />
+                                        <Text style={styles.indexLabel}>{selectedMarket === 'NGX' ? 'NGX Index' : 'S&P 500'}</Text>
+                                    </View>
+                                    <Text style={styles.indexPrice}>
+                                        {selectedMarket === 'NGX' ? '₦' : '$'}{marketSummary.index.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                                    </Text>
+                                    <View style={[styles.changePill, marketSummary.index.change_pct >= 0 ? styles.greenPillBg : styles.redPillBg]}>
+                                        <Text style={[styles.changePillText, marketSummary.index.change_pct >= 0 ? styles.greenText : styles.redText]}>
+                                            {fmtPct(marketSummary.index.change_pct)}
+                                        </Text>
+                                    </View>
+                                </View>
+                            )}
+                            {marketSummary.gainers.length > 0 && (
+                                <>
+                                    <Text style={styles.moversLabel}>TOP MOVERS</Text>
+                                    {[...marketSummary.gainers.slice(0, 2), ...marketSummary.losers.slice(0, 2)].map((item, i) => (
+                                        <TouchableOpacity
+                                            key={`m-${item.symbol}-${i}`}
+                                            style={styles.moverRow}
+                                            onPress={() => navigation.navigate('StockDetail', { symbol: item.symbol })}
+                                            activeOpacity={0.6}
+                                        >
+                                            <View style={styles.moverLeft}>
+                                                <View style={[styles.moverDot, item.change_pct >= 0 ? styles.greenDot : styles.redDot]} />
+                                                <Text style={styles.moverSymbol}>{item.symbol.replace('.NG', '')}</Text>
+                                            </View>
+                                            <View style={[styles.changePill, item.change_pct >= 0 ? styles.greenPillBg : styles.redPillBg]}>
+                                                <Text style={[styles.changePillText, item.change_pct >= 0 ? styles.greenText : styles.redText]}>
+                                                    {fmtPct(item.change_pct)}
+                                                </Text>
+                                            </View>
+                                        </TouchableOpacity>
+                                    ))}
+                                </>
+                            )}
+                        </>
+                    ) : (
+                        <Text style={styles.mutedText}>Market data unavailable</Text>
                     )}
                 </View>
-                {marketLoading ? (
-                    <ActivityIndicator color="#6366f1" style={{ paddingVertical: 20 }} />
-                ) : marketSummary ? (
-                    <>
-                        {marketSummary.index?.price != null && (
-                            <View style={styles.indexRow}>
-                                <Text style={styles.indexLabel}>{selectedMarket === 'NGX' ? 'NGX Index' : 'S&P 500'}</Text>
-                                <Text style={styles.indexPrice}>
-                                    {selectedMarket === 'NGX' ? '₦' : '$'}{marketSummary.index.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                                </Text>
-                                <Text style={[styles.indexChange, marketSummary.index.change_pct >= 0 ? styles.green : styles.red]}>
-                                    {fmtPct(marketSummary.index.change_pct)}
-                                </Text>
-                            </View>
-                        )}
-                        {marketSummary.gainers.length > 0 && (
-                            <>
-                                <Text style={styles.moversLabel}>Top Movers</Text>
-                                {[...marketSummary.gainers.slice(0, 2), ...marketSummary.losers.slice(0, 2)].map((item, i) => (
-                                    <TouchableOpacity
-                                        key={`m-${item.symbol}-${i}`}
-                                        style={styles.moverRow}
-                                        onPress={() => navigation.navigate('StockDetail', { symbol: item.symbol })}
-                                    >
-                                        <Text style={styles.moverSymbol}>{item.symbol.replace('.NG', '')}</Text>
-                                        <Text style={[styles.moverChange, item.change_pct >= 0 ? styles.green : styles.red]}>
-                                            {fmtPct(item.change_pct)}
-                                        </Text>
-                                    </TouchableOpacity>
-                                ))}
-                            </>
-                        )}
-                    </>
-                ) : (
-                    <Text style={styles.mutedText}>Market data unavailable</Text>
-                )}
-            </View>
 
-            {/* Featured Stocks — from market summary */}
-            <View style={[styles.card, { marginBottom: 40 }]}>
-                <Text style={styles.cardTitle}>Featured</Text>
-                {marketLoading ? (
-                    <ActivityIndicator color="#6366f1" style={{ paddingVertical: 20 }} />
-                ) : marketSummary?.quotes?.length ? (
-                    marketSummary.quotes.slice(0, 6).map((q, i) => (
-                        <TouchableOpacity
-                            key={`${q.symbol}-${i}`}
-                            style={styles.stockRow}
-                            onPress={() => navigation.navigate('StockDetail', { symbol: q.symbol })}
-                        >
-                            <View style={styles.stockLeft}>
-                                <Text style={styles.stockSymbol}>{q.symbol.replace('.NG', '')}</Text>
-                            </View>
-                            <View style={styles.stockRight}>
-                                <Text style={styles.stockPrice}>{fmtPrice(q.price)}</Text>
-                                <Text style={[styles.stockCap, q.change_pct >= 0 ? styles.green : styles.red]}>
-                                    {fmtPct(q.change_pct)}
-                                </Text>
-                            </View>
-                        </TouchableOpacity>
-                    ))
-                ) : (
-                    <Text style={styles.mutedText}>No stock data available</Text>
-                )}
-            </View>
-        </ScrollView>
+                {/* Featured Stocks */}
+                <View style={[styles.card, { marginBottom: 40 }]}>
+                    <View style={styles.cardTitleRow}>
+                        <Ionicons name="star" size={16} color="#f59e0b" />
+                        <Text style={styles.cardTitle}>Featured</Text>
+                    </View>
+                    {marketLoading ? (
+                        <ActivityIndicator color="#2563eb" style={{ paddingVertical: 20 }} />
+                    ) : marketSummary?.quotes?.length ? (
+                        marketSummary.quotes.slice(0, 6).map((q, i) => (
+                            <TouchableOpacity
+                                key={`${q.symbol}-${i}`}
+                                style={styles.stockRow}
+                                onPress={() => navigation.navigate('StockDetail', { symbol: q.symbol })}
+                                activeOpacity={0.6}
+                            >
+                                <View style={styles.stockLeft}>
+                                    <View style={styles.stockAvatar}>
+                                        <Text style={styles.stockAvatarText}>{q.symbol.charAt(0)}</Text>
+                                    </View>
+                                    <Text style={styles.stockSymbol}>{q.symbol.replace('.NG', '')}</Text>
+                                </View>
+                                <View style={styles.stockRight}>
+                                    <Text style={styles.stockPrice}>{fmtPrice(q.price)}</Text>
+                                    <View style={[styles.changeChip, q.change_pct >= 0 ? styles.greenChipBg : styles.redChipBg]}>
+                                        <Text style={[styles.changeChipText, q.change_pct >= 0 ? styles.greenText : styles.redText]}>
+                                            {fmtPct(q.change_pct)}
+                                        </Text>
+                                    </View>
+                                </View>
+                            </TouchableOpacity>
+                        ))
+                    ) : (
+                        <Text style={styles.mutedText}>No stock data available</Text>
+                    )}
+                </View>
+            </ScrollView>
+        </Animated.View>
     );
 };
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#f8fafc',
+        backgroundColor: '#f1f5f9',
     },
     /* ── Header ── */
     header: {
+        paddingTop: 60,
+        paddingBottom: 20,
+        paddingHorizontal: 20,
+        borderBottomLeftRadius: 24,
+        borderBottomRightRadius: 24,
+    },
+    headerTop: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        alignItems: 'center',
-        paddingTop: 60,
-        paddingBottom: 12,
-        paddingHorizontal: 20,
-        backgroundColor: '#fff',
+        alignItems: 'flex-start',
+        marginBottom: 16,
+    },
+    greeting: {
+        fontSize: 14,
+        color: 'rgba(255,255,255,0.6)',
+        fontWeight: '500',
+        marginBottom: 2,
     },
     headerTitle: {
-        fontSize: 22,
-        fontWeight: '800',
-        color: '#0f172a',
+        fontSize: 26,
+        fontWeight: '900',
+        color: '#fff',
+        letterSpacing: -0.5,
     },
     marketToggle: {
         flexDirection: 'row',
-        backgroundColor: '#f1f5f9',
-        borderRadius: 8,
-        padding: 2,
+        backgroundColor: 'rgba(255,255,255,0.12)',
+        borderRadius: 10,
+        padding: 3,
     },
     marketPill: {
-        paddingHorizontal: 14,
-        paddingVertical: 6,
-        borderRadius: 6,
+        paddingHorizontal: 16,
+        paddingVertical: 7,
+        borderRadius: 8,
     },
     marketPillActive: {
         backgroundColor: '#fff',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.08,
-        shadowRadius: 2,
-        elevation: 1,
     },
     marketPillText: {
         fontSize: 13,
-        fontWeight: '600',
-        color: '#94a3b8',
+        fontWeight: '700',
+        color: 'rgba(255,255,255,0.5)',
     },
     marketPillTextActive: {
         color: '#0f172a',
@@ -355,20 +431,17 @@ const styles = StyleSheet.create({
     searchWrap: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#fff',
-        marginHorizontal: 16,
-        marginTop: 8,
-        marginBottom: 12,
+        backgroundColor: 'rgba(255,255,255,0.1)',
         paddingHorizontal: 14,
-        paddingVertical: 10,
-        borderRadius: 12,
+        paddingVertical: 12,
+        borderRadius: 14,
         borderWidth: 1,
-        borderColor: '#e2e8f0',
+        borderColor: 'rgba(255,255,255,0.08)',
     },
     searchInput: {
         flex: 1,
         fontSize: 15,
-        color: '#0f172a',
+        color: '#fff',
         paddingVertical: 0,
     },
     /* ── Search Results ── */
@@ -378,6 +451,14 @@ const styles = StyleSheet.create({
         paddingVertical: 12,
         borderBottomWidth: 1,
         borderBottomColor: '#f1f5f9',
+        gap: 12,
+    },
+    resultIcon: {
+        width: 36, height: 36, borderRadius: 10, backgroundColor: '#eff6ff',
+        justifyContent: 'center', alignItems: 'center',
+    },
+    resultIconText: {
+        fontSize: 14, fontWeight: '800', color: '#2563eb',
     },
     resultName: {
         fontSize: 14,
@@ -394,28 +475,57 @@ const styles = StyleSheet.create({
         backgroundColor: '#fff',
         marginHorizontal: 16,
         marginBottom: 12,
-        borderRadius: 14,
-        padding: 16,
+        borderRadius: 18,
+        padding: 18,
+        shadowColor: '#0f172a',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.06,
+        shadowRadius: 8,
+        elevation: 3,
     },
     cardHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: 12,
+        marginBottom: 14,
+    },
+    cardTitleRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        marginBottom: 10,
     },
     cardTitle: {
-        fontSize: 16,
-        fontWeight: '700',
+        fontSize: 17,
+        fontWeight: '800',
         color: '#0f172a',
-        marginBottom: 8,
+    },
+    /* ── Section Header ── */
+    sectionHeader: {
+        paddingHorizontal: 20,
+        paddingTop: 4,
+        paddingBottom: 8,
+    },
+    sectionTitle: {
+        fontSize: 17,
+        fontWeight: '800',
+        color: '#0f172a',
     },
     /* ── Portfolio ── */
     portfolioCard: {
-        backgroundColor: '#fff',
         marginHorizontal: 16,
-        marginBottom: 12,
-        borderRadius: 14,
-        padding: 18,
+        marginTop: 16,
+        marginBottom: 16,
+        borderRadius: 20,
+        overflow: 'hidden',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.15,
+        shadowRadius: 12,
+        elevation: 8,
+    },
+    portfolioGrad: {
+        padding: 20,
     },
     portfolioTop: {
         flexDirection: 'row',
@@ -423,86 +533,119 @@ const styles = StyleSheet.create({
         alignItems: 'flex-start',
     },
     portfolioLabel: {
-        fontSize: 12,
-        color: '#94a3b8',
-        fontWeight: '500',
+        fontSize: 13,
+        color: 'rgba(255,255,255,0.7)',
+        fontWeight: '600',
         marginBottom: 4,
     },
     portfolioValue: {
-        fontSize: 24,
-        fontWeight: '800',
-        color: '#0f172a',
+        fontSize: 28,
+        fontWeight: '900',
+        color: '#fff',
+        letterSpacing: -0.5,
     },
     portfolioReturn: {
         alignItems: 'flex-end',
     },
+    portfolioBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        backgroundColor: 'rgba(255,255,255,0.2)',
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 8,
+    },
     portfolioPct: {
-        fontSize: 18,
-        fontWeight: '700',
+        fontSize: 15,
+        fontWeight: '800',
+        color: '#fff',
     },
     portfolioPL: {
-        fontSize: 12,
+        fontSize: 13,
         fontWeight: '600',
-        marginTop: 2,
+        marginTop: 4,
+        color: 'rgba(255,255,255,0.8)',
     },
     portfolioBottom: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        marginTop: 14,
-        paddingTop: 12,
+        alignItems: 'center',
+        marginTop: 16,
+        paddingTop: 14,
         borderTopWidth: 1,
-        borderTopColor: '#f1f5f9',
+        borderTopColor: 'rgba(255,255,255,0.2)',
     },
     portfolioMeta: {
         fontSize: 13,
-        color: '#94a3b8',
+        color: 'rgba(255,255,255,0.7)',
+        fontWeight: '500',
+    },
+    portfolioArrow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
     },
     portfolioLink: {
         fontSize: 13,
-        fontWeight: '600',
-        color: '#6366f1',
+        fontWeight: '700',
+        color: 'rgba(255,255,255,0.9)',
     },
     emptyPortfolio: {
         alignItems: 'center',
-        paddingVertical: 12,
-        gap: 6,
+        paddingVertical: 16,
+        gap: 8,
+    },
+    emptyIcon: {
+        width: 56, height: 56, borderRadius: 28,
+        backgroundColor: 'rgba(255,255,255,0.15)',
+        justifyContent: 'center', alignItems: 'center',
     },
     emptyPortfolioText: {
-        fontSize: 14,
-        color: '#94a3b8',
+        fontSize: 15,
+        color: 'rgba(255,255,255,0.8)',
+        fontWeight: '600',
     },
     /* ── Quick Actions ── */
     actionsRow: {
-        marginBottom: 12,
+        marginBottom: 16,
     },
     actionChip: {
         alignItems: 'center',
-        marginRight: 16,
-        width: 64,
+        marginRight: 14,
+        width: 68,
     },
-    actionIcon: {
-        width: 44,
-        height: 44,
-        borderRadius: 14,
+    actionIconGrad: {
+        width: 52,
+        height: 52,
+        borderRadius: 16,
         alignItems: 'center',
         justifyContent: 'center',
-        marginBottom: 6,
+        marginBottom: 8,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.15,
+        shadowRadius: 6,
+        elevation: 4,
     },
     actionLabel: {
         fontSize: 11,
-        fontWeight: '600',
+        fontWeight: '700',
         color: '#475569',
         textAlign: 'center',
     },
     /* ── Market Pulse ── */
     signalBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
         paddingHorizontal: 10,
-        paddingVertical: 4,
-        borderRadius: 6,
+        paddingVertical: 5,
+        borderRadius: 8,
     },
     signalText: {
-        fontSize: 11,
-        fontWeight: '700',
+        fontSize: 12,
+        fontWeight: '800',
         color: '#fff',
     },
     greenBg: { backgroundColor: '#10b981' },
@@ -511,19 +654,27 @@ const styles = StyleSheet.create({
     indexRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        marginBottom: 12,
+        marginBottom: 14,
+    },
+    indexLeft: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    indexDot: {
+        width: 8, height: 8, borderRadius: 4, backgroundColor: '#2563eb',
     },
     indexLabel: {
-        flex: 1,
-        fontSize: 13,
-        color: '#64748b',
-        fontWeight: '500',
+        fontSize: 14,
+        color: '#475569',
+        fontWeight: '600',
     },
     indexPrice: {
-        fontSize: 15,
-        fontWeight: '700',
+        fontSize: 16,
+        fontWeight: '800',
         color: '#0f172a',
-        marginRight: 8,
+        marginRight: 10,
     },
     indexChange: {
         fontSize: 13,
@@ -531,25 +682,48 @@ const styles = StyleSheet.create({
         minWidth: 60,
         textAlign: 'right',
     },
+    changePill: {
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 8,
+    },
+    changePillText: {
+        fontSize: 13,
+        fontWeight: '800',
+    },
+    greenPillBg: { backgroundColor: '#ecfdf5' },
+    redPillBg: { backgroundColor: '#fef2f2' },
+    greenText: { color: '#059669' },
+    redText: { color: '#dc2626' },
     moversLabel: {
-        fontSize: 12,
-        fontWeight: '600',
+        fontSize: 11,
+        fontWeight: '800',
         color: '#94a3b8',
-        marginTop: 4,
-        marginBottom: 8,
-        textTransform: 'uppercase',
-        letterSpacing: 0.5,
+        marginTop: 6,
+        marginBottom: 10,
+        letterSpacing: 1,
     },
     moverRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        paddingVertical: 8,
+        alignItems: 'center',
+        paddingVertical: 10,
         borderBottomWidth: 1,
         borderBottomColor: '#f8fafc',
     },
+    moverLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    moverDot: {
+        width: 6, height: 6, borderRadius: 3,
+    },
+    greenDot: { backgroundColor: '#10b981' },
+    redDot: { backgroundColor: '#ef4444' },
     moverSymbol: {
-        fontSize: 14,
-        fontWeight: '600',
+        fontSize: 15,
+        fontWeight: '700',
         color: '#0f172a',
     },
     moverChange: {
@@ -567,7 +741,17 @@ const styles = StyleSheet.create({
     },
     stockLeft: {
         flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
         marginRight: 12,
+    },
+    stockAvatar: {
+        width: 38, height: 38, borderRadius: 12, backgroundColor: '#eff6ff',
+        justifyContent: 'center', alignItems: 'center',
+    },
+    stockAvatarText: {
+        fontSize: 15, fontWeight: '800', color: '#2563eb',
     },
     stockSymbol: {
         fontSize: 15,
@@ -579,9 +763,21 @@ const styles = StyleSheet.create({
     },
     stockPrice: {
         fontSize: 15,
-        fontWeight: '700',
+        fontWeight: '800',
         color: '#0f172a',
     },
+    changeChip: {
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        borderRadius: 6,
+        marginTop: 4,
+    },
+    changeChipText: {
+        fontSize: 12,
+        fontWeight: '800',
+    },
+    greenChipBg: { backgroundColor: '#ecfdf5' },
+    redChipBg: { backgroundColor: '#fef2f2' },
     stockCap: {
         fontSize: 11,
         color: '#94a3b8',

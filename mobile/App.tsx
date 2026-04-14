@@ -1,10 +1,11 @@
 import React from 'react';
-import { View, ActivityIndicator } from 'react-native';
+import { View, ActivityIndicator, StyleSheet, Platform } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
+import { LinearGradient } from 'expo-linear-gradient';
 import ErrorBoundary from './src/components/ErrorBoundary';
 import { AuthProvider, useAuth } from './src/contexts/AuthContext';
 
@@ -57,7 +58,7 @@ const AuthStack = createStackNavigator();
 function HomeStack() {
     return (
         <Stack.Navigator>
-            <Stack.Screen name="HomeMain" component={HomeScreen} options={{ title: 'Stock Valuation' }} />
+            <Stack.Screen name="HomeMain" component={HomeScreen} options={{ headerShown: false }} />
             <Stack.Screen name="Valuation" component={ValuationSimplified} options={{ headerShown: false }} />
             <Stack.Screen name="ValuationFull" component={ValuationScreen} options={{ title: 'Full Analysis' }} />
             <Stack.Screen name="Screener" component={ScreenerScreen} options={{ title: 'AI Screener' }} />
@@ -99,16 +100,38 @@ function MainTabs() {
         <Tab.Navigator
             screenOptions={({ route }) => ({
                 tabBarIcon: ({ focused, color, size }) => {
-                    let iconName;
+                    let iconName: any;
                     if (route.name === 'Home') iconName = focused ? 'home' : 'home-outline';
                     else if (route.name === 'Search') iconName = focused ? 'search' : 'search-outline';
                     else if (route.name === 'Charts') iconName = focused ? 'bar-chart' : 'bar-chart-outline';
                     else if (route.name === 'Crowd') iconName = focused ? 'people' : 'people-outline';
                     else if (route.name === 'Watchlist') iconName = focused ? 'bookmark' : 'bookmark-outline';
-                    return <Ionicons name={iconName} size={size} color={color} />;
+                    return (
+                        <View style={{ alignItems: 'center' }}>
+                            <Ionicons name={iconName} size={22} color={color} />
+                            {focused && <View style={tabStyles.activeIndicator} />}
+                        </View>
+                    );
                 },
                 tabBarActiveTintColor: '#2563eb',
                 tabBarInactiveTintColor: '#94a3b8',
+                tabBarLabelStyle: {
+                    fontSize: 11,
+                    fontWeight: '700',
+                    marginTop: 2,
+                },
+                tabBarStyle: {
+                    backgroundColor: '#fff',
+                    borderTopWidth: 0,
+                    elevation: 20,
+                    shadowColor: '#0f172a',
+                    shadowOffset: { width: 0, height: -4 },
+                    shadowOpacity: 0.08,
+                    shadowRadius: 12,
+                    height: Platform.OS === 'ios' ? 88 : 68,
+                    paddingTop: 8,
+                    paddingBottom: Platform.OS === 'ios' ? 28 : 10,
+                },
                 headerShown: false,
             })}
         >
@@ -121,12 +144,22 @@ function MainTabs() {
     );
 }
 
+const tabStyles = StyleSheet.create({
+    activeIndicator: {
+        width: 4,
+        height: 4,
+        borderRadius: 2,
+        backgroundColor: '#2563eb',
+        marginTop: 4,
+    },
+});
+
 function RootNavigator() {
     const { user, loading } = useAuth();
 
     if (loading) {
         return (
-            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f8fafc' }}>
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0f172a' }}>
                 <ActivityIndicator size="large" color="#2563eb" />
             </View>
         );
@@ -153,7 +186,7 @@ export default function App() {
             <AuthProvider>
                 <View testID="app-root" style={{ flex: 1 }}>
                     <NavigationContainer>
-                        <StatusBar style="auto" />
+                        <StatusBar style="light" />
                         <RootNavigator />
                     </NavigationContainer>
                 </View>

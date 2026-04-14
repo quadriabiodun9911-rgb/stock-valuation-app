@@ -227,7 +227,7 @@ const WatchlistScreen: React.FC<Props> = ({ navigation }) => {
                 </View>
                 {refreshing && (
                     <View style={styles.inlineLoading}>
-                        <ActivityIndicator size="small" color="#007AFF" />
+                        <ActivityIndicator size="small" color="#2563eb" />
                         <Text style={styles.inlineLoadingText}>Refreshing prices...</Text>
                     </View>
                 )}
@@ -553,7 +553,7 @@ const styles = StyleSheet.create({
     addActionButton: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#007AFF',
+        backgroundColor: '#2563eb',
         paddingHorizontal: 14,
         paddingVertical: 10,
         borderRadius: 10,
@@ -591,7 +591,7 @@ const styles = StyleSheet.create({
     refreshButton: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#007AFF',
+        backgroundColor: '#2563eb',
         paddingHorizontal: 12,
         paddingVertical: 8,
         borderRadius: 10,

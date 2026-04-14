@@ -111,12 +111,16 @@ const SocialFeedScreen: React.FC<{ navigation?: any }> = ({ navigation }) => {
                     <Text style={styles.avatarText}>{(item.username || '?')[0].toUpperCase()}</Text>
                 </View>
                 <View style={{ flex: 1 }}>
-                    <Text style={styles.username}>@{item.username}</Text>
-                    <Text style={styles.timestamp}>{timeAgo(item.created_at)}</Text>
+                    <View style={styles.nameRow}>
+                        <Text style={styles.username}>@{item.username}</Text>
+                        <Text style={styles.dot}>·</Text>
+                        <Text style={styles.timestamp}>{timeAgo(item.created_at)}</Text>
+                    </View>
                 </View>
                 {item.symbol && (
                     <TouchableOpacity style={styles.symbolBadge}
                         onPress={() => navigation?.navigate('StockDetail', { symbol: item.symbol })}>
+                        <Ionicons name="trending-up" size={12} color="#2563eb" />
                         <Text style={styles.symbolBadgeText}>${item.symbol}</Text>
                     </TouchableOpacity>
                 )}
@@ -125,12 +129,12 @@ const SocialFeedScreen: React.FC<{ navigation?: any }> = ({ navigation }) => {
             <Text style={styles.postContent}>{item.content}</Text>
 
             <View style={styles.postActions}>
-                <TouchableOpacity style={styles.actionBtn} onPress={() => openComments(item.id)}>
+                <TouchableOpacity style={styles.actionBtn} onPress={() => openComments(item.id)} activeOpacity={0.6}>
                     <Ionicons name="chatbubble-outline" size={18} color="#64748b" />
                     <Text style={styles.actionCount}>{item.comment_count || 0}</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity style={styles.actionBtn} onPress={() => handleLike(item.id)}>
+                <TouchableOpacity style={styles.actionBtn} onPress={() => handleLike(item.id)} activeOpacity={0.6}>
                     <Ionicons
                         name={item.liked_by_me ? 'heart' : 'heart-outline'}
                         size={18}
@@ -141,8 +145,8 @@ const SocialFeedScreen: React.FC<{ navigation?: any }> = ({ navigation }) => {
                     </Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity style={styles.actionBtn} onPress={() => handleDelete(item.id)}>
-                    <Ionicons name="trash-outline" size={18} color="#64748b" />
+                <TouchableOpacity style={styles.actionBtn} onPress={() => handleDelete(item.id)} activeOpacity={0.6}>
+                    <Ionicons name="trash-outline" size={16} color="#94a3b8" />
                 </TouchableOpacity>
             </View>
         </View>
@@ -266,53 +270,81 @@ const SocialFeedScreen: React.FC<{ navigation?: any }> = ({ navigation }) => {
 };
 
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: '#f8fafc' },
-    center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f8fafc' },
+    container: { flex: 1, backgroundColor: '#f1f5f9' },
+    center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f1f5f9' },
 
     // Composer
-    composer: { backgroundColor: '#fff', paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
-    composerRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+    composer: {
+        backgroundColor: '#fff', paddingHorizontal: 16, paddingTop: 14, paddingBottom: 14,
+        borderBottomWidth: 0, marginBottom: 2,
+        shadowColor: '#0f172a', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.04, shadowRadius: 4, elevation: 2,
+    },
+    composerRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
     composerInput: { flex: 1, fontSize: 15, color: '#0f172a', minHeight: 40, maxHeight: 100, paddingTop: 8 },
-    composerBottom: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 },
-    symbolInput: { backgroundColor: '#f1f5f9', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, fontSize: 13, color: '#2563eb', fontWeight: '700', width: 90 },
-    postBtn: { backgroundColor: '#2563eb', borderRadius: 20, paddingHorizontal: 20, paddingVertical: 8 },
-    postBtnDisabled: { opacity: 0.5 },
-    postBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+    composerBottom: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 10 },
+    symbolInput: {
+        backgroundColor: '#eff6ff', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8,
+        fontSize: 13, color: '#2563eb', fontWeight: '800', width: 100, borderWidth: 1, borderColor: '#dbeafe',
+    },
+    postBtn: { backgroundColor: '#2563eb', borderRadius: 22, paddingHorizontal: 24, paddingVertical: 10 },
+    postBtnDisabled: { opacity: 0.4 },
+    postBtnText: { color: '#fff', fontWeight: '800', fontSize: 14 },
 
     // Avatar
-    avatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#2563eb', alignItems: 'center', justifyContent: 'center' },
-    avatarSmall: { width: 32, height: 32, borderRadius: 16 },
-    avatarText: { color: '#fff', fontWeight: '800', fontSize: 16 },
+    avatar: {
+        width: 42, height: 42, borderRadius: 21, backgroundColor: '#2563eb',
+        alignItems: 'center', justifyContent: 'center',
+        shadowColor: '#2563eb', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 3,
+    },
+    avatarSmall: { width: 34, height: 34, borderRadius: 17 },
+    avatarText: { color: '#fff', fontWeight: '900', fontSize: 17 },
 
     // Post card
-    postCard: { backgroundColor: '#fff', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
-    postHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 },
-    username: { fontSize: 14, fontWeight: '700', color: '#0f172a' },
-    timestamp: { fontSize: 12, color: '#94a3b8' },
-    symbolBadge: { backgroundColor: '#eff6ff', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
-    symbolBadgeText: { color: '#2563eb', fontWeight: '700', fontSize: 12 },
-    postContent: { fontSize: 15, color: '#1e293b', lineHeight: 22, marginBottom: 10 },
+    postCard: {
+        backgroundColor: '#fff', paddingHorizontal: 16, paddingVertical: 16,
+        marginHorizontal: 0, marginBottom: 1,
+    },
+    postHeader: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 10 },
+    nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    username: { fontSize: 15, fontWeight: '800', color: '#0f172a' },
+    dot: { fontSize: 12, color: '#94a3b8' },
+    timestamp: { fontSize: 13, color: '#94a3b8', fontWeight: '500' },
+    symbolBadge: {
+        backgroundColor: '#eff6ff', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8,
+        flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderColor: '#dbeafe',
+    },
+    symbolBadgeText: { color: '#2563eb', fontWeight: '800', fontSize: 13 },
+    postContent: { fontSize: 15, color: '#1e293b', lineHeight: 23, marginBottom: 12, marginLeft: 54 },
 
     // Actions
-    postActions: { flexDirection: 'row', gap: 24, paddingTop: 4 },
-    actionBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-    actionCount: { fontSize: 13, color: '#64748b', fontWeight: '600' },
+    postActions: { flexDirection: 'row', gap: 28, paddingTop: 6, marginLeft: 54 },
+    actionBtn: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+    actionCount: { fontSize: 13, color: '#64748b', fontWeight: '700' },
 
     // Empty
-    empty: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 60 },
-    emptyText: { fontSize: 14, color: '#94a3b8', marginTop: 12, textAlign: 'center' },
+    empty: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 80 },
+    emptyText: { fontSize: 15, color: '#94a3b8', marginTop: 14, textAlign: 'center', fontWeight: '500' },
 
     // Comment modal
-    modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
-    modalContent: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '70%', padding: 16 },
-    modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-    modalTitle: { fontSize: 17, fontWeight: '700', color: '#0f172a' },
-    commentItem: { paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
-    commentUser: { fontSize: 13, fontWeight: '700', color: '#0f172a' },
-    commentContent: { fontSize: 14, color: '#475569', marginTop: 2 },
-    commentTime: { fontSize: 11, color: '#94a3b8', marginTop: 4 },
-    commentInputRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#e2e8f0' },
-    commentInput: { flex: 1, backgroundColor: '#f1f5f9', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8, fontSize: 14, color: '#0f172a' },
+    modalOverlay: { flex: 1, backgroundColor: 'rgba(15,23,42,0.5)', justifyContent: 'flex-end' },
+    modalContent: {
+        backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '70%', padding: 20,
+        shadowColor: '#000', shadowOffset: { width: 0, height: -8 }, shadowOpacity: 0.15, shadowRadius: 16, elevation: 20,
+    },
+    modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+    modalTitle: { fontSize: 18, fontWeight: '800', color: '#0f172a' },
+    commentItem: { paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
+    commentUser: { fontSize: 13, fontWeight: '800', color: '#0f172a' },
+    commentContent: { fontSize: 14, color: '#475569', marginTop: 3, lineHeight: 20 },
+    commentTime: { fontSize: 11, color: '#94a3b8', marginTop: 4, fontWeight: '500' },
+    commentInputRow: {
+        flexDirection: 'row', alignItems: 'center', gap: 10, paddingTop: 12,
+        borderTopWidth: 1, borderTopColor: '#e2e8f0',
+    },
+    commentInput: {
+        flex: 1, backgroundColor: '#f1f5f9', borderRadius: 22, paddingHorizontal: 16,
+        paddingVertical: 10, fontSize: 14, color: '#0f172a',
+    },
 });
 
 export default SocialFeedScreen;
