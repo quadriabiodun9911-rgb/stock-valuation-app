@@ -48,6 +48,7 @@ import PriceAlertsScreen from './src/screens/PriceAlertsScreen';
 import NewsIntegrationScreen from './src/screens/NewsIntegrationScreen';
 import EnhancedChartingScreen from './src/screens/EnhancedChartingScreen';
 import BacktestingScreen from './src/screens/BacktestingScreen';
+import MarketsHubScreen from './src/screens/MarketsHubScreen';
 import SocialFeedScreen from './src/screens/SocialFeedScreen';
 import ChatScreen from './src/screens/ChatScreen';
 import FriendsScreen from './src/screens/FriendsScreen';
@@ -66,11 +67,72 @@ const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
 const AuthStack = createStackNavigator();
 
-// All screens reachable from Home tab
-function HomeStack() {
+// Main tabs (shown after auth)
+function MainTabs() {
+    const { theme, isDark } = useTheme();
     return (
-        <Stack.Navigator>
-            <Stack.Screen name="HomeMain" component={HomeScreen} options={{ headerShown: false }} />
+        <Tab.Navigator
+            initialRouteName="Home"
+            backBehavior="history"
+            screenOptions={({ route }) => ({
+                tabBarIcon: ({ focused, color }) => {
+                    let iconName: any;
+                    if (route.name === 'Home') iconName = focused ? 'home' : 'home-outline';
+                    else if (route.name === 'Search') iconName = focused ? 'search' : 'search-outline';
+                    else if (route.name === 'Charts') iconName = focused ? 'grid' : 'grid-outline';
+                    else if (route.name === 'Crowd') iconName = focused ? 'people' : 'people-outline';
+                    else if (route.name === 'Watchlist') iconName = focused ? 'bookmark' : 'bookmark-outline';
+                    return (
+                        <View style={{ alignItems: 'center' }}>
+                            <Ionicons name={iconName} size={22} color={color} />
+                            {focused && <View style={tabStyles.activeIndicator} />}
+                        </View>
+                    );
+                },
+                tabBarActiveTintColor: '#2563eb',
+                tabBarInactiveTintColor: isDark ? '#64748b' : '#94a3b8',
+                tabBarLabelStyle: {
+                    fontSize: 11,
+                    fontWeight: '700',
+                    marginTop: 2,
+                },
+                tabBarStyle: {
+                    backgroundColor: theme.tabBar,
+                    borderTopWidth: isDark ? 1 : 0,
+                    borderTopColor: theme.border,
+                    elevation: 20,
+                    shadowColor: '#0f172a',
+                    shadowOffset: { width: 0, height: -4 },
+                    shadowOpacity: 0.08,
+                    shadowRadius: 12,
+                    height: Platform.OS === 'ios' ? 88 : 68,
+                    paddingTop: 8,
+                    paddingBottom: Platform.OS === 'ios' ? 28 : 10,
+                },
+                headerShown: false,
+            })}
+        >
+            <Tab.Screen name="Home" component={HomeScreen} options={{ tabBarLabel: 'Home' }} />
+            <Tab.Screen name="Search" component={SearchScreen} options={{ tabBarLabel: 'Discover' }} />
+            <Tab.Screen name="Charts" component={MarketsHubScreen} options={{ tabBarLabel: 'Tools' }} />
+            <Tab.Screen name="Crowd" component={IntelligenceScreen} options={{ tabBarLabel: 'Community' }} />
+            <Tab.Screen name="Watchlist" component={WatchlistScreen} options={{ tabBarLabel: 'Watchlist' }} />
+        </Tab.Navigator>
+    );
+}
+
+function MainAppStack() {
+    return (
+        <Stack.Navigator
+            screenOptions={{
+                headerStyle: { backgroundColor: '#ffffff' },
+                headerTintColor: '#0f172a',
+                headerShadowVisible: false,
+                headerBackTitleVisible: false,
+                headerTitleStyle: { fontWeight: '700' },
+            }}
+        >
+            <Stack.Screen name="MainTabs" component={MainTabs} options={{ headerShown: false }} />
             <Stack.Screen name="Valuation" component={ValuationSimplified} options={{ headerShown: false }} />
             <Stack.Screen name="ValuationFull" component={ValuationScreen} options={{ title: 'Full Analysis' }} />
             <Stack.Screen name="Screener" component={ScreenerScreen} options={{ title: 'AI Screener' }} />
@@ -115,58 +177,6 @@ function HomeStack() {
     );
 }
 
-// Main tabs (shown after auth)
-function MainTabs() {
-    const { theme, isDark } = useTheme();
-    return (
-        <Tab.Navigator
-            screenOptions={({ route }) => ({
-                tabBarIcon: ({ focused, color, size }) => {
-                    let iconName: any;
-                    if (route.name === 'Home') iconName = focused ? 'home' : 'home-outline';
-                    else if (route.name === 'Search') iconName = focused ? 'search' : 'search-outline';
-                    else if (route.name === 'Charts') iconName = focused ? 'bar-chart' : 'bar-chart-outline';
-                    else if (route.name === 'Crowd') iconName = focused ? 'people' : 'people-outline';
-                    else if (route.name === 'Watchlist') iconName = focused ? 'bookmark' : 'bookmark-outline';
-                    return (
-                        <View style={{ alignItems: 'center' }}>
-                            <Ionicons name={iconName} size={22} color={color} />
-                            {focused && <View style={tabStyles.activeIndicator} />}
-                        </View>
-                    );
-                },
-                tabBarActiveTintColor: '#2563eb',
-                tabBarInactiveTintColor: isDark ? '#64748b' : '#94a3b8',
-                tabBarLabelStyle: {
-                    fontSize: 11,
-                    fontWeight: '700',
-                    marginTop: 2,
-                },
-                tabBarStyle: {
-                    backgroundColor: theme.tabBar,
-                    borderTopWidth: isDark ? 1 : 0,
-                    borderTopColor: theme.border,
-                    elevation: 20,
-                    shadowColor: '#0f172a',
-                    shadowOffset: { width: 0, height: -4 },
-                    shadowOpacity: 0.08,
-                    shadowRadius: 12,
-                    height: Platform.OS === 'ios' ? 88 : 68,
-                    paddingTop: 8,
-                    paddingBottom: Platform.OS === 'ios' ? 28 : 10,
-                },
-                headerShown: false,
-            })}
-        >
-            <Tab.Screen name="Home" component={HomeStack} />
-            <Tab.Screen name="Search" component={SearchScreen} />
-            <Tab.Screen name="Charts" component={EnhancedChartingScreen} />
-            <Tab.Screen name="Crowd" component={IntelligenceScreen} />
-            <Tab.Screen name="Watchlist" component={WatchlistScreen} />
-        </Tab.Navigator>
-    );
-}
-
 const tabStyles = StyleSheet.create({
     activeIndicator: {
         width: 4,
@@ -201,12 +211,12 @@ function RootNavigator() {
                 <AuthStack.Screen name="Onboarding" component={OnboardingScreen} />
             )}
             {user ? (
-                <AuthStack.Screen name="MainApp" component={MainTabs} />
+                <AuthStack.Screen name="MainApp" component={MainAppStack} />
             ) : (
                 <>
                     <AuthStack.Screen name="Login" component={LoginScreen} />
                     <AuthStack.Screen name="Register" component={RegisterScreen} />
-                    <AuthStack.Screen name="MainApp" component={MainTabs} />
+                    <AuthStack.Screen name="MainApp" component={MainAppStack} />
                 </>
             )}
         </AuthStack.Navigator>

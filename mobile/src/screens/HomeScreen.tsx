@@ -139,22 +139,14 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
     }, [marketSummary]);
 
     const quickActions = [
-        { icon: 'swap-horizontal' as const, label: 'Simulator', screen: 'TradingSimulator', color: '#059669', gradient: ['#059669', '#10b981'] as const },
-        { icon: 'flash' as const, label: 'Strategy', screen: 'AnalysisSmartStrategy', color: '#6366f1', gradient: ['#6366f1', '#818cf8'] as const },
-        { icon: 'git-compare' as const, label: 'Compare', screen: 'StockComparison', color: '#8b5cf6', gradient: ['#8b5cf6', '#a78bfa'] as const },
+        { icon: 'search' as const, label: 'Discover', screen: 'Search', color: '#2563eb', gradient: ['#2563eb', '#3b82f6'] as const },
         { icon: 'wallet' as const, label: 'Portfolio', screen: 'Dashboard', color: '#f59e0b', gradient: ['#f59e0b', '#fbbf24'] as const },
         { icon: 'calculator' as const, label: 'Valuation', screen: 'Valuation', color: '#0ea5e9', gradient: ['#0ea5e9', '#38bdf8'] as const },
-        { icon: 'globe' as const, label: 'Economy', screen: 'EconomicDashboard', color: '#0f172a', gradient: ['#1e293b', '#475569'] as const },
-        { icon: 'flag' as const, label: 'Goal Plan', screen: 'GoalPlanner', color: '#2563eb', gradient: ['#2563eb', '#3b82f6'] as const },
-        { icon: 'receipt' as const, label: 'Trades', screen: 'Transactions', color: '#1a1a2e', gradient: ['#1a1a2e', '#334155'] as const },
-        { icon: 'repeat' as const, label: 'DCA', screen: 'DCA', color: '#7c3aed', gradient: ['#7c3aed', '#8b5cf6'] as const },
-        { icon: 'document-text' as const, label: 'Upload Fin.', screen: 'FinancialUpload', color: '#14b8a6', gradient: ['#14b8a6', '#2dd4bf'] as const },
-        { icon: 'school' as const, label: 'Learn', screen: 'Education', color: '#ec4899', gradient: ['#ec4899', '#f472b6'] as const },
+        { icon: 'grid' as const, label: 'Tools', screen: 'Charts', color: '#7c3aed', gradient: ['#7c3aed', '#8b5cf6'] as const },
+        { icon: 'notifications' as const, label: 'Alerts', screen: 'PriceAlerts', color: '#ef4444', gradient: ['#ef4444', '#f87171'] as const },
+        { icon: 'people' as const, label: 'Community', screen: 'Crowd', color: '#14b8a6', gradient: ['#14b8a6', '#2dd4bf'] as const },
+        { icon: 'bookmark' as const, label: 'Watchlist', screen: 'Watchlist', color: '#1e293b', gradient: ['#1e293b', '#475569'] as const },
         { icon: 'sparkles' as const, label: 'AI Chat', screen: 'AIChat', color: '#8b5cf6', gradient: ['#8b5cf6', '#a78bfa'] as const },
-        { icon: 'trophy' as const, label: 'Badges', screen: 'Achievements', color: '#f59e0b', gradient: ['#f59e0b', '#fbbf24'] as const },
-        { icon: 'calendar' as const, label: 'Earnings', screen: 'EarningsCalendar', color: '#0ea5e9', gradient: ['#0ea5e9', '#38bdf8'] as const },
-        { icon: 'options' as const, label: 'Options', screen: 'OptionsCalculator', color: '#ef4444', gradient: ['#ef4444', '#f87171'] as const },
-        { icon: 'gift' as const, label: 'Invite', screen: 'Referral', color: '#10b981', gradient: ['#10b981', '#34d399'] as const },
     ];
 
     const greeting = new Date().getHours() < 12 ? 'Good Morning' : new Date().getHours() < 18 ? 'Good Afternoon' : 'Good Evening';
@@ -317,7 +309,7 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
 
                 {/* Quick Actions */}
                 <View style={styles.sectionHeader}>
-                    <Text style={styles.sectionTitle}>Quick Actions</Text>
+                    <Text style={styles.sectionTitle}>Start Here</Text>
                 </View>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.actionsRow} contentContainerStyle={{ paddingHorizontal: 16 }}>
                     {quickActions.map((a) => (

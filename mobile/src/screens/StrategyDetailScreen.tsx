@@ -99,8 +99,8 @@ const StrategyDetailScreen: React.FC<Props> = ({ route, navigation }) => {
                                     stock.recommendation === 'BUY'
                                         ? '#34C759'
                                         : stock.recommendation === 'HOLD'
-                                        ? '#FF9500'
-                                        : '#FF3B30',
+                                            ? '#FF9500'
+                                            : '#FF3B30',
                             },
                         ]}
                     >
@@ -300,7 +300,10 @@ const StrategyDetailScreen: React.FC<Props> = ({ route, navigation }) => {
                     <TouchableOpacity
                         style={styles.actionButton}
                         onPress={() =>
-                            navigation.navigate('Watchlist', { addSymbol: stock.symbol })
+                            navigation.navigate('MainTabs', {
+                                screen: 'Watchlist',
+                                params: { addSymbol: stock.symbol },
+                            })
                         }
                     >
                         <Ionicons name="bookmark" size={20} color="white" />
