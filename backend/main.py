@@ -5,6 +5,7 @@ Comprehensive stock analysis and valuation platform
 
 from fastapi import FastAPI, HTTPException, Query, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import csv
@@ -20,8 +21,11 @@ from dataclasses import dataclass
 import json
 import os
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
+from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from alpha_vantage_provider import AlphaVantageProvider
 from twelve_data_provider import TwelveDataProvider
 from ai_endpoints import router as ai_router
@@ -40,12 +44,27 @@ from ai_chat import router as ai_chat_router
 from referral import router as referral_router
 import database as db
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
 # Load environment variables
 load_dotenv()
+
+# Set up logging
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO))
+logger = logging.getLogger(__name__)
+
+APP_ENV = os.getenv("APP_ENV", "development").lower()
+API_KEY = os.getenv("API_KEY")
+ENABLE_HTTPS_REDIRECT = os.getenv(
+    "ENABLE_HTTPS_REDIRECT", "false"
+).lower() == "true"
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.getenv("ALLOWED_HOSTS", "*").split(",")
+    if host.strip()
+]
+RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "120"))
+_rate_limit_store: Dict[str, List[float]] = {}
+_rate_limit_lock = threading.Lock()
 
 # Initialize data providers
 alpha_vantage = AlphaVantageProvider()
@@ -53,7 +72,6 @@ twelve_data = TwelveDataProvider()
 
 # ── API Key Authentication ────────────────────────────────────────
 # Set API_KEY env var to enable authentication. When unset, auth is disabled.
-API_KEY = os.getenv("API_KEY")
 
 async def verify_api_key(request: Request):
     """Verify API key if one is configured."""
@@ -86,9 +104,76 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization"],
     max_age=600,
 )
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=ALLOWED_HOSTS or ["*"],
+)
 
-# API key middleware — skips public endpoints
+if APP_ENV == "production" and ENABLE_HTTPS_REDIRECT:
+    app.add_middleware(HTTPSRedirectMiddleware)
+
+# Public or exempt endpoints
 _PUBLIC_PATHS = {"/", "/health", "/docs", "/openapi.json", "/redoc"}
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    if (
+        request.method == "OPTIONS"
+        or request.url.path in _PUBLIC_PATHS
+        or RATE_LIMIT_PER_MINUTE <= 0
+    ):
+        return await call_next(request)
+
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        client_ip = forwarded_for.split(",")[0].strip()
+    else:
+        client_ip = request.client.host if request.client else "unknown"
+
+    now = time.time()
+    window_start = now - 60
+
+    with _rate_limit_lock:
+        request_times = _rate_limit_store.setdefault(client_ip, [])
+        request_times[:] = [ts for ts in request_times if ts > window_start]
+
+        if len(request_times) >= RATE_LIMIT_PER_MINUTE:
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Rate limit exceeded. Try again later."},
+            )
+
+        request_times.append(now)
+
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def request_logging_middleware(request: Request, call_next):
+    start = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        duration_ms = (time.perf_counter() - start) * 1000
+        logger.exception(
+            "Request failed: %s %s in %.2fms",
+            request.method,
+            request.url.path,
+            duration_ms,
+        )
+        raise
+
+    duration_ms = (time.perf_counter() - start) * 1000
+    logger.info(
+        "%s %s -> %s in %.2fms",
+        request.method,
+        request.url.path,
+        response.status_code,
+        duration_ms,
+    )
+    return response
+
 
 @app.middleware("http")
 async def api_key_middleware(request: Request, call_next):
@@ -97,8 +182,10 @@ async def api_key_middleware(request: Request, call_next):
     try:
         await verify_api_key(request)
     except HTTPException as exc:
-        from starlette.responses import JSONResponse
-        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail},
+        )
     return await call_next(request)
 
 # Initialize database
@@ -1258,7 +1345,12 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "environment": APP_ENV,
+        "database": "postgresql" if getattr(db, "USE_POSTGRES", False) else "sqlite",
+    }
 
 @app.get("/search")
 async def search_stocks(
@@ -4655,4 +4747,6 @@ async def delete_financial_upload_endpoint(upload_id: int, request: Request):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+    port = int(os.getenv("PORT", "8000"))
+    uvicorn.run(app, host="0.0.0.0", port=port)

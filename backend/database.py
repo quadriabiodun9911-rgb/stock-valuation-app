@@ -1,10 +1,10 @@
 """
-SQLite Database Layer
-Replaces JSON file storage with a proper relational database.
-Auto-migrates existing JSON data on first run.
+Database layer for local and production deployments.
+Uses SQLite by default and supports PostgreSQL via DATABASE_URL.
 """
 import sqlite3
 import json
+import os
 import threading
 from pathlib import Path
 from datetime import datetime
@@ -13,38 +13,127 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-DB_PATH = Path(__file__).parent / "data" / "stock_valuation.db"
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+DEFAULT_SQLITE_PATH = Path(__file__).parent / "data" / "stock_valuation.db"
 DATA_DIR = Path(__file__).parent / "data"
+USE_POSTGRES = DATABASE_URL.startswith(("postgres://", "postgresql://"))
+
+if DATABASE_URL.startswith("sqlite:///"):
+    sqlite_target = DATABASE_URL.replace("sqlite:///", "", 1)
+    DB_PATH = Path(sqlite_target).expanduser()
+    if not DB_PATH.is_absolute():
+        DB_PATH = (Path(__file__).parent / DB_PATH).resolve()
+else:
+    DB_PATH = DEFAULT_SQLITE_PATH
+
 _local = threading.local()
 
 
-def _get_conn() -> sqlite3.Connection:
-    """Thread-local SQLite connection."""
+class DBRow(dict):
+    """Row wrapper that supports both numeric and key access."""
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return list(self.values())[key]
+        return super().__getitem__(key)
+
+
+class PGCursorWrapper:
+    def __init__(self, cursor, lastrowid: Optional[int] = None):
+        self._cursor = cursor
+        self.lastrowid = lastrowid
+
+    @property
+    def rowcount(self):
+        return self._cursor.rowcount
+
+    def fetchone(self):
+        row = self._cursor.fetchone()
+        return DBRow(row) if row else None
+
+    def fetchall(self):
+        return [DBRow(row) for row in self._cursor.fetchall()]
+
+
+class PGConnectionWrapper:
+    def __init__(self, conn):
+        self._conn = conn
+
+    def execute(self, query: str, params=()):
+        from psycopg.rows import dict_row
+
+        sql = query.rstrip().rstrip(";")
+        normalized = " ".join(sql.lower().split())
+        wants_lastrowid = (
+            normalized.startswith("insert into")
+            and "returning" not in normalized
+            and "portfolio_meta" not in normalized
+        )
+        if wants_lastrowid:
+            sql = f"{sql} RETURNING id"
+
+        sql = sql.replace("?", "%s")
+        cur = self._conn.cursor(row_factory=dict_row)
+        cur.execute(sql, params)
+
+        lastrowid = None
+        if wants_lastrowid:
+            row = cur.fetchone()
+            if row:
+                lastrowid = row["id"]
+
+        return PGCursorWrapper(cur, lastrowid=lastrowid)
+
+    def executescript(self, script: str):
+        for statement in script.split(";"):
+            statement = statement.strip()
+            if statement:
+                self.execute(statement)
+
+    def commit(self):
+        self._conn.commit()
+
+
+def _get_conn():
+    """Thread-local database connection with SQLite fallback and PostgreSQL support."""
     if not hasattr(_local, "conn") or _local.conn is None:
-        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA foreign_keys=ON")
-        _local.conn = conn
+        if USE_POSTGRES:
+            try:
+                import psycopg
+            except ImportError as exc:
+                raise RuntimeError(
+                    "psycopg is required when DATABASE_URL points to PostgreSQL"
+                ) from exc
+
+            conn = psycopg.connect(DATABASE_URL, autocommit=False)
+            _local.conn = PGConnectionWrapper(conn)
+        else:
+            DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA foreign_keys=ON")
+            _local.conn = conn
     return _local.conn
 
 
-def init_db():
-    """Create tables if they don't exist, then migrate JSON data."""
-    conn = _get_conn()
-    conn.executescript("""
+def _get_schema_sql() -> str:
+    pk_type = "SERIAL PRIMARY KEY" if USE_POSTGRES else "INTEGER PRIMARY KEY AUTOINCREMENT"
+    dt_type = "TIMESTAMP" if USE_POSTGRES else "TEXT"
+    dt_default = "CURRENT_TIMESTAMP" if USE_POSTGRES else "(datetime('now'))"
+
+    return f"""
         CREATE TABLE IF NOT EXISTS users (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            id          {pk_type},
             email       TEXT UNIQUE NOT NULL,
             username    TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
             push_token  TEXT,
-            created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+            created_at  {dt_type} NOT NULL DEFAULT {dt_default}
         );
 
         CREATE TABLE IF NOT EXISTS portfolio (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            id         {pk_type},
             user_id    INTEGER NOT NULL DEFAULT 1,
             symbol     TEXT NOT NULL,
             shares     REAL NOT NULL,
@@ -53,14 +142,14 @@ def init_db():
         );
 
         CREATE TABLE IF NOT EXISTS portfolio_meta (
-            user_id    INTEGER PRIMARY KEY DEFAULT 1,
+            user_id    INTEGER PRIMARY KEY,
             cash       REAL NOT NULL DEFAULT 0.0,
-            last_updated TEXT,
+            last_updated {dt_type},
             FOREIGN KEY (user_id) REFERENCES users(id)
         );
 
         CREATE TABLE IF NOT EXISTS transactions (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            id         {pk_type},
             user_id    INTEGER NOT NULL DEFAULT 1,
             symbol     TEXT NOT NULL,
             action     TEXT NOT NULL,
@@ -69,94 +158,88 @@ def init_db():
             total      REAL NOT NULL,
             date       TEXT,
             notes      TEXT,
-            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            created_at {dt_type} NOT NULL DEFAULT {dt_default},
             FOREIGN KEY (user_id) REFERENCES users(id)
         );
 
         CREATE TABLE IF NOT EXISTS price_alerts (
-            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            id           {pk_type},
             user_id      INTEGER NOT NULL DEFAULT 1,
             symbol       TEXT NOT NULL,
             target_price REAL NOT NULL,
             alert_type   TEXT NOT NULL,
             enabled      INTEGER NOT NULL DEFAULT 1,
-            created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+            created_at   {dt_type} NOT NULL DEFAULT {dt_default},
             FOREIGN KEY (user_id) REFERENCES users(id)
         );
 
         CREATE TABLE IF NOT EXISTS trade_reasons (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            id         {pk_type},
             user_id    INTEGER,
             symbol     TEXT NOT NULL,
             action     TEXT NOT NULL,
             reasons    TEXT NOT NULL,
             note       TEXT,
             confidence INTEGER,
-            timestamp  TEXT NOT NULL DEFAULT (datetime('now'))
+            timestamp  {dt_type} NOT NULL DEFAULT {dt_default}
         );
 
-        -- Social: Posts (X-like feed)
         CREATE TABLE IF NOT EXISTS social_posts (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            id         {pk_type},
             user_id    INTEGER NOT NULL,
             content    TEXT NOT NULL,
             symbol     TEXT,
             image_url  TEXT,
             likes      INTEGER NOT NULL DEFAULT 0,
             reposts    INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            created_at {dt_type} NOT NULL DEFAULT {dt_default},
             FOREIGN KEY (user_id) REFERENCES users(id)
         );
 
-        -- Social: Comments on posts
         CREATE TABLE IF NOT EXISTS social_comments (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            id         {pk_type},
             post_id    INTEGER NOT NULL,
             user_id    INTEGER NOT NULL,
             content    TEXT NOT NULL,
-            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            created_at {dt_type} NOT NULL DEFAULT {dt_default},
             FOREIGN KEY (post_id) REFERENCES social_posts(id) ON DELETE CASCADE,
             FOREIGN KEY (user_id) REFERENCES users(id)
         );
 
-        -- Social: Likes
         CREATE TABLE IF NOT EXISTS social_likes (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            id         {pk_type},
             post_id    INTEGER NOT NULL,
             user_id    INTEGER NOT NULL,
-            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            created_at {dt_type} NOT NULL DEFAULT {dt_default},
             FOREIGN KEY (post_id) REFERENCES social_posts(id) ON DELETE CASCADE,
             FOREIGN KEY (user_id) REFERENCES users(id),
             UNIQUE(post_id, user_id)
         );
 
-        -- Social: Friend requests & relationships
         CREATE TABLE IF NOT EXISTS friendships (
-            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            id           {pk_type},
             requester_id INTEGER NOT NULL,
             addressee_id INTEGER NOT NULL,
             status       TEXT NOT NULL DEFAULT 'pending',
-            created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+            created_at   {dt_type} NOT NULL DEFAULT {dt_default},
             FOREIGN KEY (requester_id) REFERENCES users(id),
             FOREIGN KEY (addressee_id) REFERENCES users(id),
             UNIQUE(requester_id, addressee_id)
         );
 
-        -- Social: Chat messages
         CREATE TABLE IF NOT EXISTS chat_messages (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            id          {pk_type},
             sender_id   INTEGER NOT NULL,
             receiver_id INTEGER NOT NULL,
             content     TEXT NOT NULL,
             read        INTEGER NOT NULL DEFAULT 0,
-            created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+            created_at  {dt_type} NOT NULL DEFAULT {dt_default},
             FOREIGN KEY (sender_id) REFERENCES users(id),
             FOREIGN KEY (receiver_id) REFERENCES users(id)
         );
 
-        -- Uploaded financial statements for DCF / growth analysis
         CREATE TABLE IF NOT EXISTS financial_uploads (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            id              {pk_type},
             user_id         INTEGER NOT NULL DEFAULT 1,
             company_name    TEXT NOT NULL,
             symbol          TEXT,
@@ -164,10 +247,36 @@ def init_db():
             data_json       TEXT NOT NULL,
             dcf_result_json TEXT,
             growth_json     TEXT,
-            created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+            created_at      {dt_type} NOT NULL DEFAULT {dt_default},
             FOREIGN KEY (user_id) REFERENCES users(id)
         );
-    """)
+    """
+
+
+def _upsert_portfolio_meta(conn, user_id: int, cash: float, last_updated: Optional[str]):
+    if USE_POSTGRES:
+        conn.execute(
+            """
+            INSERT INTO portfolio_meta (user_id, cash, last_updated)
+            VALUES (?, ?, ?)
+            ON CONFLICT (user_id)
+            DO UPDATE SET
+                cash = EXCLUDED.cash,
+                last_updated = EXCLUDED.last_updated
+            """,
+            (user_id, cash, last_updated),
+        )
+    else:
+        conn.execute(
+            "INSERT OR REPLACE INTO portfolio_meta (user_id, cash, last_updated) VALUES (?, ?, ?)",
+            (user_id, cash, last_updated),
+        )
+
+
+def init_db():
+    """Create tables if they don't exist, then migrate JSON data."""
+    conn = _get_conn()
+    conn.executescript(_get_schema_sql())
     conn.commit()
     _migrate_json_data(conn)
 
@@ -205,10 +314,7 @@ def _migrate_portfolio(conn: sqlite3.Connection):
             )
         cash = data.get("cash", 0.0)
         last_updated = data.get("last_updated")
-        conn.execute(
-            "INSERT OR REPLACE INTO portfolio_meta (user_id, cash, last_updated) VALUES (1, ?, ?)",
-            (cash, last_updated),
-        )
+        _upsert_portfolio_meta(conn, 1, cash, last_updated)
         conn.commit()
         logger.info(f"Migrated {len(data.get('positions', []))} portfolio positions from JSON")
     except Exception as e:
@@ -329,10 +435,7 @@ def save_portfolio(user_id: int, positions: List[Dict], cash: float = 0.0):
             "INSERT INTO portfolio (user_id, symbol, shares, cost_basis) VALUES (?, ?, ?, ?)",
             (user_id, p["symbol"], p["shares"], p["cost_basis"]),
         )
-    conn.execute(
-        "INSERT OR REPLACE INTO portfolio_meta (user_id, cash, last_updated) VALUES (?, ?, ?)",
-        (user_id, cash, datetime.now().isoformat()),
-    )
+    _upsert_portfolio_meta(conn, user_id, cash, datetime.now().isoformat())
     conn.commit()
 
 

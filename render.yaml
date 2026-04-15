@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: stock-valuation-api
+    runtime: docker
+    rootDir: backend
+    plan: free
+    autoDeploy: true
+    healthCheckPath: /health
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: ENABLE_HTTPS_REDIRECT
+        value: true
+      - key: RATE_LIMIT_PER_MINUTE
+        value: 120
+      - key: ALLOWED_HOSTS
+        value: "*"
+      - key: ALLOWED_ORIGINS
+        value: "https://your-production-client.example.com"
+      - key: API_KEY
+        generateValue: true
