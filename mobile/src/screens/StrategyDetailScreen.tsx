@@ -16,6 +16,9 @@ interface Props {
 
 const StrategyDetailScreen: React.FC<Props> = ({ route, navigation }) => {
     const { stock } = route.params;
+    const upsidePct = stock.currentPrice
+        ? ((stock.intrinsicValue - stock.currentPrice) / stock.currentPrice) * 100
+        : 0;
 
     const renderLayer = (
         title: string,
@@ -109,6 +112,45 @@ const StrategyDetailScreen: React.FC<Props> = ({ route, navigation }) => {
                     <Text style={styles.confidenceText}>
                         Confidence: {stock.confidence}
                     </Text>
+                    <View style={styles.miniStatsRow}>
+                        <View style={styles.miniStatCard}>
+                            <Text style={styles.miniStatLabel}>Upside</Text>
+                            <Text style={[styles.miniStatValue, upsidePct >= 0 ? styles.positiveValue : styles.negativeValue]}>
+                                {upsidePct >= 0 ? '+' : ''}{upsidePct.toFixed(1)}%
+                            </Text>
+                        </View>
+                        <View style={styles.miniStatCard}>
+                            <Text style={styles.miniStatLabel}>Target</Text>
+                            <Text style={styles.miniStatValue}>${stock.intrinsicValue.toFixed(2)}</Text>
+                        </View>
+                    </View>
+                </View>
+
+                <View style={styles.quickLinksCard}>
+                    <Text style={styles.quickLinksTitle}>Related Actions</Text>
+                    <View style={styles.quickLinksRow}>
+                        <TouchableOpacity
+                            style={styles.quickLinkButton}
+                            onPress={() => navigation.navigate('Valuation', { symbol: stock.symbol })}
+                        >
+                            <Ionicons name="calculator" size={16} color="#2563eb" />
+                            <Text style={styles.quickLinkText}>Valuation</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={styles.quickLinkButton}
+                            onPress={() => navigation.navigate('EnhancedCharting', { symbol: stock.symbol })}
+                        >
+                            <Ionicons name="bar-chart" size={16} color="#2563eb" />
+                            <Text style={styles.quickLinkText}>Chart</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={styles.quickLinkButton}
+                            onPress={() => navigation.navigate('DCA', { symbol: stock.symbol })}
+                        >
+                            <Ionicons name="repeat" size={16} color="#2563eb" />
+                            <Text style={styles.quickLinkText}>DCA</Text>
+                        </TouchableOpacity>
+                    </View>
                 </View>
 
                 {/* Allocation */}
@@ -345,10 +387,15 @@ const styles = StyleSheet.create({
         margin: 16,
         padding: 20,
         backgroundColor: 'white',
-        borderRadius: 12,
+        borderRadius: 16,
         alignItems: 'center',
         borderWidth: 1,
         borderColor: '#e5e7eb',
+        shadowColor: '#0f172a',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 8,
+        elevation: 2,
     },
     overallLabel: {
         fontSize: 12,
@@ -375,6 +422,70 @@ const styles = StyleSheet.create({
     confidenceText: {
         fontSize: 12,
         color: '#666',
+    },
+    miniStatsRow: {
+        flexDirection: 'row',
+        gap: 10,
+        marginTop: 14,
+    },
+    miniStatCard: {
+        flex: 1,
+        backgroundColor: '#f8fafc',
+        borderRadius: 12,
+        paddingVertical: 10,
+        paddingHorizontal: 12,
+        alignItems: 'center',
+    },
+    miniStatLabel: {
+        fontSize: 11,
+        color: '#64748b',
+        marginBottom: 4,
+    },
+    miniStatValue: {
+        fontSize: 15,
+        fontWeight: '700',
+        color: '#0f172a',
+    },
+    positiveValue: {
+        color: '#16a34a',
+    },
+    negativeValue: {
+        color: '#dc2626',
+    },
+    quickLinksCard: {
+        marginHorizontal: 16,
+        marginBottom: 16,
+        padding: 16,
+        backgroundColor: '#ffffff',
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: '#e5e7eb',
+    },
+    quickLinksTitle: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#0f172a',
+        marginBottom: 12,
+    },
+    quickLinksRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+    },
+    quickLinkButton: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#eff6ff',
+        borderRadius: 12,
+        paddingVertical: 10,
+        marginHorizontal: 4,
+        gap: 6,
+    },
+    quickLinkText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#1d4ed8',
     },
     allocationCard: {
         marginHorizontal: 16,

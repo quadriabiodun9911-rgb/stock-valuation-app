@@ -16,6 +16,7 @@ import { Market, MarketInfo, stockAPI } from '../services/api';
 
 interface Props {
     navigation: any;
+    route?: any;
 }
 
 type AlertDirection = 'above' | 'below';
@@ -34,7 +35,7 @@ interface WatchlistItem {
     changePct?: number;
 }
 
-const WatchlistScreen: React.FC<Props> = ({ navigation }) => {
+const WatchlistScreen: React.FC<Props> = ({ navigation, route }) => {
     const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
     const [selectedMarket, setSelectedMarket] = useState<Market>('US');
     const [autoRefresh, setAutoRefresh] = useState(true);
@@ -46,6 +47,25 @@ const WatchlistScreen: React.FC<Props> = ({ navigation }) => {
         () => watchlist.map((item) => item.symbol).sort().join(','),
         [watchlist]
     );
+
+    useEffect(() => {
+        const incomingSymbol = route?.params?.addSymbol?.trim?.().toUpperCase();
+        if (!incomingSymbol) return;
+
+        setWatchlist((prev) => {
+            const exists = prev.some((item: WatchlistItem) => item.symbol === incomingSymbol);
+            if (exists) return prev;
+            return [
+                ...prev,
+                {
+                    symbol: incomingSymbol,
+                    alertDirection: 'above',
+                    alertEnabled: false,
+                    dayMoveAlertEnabled: false,
+                },
+            ];
+        });
+    }, [route?.params?.addSymbol]);
 
     const handleAddPress: () => void = () => {
         if (!pendingSymbol.trim()) {
@@ -86,10 +106,7 @@ const WatchlistScreen: React.FC<Props> = ({ navigation }) => {
     };
 
     const navigateToStock = (symbol: string): void => {
-        navigation.navigate('Home', {
-            screen: 'StockDetail',
-            params: { symbol }
-        });
+        navigation.navigate('StockDetail', { symbol });
     };
 
     const formatCurrency = (value?: number) =>

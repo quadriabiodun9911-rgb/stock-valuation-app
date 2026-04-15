@@ -7,6 +7,7 @@ import {
     View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 
 interface Props {
     navigation: any;
@@ -42,14 +43,48 @@ const sections = [
     },
 ];
 
+const featuredActions = [
+    { label: 'Search', icon: 'search', screen: 'Search' },
+    { label: 'Portfolio', icon: 'wallet', screen: 'Dashboard' },
+    { label: 'Alerts', icon: 'notifications', screen: 'PriceAlerts' },
+];
+
 const MarketsHubScreen: React.FC<Props> = ({ navigation }) => {
     return (
         <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-            <View style={styles.header}>
+            <LinearGradient colors={['#0f172a', '#1d4ed8']} style={styles.header}>
+                <Text style={styles.eyebrow}>ORGANIZED WORKSPACE</Text>
                 <Text style={styles.title}>Tools & Shortcuts</Text>
                 <Text style={styles.subtitle}>
-                    Reach the most useful pages quickly and keep related features together.
+                    Research, compare, and track stocks from one organized place.
                 </Text>
+                <View style={styles.workflowRow}>
+                    <View style={styles.workflowPill}>
+                        <Ionicons name="search" size={14} color="#fff" />
+                        <Text style={styles.workflowText}>Discover</Text>
+                    </View>
+                    <View style={styles.workflowPill}>
+                        <Ionicons name="analytics" size={14} color="#fff" />
+                        <Text style={styles.workflowText}>Analyze</Text>
+                    </View>
+                    <View style={styles.workflowPill}>
+                        <Ionicons name="wallet" size={14} color="#fff" />
+                        <Text style={styles.workflowText}>Track</Text>
+                    </View>
+                </View>
+            </LinearGradient>
+
+            <View style={styles.featuredRow}>
+                {featuredActions.map((item) => (
+                    <TouchableOpacity
+                        key={item.screen}
+                        style={styles.featuredButton}
+                        onPress={() => navigation.navigate(item.screen)}
+                    >
+                        <Ionicons name={item.icon as any} size={16} color="#2563eb" />
+                        <Text style={styles.featuredButtonText}>{item.label}</Text>
+                    </TouchableOpacity>
+                ))}
             </View>
 
             {sections.map((section) => (
@@ -61,10 +96,13 @@ const MarketsHubScreen: React.FC<Props> = ({ navigation }) => {
                                 key={item.screen}
                                 style={styles.card}
                                 onPress={() => navigation.navigate(item.screen)}
-                                activeOpacity={0.8}
+                                activeOpacity={0.85}
                             >
-                                <View style={[styles.iconWrap, { backgroundColor: `${item.color}15` }]}>
-                                    <Ionicons name={item.icon as any} size={22} color={item.color} />
+                                <View style={styles.cardTopRow}>
+                                    <View style={[styles.iconWrap, { backgroundColor: `${item.color}15` }]}>
+                                        <Ionicons name={item.icon as any} size={22} color={item.color} />
+                                    </View>
+                                    <Ionicons name="arrow-forward" size={16} color="#94a3b8" />
                                 </View>
                                 <Text style={styles.cardTitle}>{item.label}</Text>
                                 <Text style={styles.cardMeta}>Open feature</Text>
@@ -77,7 +115,7 @@ const MarketsHubScreen: React.FC<Props> = ({ navigation }) => {
             <View style={styles.tipBox}>
                 <Ionicons name="link" size={18} color="#2563eb" />
                 <Text style={styles.tipText}>
-                    Stock search, charts, valuation, portfolio, and alerts are now easier to access from one place.
+                    Search, charts, valuation, portfolio, and alerts are grouped together for easier daily use.
                 </Text>
             </View>
         </ScrollView>
@@ -92,21 +130,72 @@ const styles = StyleSheet.create({
     header: {
         paddingTop: 60,
         paddingHorizontal: 20,
-        paddingBottom: 18,
-        backgroundColor: '#ffffff',
-        borderBottomWidth: 1,
-        borderBottomColor: '#e2e8f0',
+        paddingBottom: 22,
+        borderBottomLeftRadius: 24,
+        borderBottomRightRadius: 24,
+    },
+    eyebrow: {
+        fontSize: 11,
+        fontWeight: '800',
+        letterSpacing: 1,
+        color: 'rgba(255,255,255,0.72)',
+        marginBottom: 8,
     },
     title: {
         fontSize: 28,
         fontWeight: '800',
-        color: '#0f172a',
+        color: '#ffffff',
         marginBottom: 6,
     },
     subtitle: {
         fontSize: 14,
-        color: '#64748b',
+        color: 'rgba(255,255,255,0.86)',
         lineHeight: 20,
+    },
+    workflowRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        marginTop: 14,
+    },
+    workflowPill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        backgroundColor: 'rgba(255,255,255,0.14)',
+        borderRadius: 999,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        marginRight: 8,
+        marginBottom: 8,
+    },
+    workflowText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#ffffff',
+    },
+    featuredRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        justifyContent: 'space-between',
+        paddingHorizontal: 16,
+        marginTop: 14,
+        gap: 8,
+    },
+    featuredButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        backgroundColor: '#ffffff',
+        borderRadius: 12,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        borderWidth: 1,
+        borderColor: '#dbeafe',
+    },
+    featuredButtonText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#1e3a8a',
     },
     section: {
         paddingHorizontal: 16,
@@ -131,6 +220,17 @@ const styles = StyleSheet.create({
         marginBottom: 12,
         borderWidth: 1,
         borderColor: '#e2e8f0',
+        shadowColor: '#0f172a',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 8,
+        elevation: 2,
+    },
+    cardTopRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 10,
     },
     iconWrap: {
         width: 42,

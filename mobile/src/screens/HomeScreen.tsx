@@ -310,22 +310,27 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
                 {/* Quick Actions */}
                 <View style={styles.sectionHeader}>
                     <Text style={styles.sectionTitle}>Start Here</Text>
+                    <Text style={styles.sectionSubtitle}>Use these shortcuts for the most common tasks.</Text>
                 </View>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.actionsRow} contentContainerStyle={{ paddingHorizontal: 16 }}>
+                <View style={styles.actionGrid}>
                     {quickActions.map((a) => (
                         <TouchableOpacity
                             key={a.screen}
-                            style={styles.actionChip}
+                            style={styles.actionTile}
                             onPress={() => navigation.navigate(a.screen)}
-                            activeOpacity={0.7}
+                            activeOpacity={0.82}
                         >
-                            <LinearGradient colors={[...a.gradient]} style={styles.actionIconGrad}>
-                                <Ionicons name={a.icon} size={20} color="#fff" />
-                            </LinearGradient>
-                            <Text style={styles.actionLabel}>{a.label}</Text>
+                            <View style={styles.actionTileHeader}>
+                                <LinearGradient colors={[...a.gradient]} style={styles.actionTileIcon}>
+                                    <Ionicons name={a.icon} size={18} color="#fff" />
+                                </LinearGradient>
+                                <Ionicons name="chevron-forward" size={16} color="#94a3b8" />
+                            </View>
+                            <Text style={styles.actionTileLabel}>{a.label}</Text>
+                            <Text style={styles.actionTileMeta}>Open now</Text>
                         </TouchableOpacity>
                     ))}
-                </ScrollView>
+                </View>
 
                 {/* Market Pulse */}
                 <View style={styles.card}>
@@ -576,6 +581,11 @@ const styles = StyleSheet.create({
         fontWeight: '800',
         color: '#0f172a',
     },
+    sectionSubtitle: {
+        fontSize: 13,
+        color: '#64748b',
+        marginTop: 4,
+    },
     /* ── Portfolio ── */
     portfolioCard: {
         marginHorizontal: 16,
@@ -672,32 +682,49 @@ const styles = StyleSheet.create({
         fontWeight: '600',
     },
     /* ── Quick Actions ── */
-    actionsRow: {
+    actionGrid: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        justifyContent: 'space-between',
+        paddingHorizontal: 16,
         marginBottom: 16,
     },
-    actionChip: {
-        alignItems: 'center',
-        marginRight: 14,
-        width: 68,
-    },
-    actionIconGrad: {
-        width: 52,
-        height: 52,
+    actionTile: {
+        width: '48%',
+        backgroundColor: '#ffffff',
         borderRadius: 16,
+        padding: 14,
+        marginBottom: 12,
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+        shadowColor: '#0f172a',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 8,
+        elevation: 2,
+    },
+    actionTileHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 10,
+    },
+    actionTileIcon: {
+        width: 42,
+        height: 42,
+        borderRadius: 12,
         alignItems: 'center',
         justifyContent: 'center',
-        marginBottom: 8,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 3 },
-        shadowOpacity: 0.15,
-        shadowRadius: 6,
-        elevation: 4,
     },
-    actionLabel: {
-        fontSize: 11,
+    actionTileLabel: {
+        fontSize: 14,
         fontWeight: '700',
-        color: '#475569',
-        textAlign: 'center',
+        color: '#0f172a',
+        marginBottom: 4,
+    },
+    actionTileMeta: {
+        fontSize: 12,
+        color: '#64748b',
     },
     /* ── Market Pulse ── */
     signalBadge: {
