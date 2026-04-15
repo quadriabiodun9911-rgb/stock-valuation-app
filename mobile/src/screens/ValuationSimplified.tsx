@@ -40,6 +40,7 @@ const ValuationSimplified: React.FC<Props> = ({ route, navigation }) => {
     const [terminalGrowth, setTerminalGrowth] = useState('3');
     const [shareCount, setShareCount] = useState('');
     const [dcfPrice, setDcfPrice] = useState<number | null>(null);
+    const currentPrice = stockInfo?.current_price ?? stockInfo?.price ?? null;
 
     const calculateQuickDCF = () => {
         const fcfVal = parseFloat(fcf);
@@ -71,7 +72,7 @@ const ValuationSimplified: React.FC<Props> = ({ route, navigation }) => {
 
         try {
             setLoading(true);
-            
+
             // Simple 5-year DCF calculation
             const years = 5;
             let presentValueSum = 0;
@@ -94,14 +95,14 @@ const ValuationSimplified: React.FC<Props> = ({ route, navigation }) => {
 
             // Price per share (FCF in millions, shares in millions)
             const pricePerShare = totalValue / sharesVal;
-            
+
             // Check if result is valid
             if (isNaN(pricePerShare) || !isFinite(pricePerShare)) {
                 Alert.alert('Calculation Error', 'Unable to calculate valuation. Please check your rates.');
                 setLoading(false);
                 return;
             }
-            
+
             setDcfPrice(pricePerShare);
         } catch (error) {
             Alert.alert('Error', 'Failed to calculate DCF valuation. Please check your inputs.');
@@ -120,7 +121,7 @@ const ValuationSimplified: React.FC<Props> = ({ route, navigation }) => {
                 <View style={styles.headerContent}>
                     <Text style={styles.headerTitle}>{symbol || 'Quick Calculator'}</Text>
                     <Text style={styles.headerPrice}>
-                        {stockInfo?.price ? `₦${stockInfo.price.toFixed(2)}` : 'Enter values below'}
+                        {currentPrice ? `₦${currentPrice.toFixed(2)}` : 'Enter values below'}
                     </Text>
                 </View>
                 <TouchableOpacity onPress={() => symbol ? navigation.navigate('ValuationFull', { symbol, stockInfo }) : null}>
@@ -138,6 +139,30 @@ const ValuationSimplified: React.FC<Props> = ({ route, navigation }) => {
                             : 'DCF values stock based on future cash flows'}
                     </Text>
                 </View>
+
+                {symbol ? (
+                    <View style={styles.jumpCard}>
+                        <Text style={styles.jumpTitle}>Continue your research</Text>
+                        <View style={styles.jumpGrid}>
+                            <TouchableOpacity style={styles.jumpButton} onPress={() => navigation.navigate('StockDetail', { symbol })}>
+                                <Ionicons name="briefcase" size={16} color="#2563eb" />
+                                <Text style={styles.jumpButtonText}>Details</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.jumpButton} onPress={() => navigation.navigate('ValuationFull', { symbol, stockInfo })}>
+                                <Ionicons name="document-text" size={16} color="#2563eb" />
+                                <Text style={styles.jumpButtonText}>Full View</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.jumpButton} onPress={() => navigation.navigate('EnhancedCharting', { symbol })}>
+                                <Ionicons name="analytics" size={16} color="#2563eb" />
+                                <Text style={styles.jumpButtonText}>Charts</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.jumpButton} onPress={() => navigation.navigate('PriceAlerts', { symbol })}>
+                                <Ionicons name="notifications" size={16} color="#2563eb" />
+                                <Text style={styles.jumpButtonText}>Alerts</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                ) : null}
 
                 {/* Tab Selector */}
                 <View style={styles.tabs}>
@@ -234,13 +259,13 @@ const ValuationSimplified: React.FC<Props> = ({ route, navigation }) => {
                                     <View>
                                         <Text style={styles.compareLabel}>Current Price</Text>
                                         <Text style={styles.compareValue}>
-                                            ₦{stockInfo?.price?.toFixed(2)}
+                                            {currentPrice !== null ? `₦${currentPrice.toFixed(2)}` : '—'}
                                         </Text>
                                     </View>
                                     <View style={styles.compareArrow}>
                                         <Ionicons
                                             name={
-                                                epsPePrice > (stockInfo?.price || 0)
+                                                epsPePrice > (currentPrice || 0)
                                                     ? 'arrow-up'
                                                     : 'arrow-down'
                                             }
@@ -251,10 +276,7 @@ const ValuationSimplified: React.FC<Props> = ({ route, navigation }) => {
                                     <View style={styles.compareRightAlign}>
                                         <Text style={styles.compareLabel}>Difference</Text>
                                         <Text style={styles.compareValue}>
-                                            ₦
-                                            {(
-                                                epsPePrice - (stockInfo?.price || 0)
-                                            ).toFixed(2)}
+                                            ₦{(epsPePrice - (currentPrice || 0)).toFixed(2)}
                                         </Text>
                                     </View>
                                 </View>
@@ -375,13 +397,13 @@ const ValuationSimplified: React.FC<Props> = ({ route, navigation }) => {
                                     <View>
                                         <Text style={styles.compareLabel}>Current Price</Text>
                                         <Text style={styles.compareValue}>
-                                            ₦{stockInfo?.price?.toFixed(2)}
+                                            {currentPrice !== null ? `₦${currentPrice.toFixed(2)}` : '—'}
                                         </Text>
                                     </View>
                                     <View style={styles.compareArrow}>
                                         <Ionicons
                                             name={
-                                                dcfPrice > (stockInfo?.price || 0)
+                                                dcfPrice > (currentPrice || 0)
                                                     ? 'arrow-up'
                                                     : 'arrow-down'
                                             }
@@ -391,15 +413,14 @@ const ValuationSimplified: React.FC<Props> = ({ route, navigation }) => {
                                     </View>
                                     <View style={styles.compareRightAlign}>
                                         <Text style={styles.compareLabel}>
-                                            {dcfPrice > (stockInfo?.price || 0)
+                                            {dcfPrice > (currentPrice || 0)
                                                 ? 'Upside'
                                                 : 'Downside'}
                                         </Text>
                                         <Text style={styles.compareValue}>
                                             {(
-                                                ((dcfPrice -
-                                                    (stockInfo?.price || 0)) /
-                                                    (stockInfo?.price || 1)) *
+                                                ((dcfPrice - (currentPrice || 0)) /
+                                                    (currentPrice || 1)) *
                                                 100
                                             ).toFixed(1)}
                                             %
@@ -464,6 +485,41 @@ const styles = StyleSheet.create({
         marginLeft: 12,
         flex: 1,
         lineHeight: 18,
+    },
+    jumpCard: {
+        backgroundColor: 'white',
+        borderRadius: 12,
+        padding: 12,
+        marginBottom: 16,
+    },
+    jumpTitle: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#1a1a1a',
+        marginBottom: 10,
+    },
+    jumpGrid: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        justifyContent: 'space-between',
+    },
+    jumpButton: {
+        width: '48%',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        borderWidth: 1,
+        borderColor: '#dbeafe',
+        backgroundColor: '#f8fbff',
+        borderRadius: 10,
+        paddingVertical: 10,
+        marginBottom: 8,
+    },
+    jumpButtonText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#2563eb',
     },
     tabs: {
         flexDirection: 'row',

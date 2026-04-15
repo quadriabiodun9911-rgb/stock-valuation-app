@@ -316,6 +316,48 @@ const StockDetailScreen: React.FC<Props> = ({ route, navigation }) => {
                 </TouchableOpacity>
             </View>
 
+            <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Next Steps</Text>
+                <View style={styles.quickActionGrid}>
+                    <TouchableOpacity style={styles.quickActionCard} onPress={navigateToValuation}>
+                        <View style={[styles.quickActionIcon, { backgroundColor: '#dbeafe' }]}>
+                            <Ionicons name="calculator" size={18} color="#2563eb" />
+                        </View>
+                        <Text style={styles.quickActionLabel}>Quick Value</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                        style={styles.quickActionCard}
+                        onPress={() => navigation.navigate('EnhancedCharting', { symbol })}
+                    >
+                        <View style={[styles.quickActionIcon, { backgroundColor: '#ccfbf1' }]}>
+                            <Ionicons name="analytics" size={18} color="#0f766e" />
+                        </View>
+                        <Text style={styles.quickActionLabel}>Open Chart</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                        style={styles.quickActionCard}
+                        onPress={() => navigation.navigate('MainTabs', { screen: 'Watchlist', params: { addSymbol: symbol } })}
+                    >
+                        <View style={[styles.quickActionIcon, { backgroundColor: '#ede9fe' }]}>
+                            <Ionicons name="bookmark" size={18} color="#7c3aed" />
+                        </View>
+                        <Text style={styles.quickActionLabel}>Track Stock</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                        style={styles.quickActionCard}
+                        onPress={() => navigation.navigate('PriceAlerts', { symbol })}
+                    >
+                        <View style={[styles.quickActionIcon, { backgroundColor: '#fef3c7' }]}>
+                            <Ionicons name="notifications" size={18} color="#d97706" />
+                        </View>
+                        <Text style={styles.quickActionLabel}>Set Alert</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
+
             {activeTab === 'overview' ? (
                 <View>
                     {/* Signal */}
@@ -878,6 +920,33 @@ const styles = StyleSheet.create({
     activeTabText: {
         color: '#007AFF',
         fontWeight: '500',
+    },
+    quickActionGrid: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        justifyContent: 'space-between',
+    },
+    quickActionCard: {
+        width: '48%',
+        backgroundColor: '#f8fafc',
+        borderRadius: 12,
+        padding: 12,
+        marginBottom: 10,
+        borderWidth: 1,
+        borderColor: '#e5e7eb',
+    },
+    quickActionIcon: {
+        width: 34,
+        height: 34,
+        borderRadius: 17,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    quickActionLabel: {
+        marginTop: 8,
+        fontSize: 13,
+        fontWeight: '700',
+        color: '#111827',
     },
     section: {
         backgroundColor: 'white',

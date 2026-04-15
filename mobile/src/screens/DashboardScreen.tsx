@@ -211,6 +211,31 @@ const DashboardScreen: React.FC<Props> = ({ navigation }) => {
                                 </View>
                             </View>
 
+                            <View style={styles.card}>
+                                <View style={styles.cardHead}>
+                                    <Ionicons name="flash" size={18} color="#2563eb" />
+                                    <Text style={styles.cardTitle}>Quick Actions</Text>
+                                </View>
+                                <View style={styles.actionGrid}>
+                                    <TouchableOpacity style={styles.actionChip} onPress={() => navigation.navigate('PortfolioTracker')}>
+                                        <Ionicons name="pie-chart" size={16} color="#2563eb" />
+                                        <Text style={styles.actionChipText}>Tracker</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity style={styles.actionChip} onPress={() => navigation.navigate('GoalPlanner')}>
+                                        <Ionicons name="flag" size={16} color="#2563eb" />
+                                        <Text style={styles.actionChipText}>Goals</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity style={styles.actionChip} onPress={() => navigation.navigate('PriceAlerts')}>
+                                        <Ionicons name="notifications" size={16} color="#2563eb" />
+                                        <Text style={styles.actionChipText}>Alerts</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity style={styles.actionChip} onPress={() => navigation.navigate('StockDetail', { symbol: bestPos?.symbol || 'AAPL' })}>
+                                        <Ionicons name="arrow-forward-circle" size={16} color="#2563eb" />
+                                        <Text style={styles.actionChipText}>Top Pick</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+
                             {/* Allocation */}
                             <View style={styles.card}>
                                 <View style={styles.cardHead}>
@@ -438,6 +463,20 @@ const styles = StyleSheet.create({
     duoLabel: { fontSize: 11, color: '#64748b', fontWeight: '500' },
     duoSymbol: { fontSize: 16, fontWeight: '800', color: '#0f172a', marginTop: 4 },
     duoPct: { fontSize: 14, fontWeight: '700', marginTop: 2 },
+
+    actionGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
+    actionChip: {
+        width: '48%',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        backgroundColor: '#eff6ff',
+        borderRadius: 10,
+        paddingVertical: 10,
+        marginBottom: 8,
+    },
+    actionChipText: { fontSize: 12, fontWeight: '700', color: '#2563eb' },
 
     card: { backgroundColor: '#fff', borderRadius: 16, padding: 16, marginBottom: 14, shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 8, elevation: 1 },
     cardHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 },

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
     View,
     Text,
@@ -38,15 +38,20 @@ interface ChartData {
 
 const PERIODS = ['1m', '3m', '6m', '1y', '2y', '5y'];
 
-const EnhancedChartingScreen: React.FC = () => {
-    const [symbol, setSymbol] = useState('AAPL');
+interface Props {
+    route?: any;
+    navigation?: any;
+}
+
+const EnhancedChartingScreen: React.FC<Props> = ({ route, navigation }) => {
+    const [symbol, setSymbol] = useState(route?.params?.symbol ? String(route.params.symbol).toUpperCase() : 'AAPL');
     const [period, setPeriod] = useState('1y');
     const [chartData, setChartData] = useState<ChartData | null>(null);
     const [loading, setLoading] = useState(false);
     const [activeIndicator, setActiveIndicator] = useState<'price' | 'rsi' | 'macd'>('price');
 
-    const loadChart = async () => {
-        const trimmed = symbol.trim().toUpperCase();
+    const loadChart = async (symbolOverride?: string) => {
+        const trimmed = (symbolOverride || symbol).trim().toUpperCase();
         if (!trimmed) return;
         try {
             setLoading(true);
@@ -67,6 +72,19 @@ const EnhancedChartingScreen: React.FC = () => {
         }
     };
 
+    useEffect(() => {
+        const incomingSymbol = route?.params?.symbol;
+        if (incomingSymbol) {
+            const preset = String(incomingSymbol).toUpperCase();
+            setSymbol(preset);
+            loadChart(preset);
+        }
+    }, [route?.params?.symbol]);
+
+    const handleLoadChart = () => {
+        loadChart();
+    };
+
     const formatPrice = (n: number) => `$${n.toFixed(2)}`;
     const screenWidth = Dimensions.get('window').width;
 
@@ -84,7 +102,17 @@ const EnhancedChartingScreen: React.FC = () => {
     return (
         <View style={styles.container}>
             <View style={styles.header}>
-                <Text style={styles.headerTitle}>Enhanced Charts</Text>
+                <View style={styles.headerRow}>
+                    {navigation?.canGoBack?.() ? (
+                        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+                            <Ionicons name="arrow-back" size={22} color="#1e293b" />
+                        </TouchableOpacity>
+                    ) : null}
+                    <View>
+                        <Text style={styles.headerTitle}>Enhanced Charts</Text>
+                        <Text style={styles.headerSubtitle}>Analyze price action for {symbol || 'your stock'}</Text>
+                    </View>
+                </View>
             </View>
 
             {/* Search Bar */}
@@ -95,9 +123,9 @@ const EnhancedChartingScreen: React.FC = () => {
                     value={symbol}
                     onChangeText={setSymbol}
                     autoCapitalize="characters"
-                    onSubmitEditing={loadChart}
+                    onSubmitEditing={handleLoadChart}
                 />
-                <TouchableOpacity style={styles.searchBtn} onPress={loadChart}>
+                <TouchableOpacity style={styles.searchBtn} onPress={handleLoadChart}>
                     <Ionicons name="analytics" size={20} color="#fff" />
                 </TouchableOpacity>
             </View>
@@ -113,7 +141,7 @@ const EnhancedChartingScreen: React.FC = () => {
                         <Text style={[styles.periodText, period === p && styles.periodTextActive]}>{p.toUpperCase()}</Text>
                     </TouchableOpacity>
                 ))}
-                <TouchableOpacity style={styles.goBtn} onPress={loadChart}>
+                <TouchableOpacity style={styles.goBtn} onPress={handleLoadChart}>
                     <Text style={styles.goBtnText}>Go</Text>
                 </TouchableOpacity>
             </View>
@@ -210,7 +238,10 @@ const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#f8fafc' },
     center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
     header: { padding: 16, paddingTop: 50, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
+    headerRow: { flexDirection: 'row', alignItems: 'center' },
+    backBtn: { marginRight: 10 },
     headerTitle: { fontSize: 20, fontWeight: '700', color: '#1e293b' },
+    headerSubtitle: { fontSize: 12, color: '#64748b', marginTop: 2 },
     searchRow: { flexDirection: 'row', padding: 12, backgroundColor: '#fff' },
     searchInput: { flex: 1, borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, fontSize: 16, marginRight: 8 },
     searchBtn: { backgroundColor: '#2563eb', borderRadius: 10, paddingHorizontal: 16, justifyContent: 'center' },

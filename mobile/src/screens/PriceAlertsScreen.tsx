@@ -22,7 +22,12 @@ interface PriceAlert {
     triggered?: boolean;
 }
 
-const PriceAlertsScreen: React.FC = () => {
+interface Props {
+    route?: any;
+    navigation?: any;
+}
+
+const PriceAlertsScreen: React.FC<Props> = ({ route, navigation }) => {
     const [alerts, setAlerts] = useState<PriceAlert[]>([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
@@ -35,6 +40,14 @@ const PriceAlertsScreen: React.FC = () => {
     useEffect(() => {
         loadAlerts();
     }, []);
+
+    useEffect(() => {
+        const incomingSymbol = route?.params?.symbol;
+        if (incomingSymbol) {
+            setSymbol(String(incomingSymbol).toUpperCase());
+            setModalVisible(true);
+        }
+    }, [route?.params?.symbol]);
 
     const loadAlerts = async () => {
         try {
@@ -108,7 +121,17 @@ const PriceAlertsScreen: React.FC = () => {
     return (
         <View style={styles.container}>
             <View style={styles.header}>
-                <Text style={styles.headerTitle}>Price Alerts</Text>
+                <View style={styles.headerLeft}>
+                    {navigation?.canGoBack?.() ? (
+                        <TouchableOpacity onPress={() => navigation.goBack()} style={{ marginRight: 10 }}>
+                            <Ionicons name="arrow-back" size={22} color="#1e293b" />
+                        </TouchableOpacity>
+                    ) : null}
+                    <View>
+                        <Text style={styles.headerTitle}>Price Alerts</Text>
+                        <Text style={styles.headerSubtitle}>Track targets and get notified faster</Text>
+                    </View>
+                </View>
                 <View style={styles.headerActions}>
                     <TouchableOpacity onPress={handleCheckAlerts} style={{ marginRight: 12 }}>
                         <Ionicons name="notifications" size={24} color="#f59e0b" />
@@ -200,7 +223,9 @@ const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#f8fafc' },
     center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
     header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, paddingTop: 50, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
+    headerLeft: { flexDirection: 'row', alignItems: 'center' },
     headerTitle: { fontSize: 20, fontWeight: '700', color: '#1e293b' },
+    headerSubtitle: { fontSize: 12, color: '#64748b', marginTop: 2 },
     headerActions: { flexDirection: 'row', alignItems: 'center' },
     scrollContent: { padding: 16 },
     alertCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#fff', borderRadius: 12, padding: 16, marginBottom: 8, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 4, elevation: 2 },
