@@ -189,6 +189,24 @@ const StockDetailScreen: React.FC<Props> = ({ route, navigation }) => {
         return 'Watch';
     };
 
+    const getActionPlan = (action?: string, upside?: number) => {
+        const normalized = action?.toLowerCase();
+
+        if (normalized === 'buy') {
+            return upside && upside > 0
+                ? 'The setup looks favorable. Build conviction and scale in only if the thesis still holds.'
+                : 'The signal is positive, but wait for a better margin of safety before adding aggressively.';
+        }
+
+        if (normalized === 'sell') {
+            return 'Protect capital first. Avoid new entries until the risk-reward improves.';
+        }
+
+        return 'Keep this on watch and wait for either better valuation or stronger momentum.';
+    };
+
+    const actionPlan = getActionPlan(analysis?.recommendation.action, analysis?.valuations.dcf.upside);
+
     const buildPriceEpsChart = () => {
         if (!priceEpsSeries || priceEpsSeries.points.length === 0) return null;
 
@@ -610,7 +628,7 @@ const StockDetailScreen: React.FC<Props> = ({ route, navigation }) => {
                     {/* Action Buttons */}
                     <TouchableOpacity style={styles.analyzeButton} onPress={navigateToValuation}>
                         <Ionicons name="analytics" size={24} color="white" />
-                        <Text style={styles.analyzeButtonText}>Detailed Valuation Analysis</Text>
+                        <Text style={styles.analyzeButtonText}>See the Full Reasoning</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
@@ -678,9 +696,22 @@ const StockDetailScreen: React.FC<Props> = ({ route, navigation }) => {
                         </View>
                     ) : analysis ? (
                         <View>
+                            <View style={styles.section}>
+                                <Text style={styles.sectionTitle}>What to do now</Text>
+                                <View style={styles.guidanceCard}>
+                                    <View style={styles.guidanceIcon}>
+                                        <Ionicons name="compass" size={18} color="#2563eb" />
+                                    </View>
+                                    <View style={styles.guidanceContent}>
+                                        <Text style={styles.guidanceTitle}>{getSignalLabel(analysis.recommendation.action)} signal</Text>
+                                        <Text style={styles.guidanceText}>{actionPlan}</Text>
+                                    </View>
+                                </View>
+                            </View>
+
                             {/* Recommendation */}
                             <View style={styles.section}>
-                                <Text style={styles.sectionTitle}>Investment Recommendation</Text>
+                                <Text style={styles.sectionTitle}>Clear Call</Text>
                                 <View style={[styles.recommendationCard, { borderLeftColor: getRecommendationColor(analysis.recommendation.action) }]}>
                                     <View style={styles.recommendationHeader}>
                                         <Text style={[styles.recommendationAction, { color: getRecommendationColor(analysis.recommendation.action) }]}>
@@ -1123,6 +1154,38 @@ const styles = StyleSheet.create({
     analysisLoadingContainer: {
         padding: 40,
         alignItems: 'center',
+    },
+    guidanceCard: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        backgroundColor: '#eff6ff',
+        padding: 14,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: '#bfdbfe',
+    },
+    guidanceIcon: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: '#dbeafe',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginRight: 10,
+    },
+    guidanceContent: {
+        flex: 1,
+    },
+    guidanceTitle: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#1d4ed8',
+        marginBottom: 4,
+    },
+    guidanceText: {
+        fontSize: 13,
+        color: '#334155',
+        lineHeight: 19,
     },
     recommendationCard: {
         backgroundColor: '#f8f9fa',

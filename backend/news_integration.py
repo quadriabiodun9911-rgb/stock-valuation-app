@@ -3,18 +3,32 @@ News Integration Module
 Fetches real stock news from yfinance and Google News RSS feeds.
 Falls back to generated summaries only when live sources are unavailable.
 """
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from datetime import datetime
+from html import unescape
 from typing import List, Optional
-from datetime import datetime, timedelta
-import yfinance as yf
-import requests
 from urllib.parse import quote
 import logging
+import re
+
+from fastapi import APIRouter
+from pydantic import BaseModel
+import requests
+import yfinance as yf
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/news", tags=["news"])
+
+
+def _clean_summary(text: str) -> str:
+    """Convert RSS/HTML snippets into plain readable text."""
+    if not text:
+        return ""
+
+    cleaned = re.sub(r"<[^>]+>", " ", text)
+    cleaned = unescape(cleaned)
+    return " ".join(cleaned.split()).strip()
+
 
 class NewsArticle(BaseModel):
     title: str
@@ -24,6 +38,9 @@ class NewsArticle(BaseModel):
     summary: Optional[str] = None
     image: Optional[str] = None
     sentiment: Optional[str] = None  # positive, negative, neutral
+    impact: Optional[str] = None
+    why_it_matters: Optional[str] = None
+    suggested_action: Optional[str] = None
 
 
 # ── Real data fetchers ────────────────────────────────────────────
@@ -41,16 +58,25 @@ def _fetch_yfinance_news(symbol: str, limit: int) -> List[dict]:
             content = item.get("content", item)
 
             title = content.get("title", "") or item.get("title", "")
-            summary = content.get("summary", "") or item.get("summary", "")
+            summary = _clean_summary(
+                content.get("summary", "") or item.get("summary", "")
+            )
 
             # URL
-            canon = content.get("canonicalUrl") or content.get("clickThroughUrl") or {}
+            canon = (
+                content.get("canonicalUrl")
+                or content.get("clickThroughUrl")
+                or {}
+            )
             url = canon.get("url", "") if isinstance(canon, dict) else ""
             url = url or item.get("link", "")
 
             # Publisher / source
             provider = content.get("provider") or {}
-            source = provider.get("displayName", "") if isinstance(provider, dict) else ""
+            if isinstance(provider, dict):
+                source = provider.get("displayName", "")
+            else:
+                source = ""
             source = source or item.get("publisher", "Unknown") or "Unknown"
 
             # Publish time
@@ -61,11 +87,16 @@ def _fetch_yfinance_news(symbol: str, limit: int) -> List[dict]:
                 published = datetime.fromtimestamp(pub_date).isoformat()
             else:
                 ts = item.get("providerPublishTime")
-                published = datetime.fromtimestamp(ts).isoformat() if isinstance(ts, (int, float)) else datetime.now().isoformat()
+                if isinstance(ts, (int, float)):
+                    published = datetime.fromtimestamp(ts).isoformat()
+                else:
+                    published = datetime.now().isoformat()
 
             # Thumbnail
             thumb = content.get("thumbnail") or item.get("thumbnail") or {}
-            resolutions = thumb.get("resolutions", []) if isinstance(thumb, dict) else []
+            resolutions = (
+                thumb.get("resolutions", []) if isinstance(thumb, dict) else []
+            )
             image_url = resolutions[0].get("url") if resolutions else None
 
             if not title:
@@ -89,7 +120,11 @@ def _fetch_google_news_rss(query: str, limit: int) -> List[dict]:
     """Fetch news from the Google News RSS feed (no API key required)."""
     try:
         import feedparser
-        url = f"https://news.google.com/rss/search?q={quote(query)}&hl=en-US&gl=US&ceid=US:en"
+
+        url = (
+            "https://news.google.com/rss/search?"
+            f"q={quote(query)}&hl=en-US&gl=US&ceid=US:en"
+        )
         # Use requests to fetch the XML (avoids feedparser SSL issues)
         resp = requests.get(url, timeout=10)
         resp.raise_for_status()
@@ -97,22 +132,38 @@ def _fetch_google_news_rss(query: str, limit: int) -> List[dict]:
         articles = []
         for entry in feed.entries[:limit]:
             pub = entry.get("published_parsed")
-            published = datetime(*pub[:6]).isoformat() if pub else datetime.now().isoformat()
-            articles.append({
-                "title": entry.get("title", ""),
-                "url": entry.get("link", ""),
-                "source": entry.get("source", {}).get("title", "Google News") if isinstance(entry.get("source"), dict) else "Google News",
-                "published": published,
-                "summary": entry.get("summary", ""),
-                "image": None,
-            })
+            if pub:
+                published = datetime(*pub[:6]).isoformat()
+            else:
+                published = datetime.now().isoformat()
+
+            source_obj = entry.get("source")
+            if isinstance(source_obj, dict):
+                source = source_obj.get("title", "Google News")
+            else:
+                source = "Google News"
+
+            articles.append(
+                {
+                    "title": entry.get("title", ""),
+                    "url": entry.get("link", ""),
+                    "source": source,
+                    "published": published,
+                    "summary": _clean_summary(entry.get("summary", "")),
+                    "image": None,
+                }
+            )
         return articles
     except Exception as exc:
         logger.warning(f"Google News RSS failed for '{query}': {exc}")
         return []
 
 
-def _get_news(query: str, limit: int, symbol: Optional[str] = None) -> List[dict]:
+def _get_news(
+    query: str,
+    limit: int,
+    symbol: Optional[str] = None,
+) -> List[dict]:
     """Try yfinance first (when a symbol is given), then Google RSS."""
     articles: List[dict] = []
     if symbol:
@@ -120,13 +171,36 @@ def _get_news(query: str, limit: int, symbol: Optional[str] = None) -> List[dict
     if len(articles) < limit:
         rss = _fetch_google_news_rss(query, limit - len(articles))
         articles.extend(rss)
-    return articles[:limit]
+    return [_enrich_article(article) for article in articles[:limit]]
 
 
 # ── Simple keyword sentiment ──────────────────────────────────────
 
-_POS = {"surge", "rally", "strong", "beat", "record", "bullish", "gains", "profit", "soar", "upgrade"}
-_NEG = {"plunge", "decline", "miss", "loss", "bearish", "weak", "challenge", "concern", "downgrade", "crash"}
+_POS = {
+    "surge",
+    "rally",
+    "strong",
+    "beat",
+    "record",
+    "bullish",
+    "gains",
+    "profit",
+    "soar",
+    "upgrade",
+}
+_NEG = {
+    "plunge",
+    "decline",
+    "miss",
+    "loss",
+    "bearish",
+    "weak",
+    "challenge",
+    "concern",
+    "downgrade",
+    "crash",
+}
+
 
 def _score_sentiment(title: str) -> str:
     lower = title.lower()
@@ -137,6 +211,41 @@ def _score_sentiment(title: str) -> str:
     if neg > pos:
         return "negative"
     return "neutral"
+
+
+def _enrich_article(article: dict) -> dict:
+    sentiment = article.get("sentiment") or _score_sentiment(
+        article.get("title", "")
+    )
+    summary = article.get("summary") or (
+        "This update may affect sentiment, valuation, "
+        "or near-term risk."
+    )
+
+    if sentiment == "positive":
+        impact = "Positive catalyst"
+        action = (
+            "Review whether the thesis is strengthening "
+            "before buying or adding."
+        )
+    elif sentiment == "negative":
+        impact = "Risk alert"
+        action = (
+            "Re-check downside risk and avoid reacting "
+            "emotionally to the headline."
+        )
+    else:
+        impact = "Monitor"
+        action = (
+            "Keep this on watch and wait for clearer "
+            "confirmation before acting."
+        )
+
+    article["sentiment"] = sentiment
+    article["impact"] = impact
+    article["why_it_matters"] = summary
+    article["suggested_action"] = action
+    return article
 
 
 # ── Endpoints ─────────────────────────────────────────────────────
@@ -152,6 +261,7 @@ async def get_stock_news(symbol: str, limit: int = 20):
         "last_updated": datetime.now(),
     }
 
+
 @router.get("/market-news")
 async def get_market_news(limit: int = 20):
     """Get general market news"""
@@ -161,6 +271,7 @@ async def get_market_news(limit: int = 20):
         "news": news_list,
         "last_updated": datetime.now(),
     }
+
 
 @router.get("/sector/{sector}")
 async def get_sector_news(sector: str, limit: int = 20):
@@ -173,10 +284,22 @@ async def get_sector_news(sector: str, limit: int = 20):
         "last_updated": datetime.now(),
     }
 
+
 @router.get("/trending")
 async def get_trending_stocks(limit: int = 10):
     """Get trending stocks and their news"""
-    trending_symbols = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "BRK-B", "JNJ", "V"]
+    trending_symbols = [
+        "AAPL",
+        "MSFT",
+        "GOOGL",
+        "AMZN",
+        "NVDA",
+        "META",
+        "TSLA",
+        "BRK-B",
+        "JNJ",
+        "V",
+    ]
     trending_data = []
     for symbol in trending_symbols[:limit]:
         news = _get_news(f"{symbol} stock", 3, symbol=symbol)
@@ -191,6 +314,7 @@ async def get_trending_stocks(limit: int = 10):
         "last_updated": datetime.now(),
     }
 
+
 @router.post("/search")
 async def search_news(query: str, limit: int = 20):
     """Search news by keyword"""
@@ -204,6 +328,7 @@ async def search_news(query: str, limit: int = 20):
         "last_updated": datetime.now(),
     }
 
+
 @router.get("/sentiment/{symbol}")
 async def analyze_sentiment(symbol: str):
     """Get news sentiment for a stock"""
@@ -216,7 +341,10 @@ async def analyze_sentiment(symbol: str):
         sentiment_count[s] += 1
 
     total = sum(sentiment_count.values()) or 1
-    sentiment_pct = {k: round(v / total * 100, 1) for k, v in sentiment_count.items()}
+    sentiment_pct = {
+        k: round(v / total * 100, 1)
+        for k, v in sentiment_count.items()
+    }
 
     return {
         "symbol": symbol,

@@ -139,14 +139,38 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
     }, [marketSummary]);
 
     const quickActions = [
-        { icon: 'search' as const, label: 'Discover', screen: 'Search', color: '#2563eb', gradient: ['#2563eb', '#3b82f6'] as const },
-        { icon: 'wallet' as const, label: 'Portfolio', screen: 'Dashboard', color: '#f59e0b', gradient: ['#f59e0b', '#fbbf24'] as const },
-        { icon: 'calculator' as const, label: 'Valuation', screen: 'Valuation', color: '#0ea5e9', gradient: ['#0ea5e9', '#38bdf8'] as const },
-        { icon: 'grid' as const, label: 'Tools', screen: 'Charts', color: '#7c3aed', gradient: ['#7c3aed', '#8b5cf6'] as const },
-        { icon: 'notifications' as const, label: 'Alerts', screen: 'PriceAlerts', color: '#ef4444', gradient: ['#ef4444', '#f87171'] as const },
-        { icon: 'people' as const, label: 'Community', screen: 'Crowd', color: '#14b8a6', gradient: ['#14b8a6', '#2dd4bf'] as const },
-        { icon: 'bookmark' as const, label: 'Watchlist', screen: 'Watchlist', color: '#1e293b', gradient: ['#1e293b', '#475569'] as const },
-        { icon: 'sparkles' as const, label: 'AI Chat', screen: 'AIChat', color: '#8b5cf6', gradient: ['#8b5cf6', '#a78bfa'] as const },
+        {
+            icon: 'search' as const,
+            label: 'Clear Calls',
+            meta: 'Buy, watch, or avoid',
+            screen: 'Search',
+            color: '#2563eb',
+            gradient: ['#2563eb', '#3b82f6'] as const,
+        },
+        {
+            icon: 'wallet' as const,
+            label: 'My Portfolio',
+            meta: 'Review gains and risk',
+            screen: 'Dashboard',
+            color: '#f59e0b',
+            gradient: ['#f59e0b', '#fbbf24'] as const,
+        },
+        {
+            icon: 'bookmark' as const,
+            label: 'Watchlist',
+            meta: 'Track decision-ready stocks',
+            screen: 'Watchlist',
+            color: '#1e293b',
+            gradient: ['#1e293b', '#475569'] as const,
+        },
+        {
+            icon: 'notifications' as const,
+            label: 'Alerts',
+            meta: 'Wait for better entry points',
+            screen: 'PriceAlerts',
+            color: '#ef4444',
+            gradient: ['#ef4444', '#f87171'] as const,
+        },
     ];
 
     const greeting = new Date().getHours() < 12 ? 'Good Morning' : new Date().getHours() < 18 ? 'Good Afternoon' : 'Good Evening';
@@ -163,6 +187,7 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
                         <View>
                             <Text style={styles.greeting}>{greeting}{user?.username ? `, ${user.username}` : ''}</Text>
                             <Text style={styles.headerTitle}>StockVal</Text>
+                            <Text style={styles.heroSubtitle}>For investors who want fewer, better decisions with clear calls, fair value, and risk flags.</Text>
                         </View>
                         <TouchableOpacity onPress={toggleTheme} style={styles.darkModeBtn}>
                             <Ionicons name={isDark ? 'sunny' : 'moon'} size={18} color={isDark ? '#f59e0b' : '#94a3b8'} />
@@ -203,6 +228,7 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
                             </TouchableOpacity>
                         )}
                     </View>
+                    <Text style={styles.searchHint}>Search any stock for a clear call, fair value, and the key risks.</Text>
                 </LinearGradient>
 
                 {/* Search Results */}
@@ -281,7 +307,7 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
                     <View style={styles.card}>
                         <View style={styles.cardTitleRow}>
                             <Ionicons name="sunny" size={18} color="#f59e0b" />
-                            <Text style={styles.cardTitle}>Morning Briefing</Text>
+                            <Text style={styles.cardTitle}>Decision Briefing</Text>
                             <View style={[styles.signalBadge, briefing.sentiment === 'Bullish' ? styles.greenBg : briefing.sentiment === 'Bearish' ? styles.redBg : styles.neutralBg]}>
                                 <Text style={styles.signalText}>{briefing.sentiment || 'Neutral'}</Text>
                             </View>
@@ -309,8 +335,22 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
 
                 {/* Quick Actions */}
                 <View style={styles.sectionHeader}>
-                    <Text style={styles.sectionTitle}>Start Here</Text>
-                    <Text style={styles.sectionSubtitle}>Use these shortcuts for the most common tasks.</Text>
+                    <Text style={styles.sectionTitle}>What should I focus on today?</Text>
+                    <Text style={styles.sectionSubtitle}>Cut the noise and focus on the few actions that improve decisions.</Text>
+                </View>
+                <View style={[styles.card, { marginTop: 0, marginBottom: 12 }]}>
+                    <View style={styles.cardTitleRow}>
+                        <Ionicons name="compass" size={18} color="#2563eb" />
+                        <Text style={styles.cardTitle}>Decision Focus</Text>
+                    </View>
+                    <Text style={{ color: '#475569', fontSize: 13, lineHeight: 20 }}>
+                        Built for investors who want fewer, better decisions. Start with your portfolio, review the market tone, and act only when valuation and risk line up.
+                    </Text>
+                    <View style={styles.valuePropsRow}>
+                        <View style={styles.valuePropChip}><Text style={styles.valuePropText}>Clear Calls</Text></View>
+                        <View style={styles.valuePropChip}><Text style={styles.valuePropText}>Fair Value</Text></View>
+                        <View style={styles.valuePropChip}><Text style={styles.valuePropText}>Risk Flags</Text></View>
+                    </View>
                 </View>
                 <View style={styles.actionGrid}>
                     {quickActions.map((a) => (
@@ -327,7 +367,7 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
                                 <Ionicons name="chevron-forward" size={16} color="#94a3b8" />
                             </View>
                             <Text style={styles.actionTileLabel}>{a.label}</Text>
-                            <Text style={styles.actionTileMeta}>Open now</Text>
+                            <Text style={styles.actionTileMeta}>{a.meta}</Text>
                         </TouchableOpacity>
                     ))}
                 </View>
@@ -399,7 +439,7 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
                 <View style={[styles.card, { marginBottom: 40 }]}>
                     <View style={styles.cardTitleRow}>
                         <Ionicons name="star" size={16} color="#f59e0b" />
-                        <Text style={styles.cardTitle}>Featured</Text>
+                        <Text style={styles.cardTitle}>Decision-ready Stocks</Text>
                     </View>
                     {marketLoading ? (
                         <ActivityIndicator color="#2563eb" style={{ paddingVertical: 20 }} />
@@ -467,6 +507,13 @@ const styles = StyleSheet.create({
         color: '#fff',
         letterSpacing: -0.5,
     },
+    heroSubtitle: {
+        marginTop: 6,
+        fontSize: 13,
+        lineHeight: 18,
+        color: 'rgba(255,255,255,0.78)',
+        maxWidth: 280,
+    },
     darkModeBtn: {
         backgroundColor: 'rgba(255,255,255,0.1)',
         padding: 8,
@@ -513,6 +560,12 @@ const styles = StyleSheet.create({
         fontSize: 15,
         color: '#fff',
         paddingVertical: 0,
+    },
+    searchHint: {
+        fontSize: 12,
+        color: 'rgba(255,255,255,0.7)',
+        marginTop: 10,
+        lineHeight: 17,
     },
     /* ── Search Results ── */
     resultRow: {
@@ -569,6 +622,25 @@ const styles = StyleSheet.create({
         fontSize: 17,
         fontWeight: '800',
         color: '#0f172a',
+    },
+    valuePropsRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+        marginTop: 12,
+    },
+    valuePropChip: {
+        backgroundColor: '#eff6ff',
+        borderColor: '#bfdbfe',
+        borderWidth: 1,
+        borderRadius: 999,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+    },
+    valuePropText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#1d4ed8',
     },
     /* ── Section Header ── */
     sectionHeader: {

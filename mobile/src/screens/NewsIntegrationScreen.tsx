@@ -20,6 +20,9 @@ interface NewsArticle {
     url?: string;
     published?: string;
     sentiment?: 'positive' | 'negative' | 'neutral';
+    impact?: string;
+    why_it_matters?: string;
+    suggested_action?: string;
 }
 
 const NewsIntegrationScreen: React.FC = () => {
@@ -77,10 +80,31 @@ const NewsIntegrationScreen: React.FC = () => {
         return '#94a3b8';
     };
 
+    const getImpact = (article: NewsArticle) => {
+        return article.impact || (article.sentiment === 'positive'
+            ? 'Positive catalyst'
+            : article.sentiment === 'negative'
+                ? 'Risk alert'
+                : 'Monitor');
+    };
+
+    const getWhyItMatters = (article: NewsArticle) => {
+        return article.why_it_matters || article.summary || 'This update may affect valuation, momentum, or risk. Review before acting.';
+    };
+
+    const getSuggestedAction = (article: NewsArticle) => {
+        return article.suggested_action || (article.sentiment === 'positive'
+            ? 'Review for opportunity or hold conviction.'
+            : article.sentiment === 'negative'
+                ? 'Re-check risk and avoid emotional trades.'
+                : 'Keep it on watch and wait for clearer confirmation.');
+    };
+
     return (
         <View style={styles.container}>
             <View style={styles.header}>
-                <Text style={styles.headerTitle}>News</Text>
+                <Text style={styles.headerTitle}>News That Matters</Text>
+                <Text style={styles.headerSubtitle}>Focus on impact, not headlines.</Text>
             </View>
 
             {/* Tabs */}
@@ -124,6 +148,15 @@ const NewsIntegrationScreen: React.FC = () => {
                     refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
                     contentContainerStyle={styles.scrollContent}
                 >
+                    <View style={styles.guidanceCard}>
+                        <View style={styles.guidanceHeader}>
+                            <Ionicons name="flash" size={18} color="#2563eb" />
+                            <Text style={styles.guidanceTitle}>How to use this feed</Text>
+                        </View>
+                        <Text style={styles.guidanceText}>
+                            Read each story as a decision input: what changed, why it matters, and what to do next.
+                        </Text>
+                    </View>
                     {news.length > 0 ? (
                         news.map((article, idx) => (
                             <TouchableOpacity
@@ -141,9 +174,15 @@ const NewsIntegrationScreen: React.FC = () => {
                                         </View>
                                     )}
                                 </View>
-                                {article.summary && (
-                                    <Text style={styles.newsSummary} numberOfLines={3}>{article.summary}</Text>
-                                )}
+                                <Text style={styles.impactLabel}>Impact</Text>
+                                <Text style={[styles.impactValue, { color: sentimentColor(article.sentiment) }]}>
+                                    {getImpact(article)}
+                                </Text>
+                                <Text style={styles.newsSummary} numberOfLines={3}>{getWhyItMatters(article)}</Text>
+                                <View style={styles.actionBox}>
+                                    <Text style={styles.actionBoxLabel}>Suggested action</Text>
+                                    <Text style={styles.actionBoxText}>{getSuggestedAction(article)}</Text>
+                                </View>
                                 <View style={styles.newsMeta}>
                                     {article.source && <Text style={styles.newsSource}>{article.source}</Text>}
                                     {article.published && <Text style={styles.newsDate}>{article.published}</Text>}
@@ -167,6 +206,7 @@ const styles = StyleSheet.create({
     center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
     header: { padding: 16, paddingTop: 50, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
     headerTitle: { fontSize: 20, fontWeight: '700', color: '#1e293b' },
+    headerSubtitle: { marginTop: 4, fontSize: 13, color: '#64748b' },
     tabs: { flexDirection: 'row', backgroundColor: '#fff', paddingHorizontal: 16 },
     tab: { flex: 1, paddingVertical: 12, alignItems: 'center', borderBottomWidth: 2, borderBottomColor: 'transparent' },
     activeTab: { borderBottomColor: '#2563eb' },
@@ -176,12 +216,21 @@ const styles = StyleSheet.create({
     searchInput: { flex: 1, borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, fontSize: 16, marginRight: 8 },
     searchBtn: { backgroundColor: '#2563eb', borderRadius: 10, paddingHorizontal: 16, justifyContent: 'center' },
     scrollContent: { padding: 16 },
+    guidanceCard: { backgroundColor: '#eff6ff', borderRadius: 12, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: '#bfdbfe' },
+    guidanceHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
+    guidanceTitle: { fontSize: 14, fontWeight: '700', color: '#1e3a8a', marginLeft: 8 },
+    guidanceText: { fontSize: 13, color: '#1e40af', lineHeight: 18 },
     newsCard: { backgroundColor: '#fff', borderRadius: 12, padding: 16, marginBottom: 12, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 4, elevation: 2 },
     newsHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
     newsTitle: { fontSize: 15, fontWeight: '700', color: '#1e293b', flex: 1, marginRight: 8 },
     sentimentBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 },
     sentimentText: { fontSize: 11, fontWeight: '600', textTransform: 'capitalize' },
+    impactLabel: { fontSize: 11, fontWeight: '700', color: '#94a3b8', marginTop: 10, textTransform: 'uppercase' },
+    impactValue: { fontSize: 13, fontWeight: '700', marginTop: 2 },
     newsSummary: { fontSize: 13, color: '#64748b', marginTop: 8, lineHeight: 18 },
+    actionBox: { backgroundColor: '#f8fafc', borderRadius: 10, padding: 10, marginTop: 10 },
+    actionBoxLabel: { fontSize: 11, color: '#64748b', fontWeight: '700', textTransform: 'uppercase' },
+    actionBoxText: { fontSize: 13, color: '#1e293b', marginTop: 4, lineHeight: 18 },
     newsMeta: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 10 },
     newsSource: { fontSize: 12, color: '#94a3b8', fontWeight: '600' },
     newsDate: { fontSize: 12, color: '#94a3b8' },

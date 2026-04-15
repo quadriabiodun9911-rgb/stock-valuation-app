@@ -150,8 +150,8 @@ const AnalysisScreen: React.FC<Props> = ({ navigation }) => {
     const analysisTools = [
         {
             id: 'screener',
-            title: 'AI Screener',
-            description: 'Scan for value, momentum, and quality signals in seconds.',
+            title: 'Opportunity Screener',
+            description: 'Cut through the noise with value, momentum, and quality signals.',
             icon: 'filter',
             color: '#007AFF',
             badge: 'Live',
@@ -259,14 +259,14 @@ const AnalysisScreen: React.FC<Props> = ({ navigation }) => {
             {/* Header */}
             <View style={styles.header}>
                 <Text style={styles.headerTitle}>Market Analysis</Text>
-                <Text style={styles.headerSubtitle}>Professional valuation tools</Text>
+                <Text style={styles.headerSubtitle}>Clear guidance for smarter investing decisions.</Text>
             </View>
 
             {/* Analysis Types */}
             <View style={styles.section}>
                 <Text style={styles.sectionTitle}>Analysis Methods</Text>
                 <Text style={styles.sectionSubtitle}>
-                    Choose your preferred valuation methodology
+                    Choose the clearest lens for the decision you need to make.
                 </Text>
 
                 {analysisTypes.map((analysis) => (
@@ -316,7 +316,7 @@ const AnalysisScreen: React.FC<Props> = ({ navigation }) => {
             <View style={styles.section}>
                 <Text style={styles.sectionTitle}>Market Insights</Text>
                 <Text style={styles.sectionSubtitle}>
-                    Current market trends and conditions
+                    Only the signals worth your attention right now.
                 </Text>
 
                 {marketInsights.map((insight, index) => (
