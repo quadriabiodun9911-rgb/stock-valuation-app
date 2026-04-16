@@ -1,10 +1,10 @@
-# Stock Valuation App
+# StockVal
 
-A clarity-first investing app that helps users make smarter decisions with clear guidance, fair value context, and key risk signals.
+A clarity-first investing app for every stage of life, helping people make better money decisions, grow with community support, and move toward financial freedom.
 
 ## Product Positioning
 
-Built for investors who feel overwhelmed by noisy feeds and fragmented research. The app is designed to help users make fewer, better decisions by showing what matters most before they act.
+Built for younger and older investors who feel overwhelmed by noisy feeds and fragmented research. The app is designed to make investing easier to understand, easier to discuss, and easier to act on with confidence.
 
 For marketing-ready messaging, see [APP_STORE_AND_LANDING_COPY.md](APP_STORE_AND_LANDING_COPY.md).
 

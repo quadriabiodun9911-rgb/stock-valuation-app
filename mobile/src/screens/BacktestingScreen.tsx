@@ -41,7 +41,7 @@ const STRATEGIES: Strategy[] = [
     { key: 'macd_crossover', name: 'MACD Crossover', description: 'Trade on MACD signal line crossovers' },
 ];
 
-const BacktestingScreen: React.FC = () => {
+const BacktestingScreen: React.FC<{ navigation: any }> = ({ navigation }) => {
     const [symbol, setSymbol] = useState('AAPL');
     const [selectedStrategy, setSelectedStrategy] = useState<string>('momentum');
     const [capital, setCapital] = useState('10000');
@@ -106,10 +106,22 @@ const BacktestingScreen: React.FC = () => {
     const formatPct = (n: number) => `${n >= 0 ? '+' : ''}${(n * 100).toFixed(2)}%`;
     const formatMoney = (n: number) => `$${n.toFixed(2)}`;
 
+    const handleBack = () => {
+        if (navigation?.canGoBack?.()) {
+            navigation.goBack();
+            return;
+        }
+        navigation?.navigate?.('MainTabs');
+    };
+
     return (
         <View style={styles.container}>
             <View style={styles.header}>
+                <TouchableOpacity onPress={handleBack} style={styles.backBtn}>
+                    <Ionicons name="arrow-back" size={24} color="#1e293b" />
+                </TouchableOpacity>
                 <Text style={styles.headerTitle}>Backtesting</Text>
+                <View style={styles.headerSpacer} />
             </View>
 
             {/* Input Section */}
@@ -260,8 +272,10 @@ const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#f8fafc' },
     center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
     loadingText: { marginTop: 12, color: '#64748b' },
-    header: { padding: 16, paddingTop: 50, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
-    headerTitle: { fontSize: 20, fontWeight: '700', color: '#1e293b' },
+    header: { flexDirection: 'row', alignItems: 'center', padding: 16, paddingTop: 50, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
+    backBtn: { padding: 4, marginRight: 8 },
+    headerTitle: { flex: 1, fontSize: 20, fontWeight: '700', color: '#1e293b' },
+    headerSpacer: { width: 32 },
     inputSection: { padding: 12, backgroundColor: '#fff' },
     inputRow: { flexDirection: 'row' },
     input: { borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, fontSize: 16 },

@@ -22,20 +22,20 @@ const SLIDES = [
     {
         id: '2',
         icon: 'bulb' as const,
-        title: 'Know Why It Matters',
-        subtitle: 'Get the top reasons, key risks, and what changed so decisions feel clearer.',
+        title: 'For Every Stage of Life',
+        subtitle: 'Simple language, clear steps, and helpful guidance for both new and experienced investors.',
         gradient: ['#0f172a', '#1a3329'] as const,
         accent: '#16a34a',
-        features: ['Top Drivers', 'Risk Flags', 'News Impact'],
+        features: ['Simple Steps', 'Less Jargon', 'Confidence Builder'],
     },
     {
         id: '3',
-        icon: 'shield-checkmark' as const,
-        title: 'Act With Confidence',
-        subtitle: 'Track your portfolio, set alerts, and focus on the next best move instead of constant market noise.',
+        icon: 'people' as const,
+        title: 'Grow Together',
+        subtitle: 'Learn with the community, support one another, and move toward long-term financial freedom.',
         gradient: ['#0f172a', '#2d1b4e'] as const,
         accent: '#7c3aed',
-        features: ['Portfolio Check', 'Smart Alerts', 'Next Steps'],
+        features: ['Community Support', 'Shared Learning', 'Long-Term Freedom'],
     },
 ];
 

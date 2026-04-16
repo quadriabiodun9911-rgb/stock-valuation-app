@@ -60,31 +60,31 @@ const LoginScreen: React.FC<Props> = ({ navigation }) => {
                             <View style={styles.logoPulse} />
                         </View>
                         <Text style={styles.appName}>StockVal</Text>
-                        <Text style={styles.tagline}>Smart investing starts here</Text>
+                        <Text style={styles.tagline}>Simple investing guidance for every generation</Text>
                     </Animated.View>
 
                     {/* Stats banner */}
                     <Animated.View style={[styles.statsBanner, { opacity: fadeAnim }]}>
                         <View style={styles.statItem}>
-                            <Text style={styles.statNumber}>120+</Text>
-                            <Text style={styles.statLabel}>Features</Text>
+                            <Text style={styles.statNumber}>Simple</Text>
+                            <Text style={styles.statLabel}>Decisions</Text>
                         </View>
                         <View style={styles.statDivider} />
                         <View style={styles.statItem}>
-                            <Text style={styles.statNumber}>Real-time</Text>
-                            <Text style={styles.statLabel}>Market Data</Text>
+                            <Text style={styles.statNumber}>Supportive</Text>
+                            <Text style={styles.statLabel}>Community</Text>
                         </View>
                         <View style={styles.statDivider} />
                         <View style={styles.statItem}>
-                            <Text style={styles.statNumber}>AI</Text>
-                            <Text style={styles.statLabel}>Analysis</Text>
+                            <Text style={styles.statNumber}>Long-term</Text>
+                            <Text style={styles.statLabel}>Freedom</Text>
                         </View>
                     </Animated.View>
 
                     {/* Form Card */}
                     <Animated.View style={[styles.formCard, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
                         <Text style={styles.formTitle}>Welcome Back</Text>
-                        <Text style={styles.formSub}>Sign in to access your portfolio</Text>
+                        <Text style={styles.formSub}>Sign in to continue your investment journey and community growth</Text>
 
                         <View style={styles.inputGroup}>
                             <View style={styles.inputWrap}>
@@ -139,7 +139,7 @@ const LoginScreen: React.FC<Props> = ({ navigation }) => {
 
                         <TouchableOpacity style={styles.guestButton} onPress={() => navigation.navigate('MainApp')} activeOpacity={0.7}>
                             <Ionicons name="flash-outline" size={18} color="#2563eb" />
-                            <Text style={styles.guestButtonText}>Explore as Guest</Text>
+                            <Text style={styles.guestButtonText}>Explore the Community</Text>
                         </TouchableOpacity>
 
                         <View style={styles.footer}>

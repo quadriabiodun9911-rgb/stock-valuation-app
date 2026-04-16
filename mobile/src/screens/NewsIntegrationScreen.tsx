@@ -25,7 +25,7 @@ interface NewsArticle {
     suggested_action?: string;
 }
 
-const NewsIntegrationScreen: React.FC = () => {
+const NewsIntegrationScreen: React.FC<{ navigation: any }> = ({ navigation }) => {
     const [news, setNews] = useState<NewsArticle[]>([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
@@ -100,10 +100,24 @@ const NewsIntegrationScreen: React.FC = () => {
                 : 'Keep it on watch and wait for clearer confirmation.');
     };
 
+    const handleBack = () => {
+        if (navigation?.canGoBack?.()) {
+            navigation.goBack();
+            return;
+        }
+        navigation?.navigate?.('MainTabs');
+    };
+
     return (
         <View style={styles.container}>
             <View style={styles.header}>
-                <Text style={styles.headerTitle}>News That Matters</Text>
+                <View style={styles.headerRow}>
+                    <TouchableOpacity onPress={handleBack} style={styles.backBtn}>
+                        <Ionicons name="arrow-back" size={24} color="#1e293b" />
+                    </TouchableOpacity>
+                    <Text style={styles.headerTitle}>News That Matters</Text>
+                    <View style={styles.headerSpacer} />
+                </View>
                 <Text style={styles.headerSubtitle}>Focus on impact, not headlines.</Text>
             </View>
 
@@ -205,7 +219,10 @@ const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#f8fafc' },
     center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
     header: { padding: 16, paddingTop: 50, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
-    headerTitle: { fontSize: 20, fontWeight: '700', color: '#1e293b' },
+    headerRow: { flexDirection: 'row', alignItems: 'center' },
+    backBtn: { padding: 4, marginRight: 8 },
+    headerTitle: { flex: 1, fontSize: 20, fontWeight: '700', color: '#1e293b' },
+    headerSpacer: { width: 32 },
     headerSubtitle: { marginTop: 4, fontSize: 13, color: '#64748b' },
     tabs: { flexDirection: 'row', backgroundColor: '#fff', paddingHorizontal: 16 },
     tab: { flex: 1, paddingVertical: 12, alignItems: 'center', borderBottomWidth: 2, borderBottomColor: 'transparent' },

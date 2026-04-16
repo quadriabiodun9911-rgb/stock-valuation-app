@@ -20,12 +20,12 @@ interface StrategyScore {
     symbol: string;
     companyName: string;
     currentPrice: number;
-    
+
     // Value Layer
     intrinsicValue: number;
     discountToFairValue: number;
     valueScore: number;
-    
+
     // Quality Layer
     fcfPositive: boolean;
     revenueGrowth: number;
@@ -34,21 +34,21 @@ interface StrategyScore {
     roe: number;
     currentRatio: number;
     qualityScore: number;
-    
+
     // Momentum Layer
     ma50: number;
     ma200: number;
     relativeStrength: number;
     rsi: number;
     momentumScore: number;
-    
+
     // Risk Layer
     riskScore: number;
     beta: number;
     volatility: number;
     maxDrawdown: number;
     sharpeEstimate: number;
-    
+
     // Overall
     overallScore: number;
     recommendation: 'BUY' | 'HOLD' | 'SELL' | 'AVOID';
@@ -92,6 +92,14 @@ const SmartStrategyScreen: React.FC<Props> = ({ navigation }) => {
         return stock.recommendation === activeFilter.toUpperCase();
     });
 
+    const handleBack = () => {
+        if (navigation?.canGoBack?.()) {
+            navigation.goBack();
+            return;
+        }
+        navigation?.navigate?.('MainTabs');
+    };
+
     return (
         <View style={styles.container}>
             {/* Header */}
@@ -101,6 +109,9 @@ const SmartStrategyScreen: React.FC<Props> = ({ navigation }) => {
                 end={{ x: 1, y: 1 }}
                 style={styles.header}
             >
+                <TouchableOpacity style={styles.backBtn} onPress={handleBack}>
+                    <Ionicons name="arrow-back" size={22} color="white" />
+                </TouchableOpacity>
                 <Text style={styles.headerTitle}>Smart Strategy</Text>
                 <Text style={styles.headerSubtitle}>
                     Professional 3-Layer System
@@ -317,8 +328,8 @@ const SmartStrategyScreen: React.FC<Props> = ({ navigation }) => {
                                                         (stock.rsi ?? 50) > 70
                                                             ? '#FF3B30'
                                                             : (stock.rsi ?? 50) < 30
-                                                            ? '#34C759'
-                                                            : '#333',
+                                                                ? '#34C759'
+                                                                : '#333',
                                                 },
                                             ]}
                                         >
@@ -370,6 +381,13 @@ const styles = StyleSheet.create({
     headerSubtitle: {
         fontSize: 14,
         color: 'rgba(255, 255, 255, 0.9)',
+    },
+    backBtn: {
+        position: 'absolute',
+        top: 50,
+        left: 16,
+        padding: 8,
+        zIndex: 2,
     },
     refreshButton: {
         position: 'absolute',

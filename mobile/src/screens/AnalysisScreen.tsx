@@ -258,15 +258,15 @@ const AnalysisScreen: React.FC<Props> = ({ navigation }) => {
         <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
             {/* Header */}
             <View style={styles.header}>
-                <Text style={styles.headerTitle}>Market Analysis</Text>
-                <Text style={styles.headerSubtitle}>Clear guidance for smarter investing decisions.</Text>
+                <Text style={styles.headerTitle}>Investment Guidance</Text>
+                <Text style={styles.headerSubtitle}>Simple tools to help every investor make clearer decisions.</Text>
             </View>
 
             {/* Analysis Types */}
             <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Analysis Methods</Text>
+                <Text style={styles.sectionTitle}>Decision Tools</Text>
                 <Text style={styles.sectionSubtitle}>
-                    Choose the clearest lens for the decision you need to make.
+                    Choose the support that best fits your goal, confidence level, and time horizon.
                 </Text>
 
                 {analysisTypes.map((analysis) => (

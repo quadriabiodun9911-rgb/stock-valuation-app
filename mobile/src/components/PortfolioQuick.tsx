@@ -53,10 +53,10 @@ const PortfolioQuick: React.FC<Props> = ({ navigation }) => {
         );
     }
 
-    const totalValue = portfolio?.portfolio_value || 0;
-    const totalInvested = portfolio?.total_invested || 0;
-    const profit = totalValue - totalInvested;
-    const returnPct = totalInvested > 0 ? ((profit / totalInvested) * 100).toFixed(2) : '0';
+    const totalValue = portfolio?.summary?.total_equity || portfolio?.portfolio_value || 0;
+    const totalInvested = portfolio?.summary?.total_cost || portfolio?.total_invested || 0;
+    const profit = portfolio?.summary?.total_real_profit ?? portfolio?.summary?.total_profit ?? (totalValue - totalInvested);
+    const returnPct = (portfolio?.summary?.total_real_profit_pct ?? portfolio?.summary?.total_profit_pct ?? (totalInvested > 0 ? (profit / totalInvested) * 100 : 0)).toFixed(2);
 
     return (
         <View style={styles.container}>
@@ -92,7 +92,7 @@ const PortfolioQuick: React.FC<Props> = ({ navigation }) => {
                             <Text style={styles.statValue}>₦{totalInvested.toFixed(2)}</Text>
                         </View>
                         <View>
-                            <Text style={styles.statLabel}>Profit/Loss</Text>
+                            <Text style={styles.statLabel}>Real Return</Text>
                             <Text
                                 style={[
                                     styles.statValue,
@@ -103,7 +103,7 @@ const PortfolioQuick: React.FC<Props> = ({ navigation }) => {
                             </Text>
                         </View>
                         <View>
-                            <Text style={styles.statLabel}>Return %</Text>
+                            <Text style={styles.statLabel}>Real Return %</Text>
                             <Text
                                 style={[
                                     styles.statValue,
@@ -151,8 +151,8 @@ const PortfolioQuick: React.FC<Props> = ({ navigation }) => {
                                                 : styles.negative,
                                         ]}
                                     >
-                                        {holding.profit >= 0 ? '+' : ''}₦{holding.profit.toFixed(2)} (
-                                        {holding.return_pct.toFixed(1)}%)
+                                        {(holding.real_return ?? holding.profit) >= 0 ? '+' : ''}₦{(holding.real_return ?? holding.profit).toFixed(2)} (
+                                        {(holding.real_return_pct ?? holding.return_pct).toFixed(1)}%)
                                     </Text>
                                 </View>
                             </TouchableOpacity>

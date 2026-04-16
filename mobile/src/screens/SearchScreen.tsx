@@ -111,8 +111,8 @@ const SearchScreen: React.FC<Props> = ({ navigation }) => {
         <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
             {/* Header */}
             <View style={styles.header}>
-                <Text style={styles.headerTitle}>Search Stocks</Text>
-                <Text style={styles.headerSubtitle}>Find and analyze any stock</Text>
+                <Text style={styles.headerTitle}>Discover Opportunities</Text>
+                <Text style={styles.headerSubtitle}>Find clearer guidance for any investment idea</Text>
             </View>
 
             {/* Search Section */}

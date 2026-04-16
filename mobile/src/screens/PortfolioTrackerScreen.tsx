@@ -50,6 +50,14 @@ const PortfolioTrackerScreen: React.FC<Props> = ({ navigation }) => {
         setRefreshing(false);
     };
 
+    const handleBack = () => {
+        if (navigation?.canGoBack?.()) {
+            navigation.goBack();
+            return;
+        }
+        navigation?.navigate?.('MainTabs');
+    };
+
     const handleAddHolding = async () => {
         const trimmedSymbol = symbol.trim().toUpperCase();
         if (!trimmedSymbol || !shares || !costBasis) {
@@ -95,14 +103,22 @@ const PortfolioTrackerScreen: React.FC<Props> = ({ navigation }) => {
 
     const totalValue = portfolio?.portfolio_value ?? portfolio?.summary?.total_value ?? 0;
     const totalCost = portfolio?.total_invested ?? portfolio?.summary?.total_cost ?? 0;
-    const totalProfit = totalValue - totalCost;
-    const profitPct = totalCost > 0 ? (totalProfit / totalCost) * 100 : 0;
+    const grossProfit = (portfolio?.summary?.total_profit ?? (totalValue - totalCost));
+    const grossProfitPct = portfolio?.summary?.total_profit_pct ?? (totalCost > 0 ? (grossProfit / totalCost) * 100 : 0);
+    const realProfit = portfolio?.summary?.total_real_profit ?? grossProfit;
+    const realProfitPct = portfolio?.summary?.total_real_profit_pct ?? grossProfitPct;
+    const inflationDrag = portfolio?.summary?.total_inflation_impact ?? 0;
+    const tradingCosts = portfolio?.summary?.total_transaction_costs ?? 0;
+    const dividends = portfolio?.summary?.total_dividends ?? 0;
 
     return (
         <View style={styles.container}>
             <View style={styles.header}>
+                <TouchableOpacity onPress={handleBack} style={styles.backBtn}>
+                    <Ionicons name="arrow-back" size={24} color="#1e293b" />
+                </TouchableOpacity>
                 <Text style={styles.headerTitle}>Portfolio Tracker</Text>
-                <TouchableOpacity onPress={() => setAddModalVisible(true)}>
+                <TouchableOpacity onPress={() => setAddModalVisible(true)} style={styles.headerAction}>
                     <Ionicons name="add-circle" size={28} color="#2563eb" />
                 </TouchableOpacity>
             </View>
@@ -115,18 +131,68 @@ const PortfolioTrackerScreen: React.FC<Props> = ({ navigation }) => {
                 <View style={styles.summaryCard}>
                     <Text style={styles.summaryLabel}>Total Value</Text>
                     <Text style={styles.summaryValue}>${totalValue.toFixed(2)}</Text>
+                    <Text style={styles.adjustedNote}>Real return below is adjusted for inflation and transaction costs.</Text>
                     <View style={styles.summaryRow}>
                         <View>
                             <Text style={styles.miniLabel}>Invested</Text>
                             <Text style={styles.miniValue}>${totalCost.toFixed(2)}</Text>
                         </View>
                         <View>
-                            <Text style={styles.miniLabel}>Profit / Loss</Text>
-                            <Text style={[styles.miniValue, totalProfit >= 0 ? styles.positive : styles.negative]}>
-                                {totalProfit >= 0 ? '+' : ''}${totalProfit.toFixed(2)} ({profitPct.toFixed(1)}%)
+                            <Text style={styles.miniLabel}>Real Return</Text>
+                            <Text style={[styles.miniValue, realProfit >= 0 ? styles.positive : styles.negative]}>
+                                {realProfit >= 0 ? '+' : ''}${realProfit.toFixed(2)} ({realProfitPct.toFixed(1)}%)
                             </Text>
                         </View>
                     </View>
+                    <View style={styles.summaryRow}>
+                        <View>
+                            <Text style={styles.miniLabel}>Dividends</Text>
+                            <Text style={styles.miniValue}>${dividends.toFixed(2)}</Text>
+                        </View>
+                        <View>
+                            <Text style={styles.miniLabel}>Trading Costs</Text>
+                            <Text style={styles.miniValue}>${tradingCosts.toFixed(2)}</Text>
+                        </View>
+                        <View>
+                            <Text style={styles.miniLabel}>Inflation Drag</Text>
+                            <Text style={styles.miniValue}>${inflationDrag.toFixed(2)}</Text>
+                        </View>
+                    </View>
+                </View>
+
+                <View style={styles.explainerCard}>
+                    <Text style={styles.explainerTitle}>How Real Return Is Calculated</Text>
+                    <Text style={styles.explainerText}>
+                        We start with your market profit, add dividends received, then subtract trading costs and inflation drag.
+                    </Text>
+                    <Text style={styles.formulaText}>
+                        Real Return = Market Gain/Loss + Dividends − Trading Costs − Inflation Drag
+                    </Text>
+                    <View style={styles.explainerRow}>
+                        <Text style={styles.explainerLabel}>Market Gain/Loss</Text>
+                        <Text style={styles.explainerValue}>{grossProfit >= 0 ? '+' : ''}${grossProfit.toFixed(2)}</Text>
+                    </View>
+                    <View style={styles.explainerRow}>
+                        <Text style={styles.explainerLabel}>+ Dividends</Text>
+                        <Text style={[styles.explainerValue, styles.positive]}>+${dividends.toFixed(2)}</Text>
+                    </View>
+                    <View style={styles.explainerRow}>
+                        <Text style={styles.explainerLabel}>− Trading Costs</Text>
+                        <Text style={[styles.explainerValue, styles.negative]}>-${tradingCosts.toFixed(2)}</Text>
+                    </View>
+                    <View style={styles.explainerRow}>
+                        <Text style={styles.explainerLabel}>− Inflation Drag</Text>
+                        <Text style={[styles.explainerValue, styles.negative]}>-${inflationDrag.toFixed(2)}</Text>
+                    </View>
+                    <View style={[styles.explainerRow, styles.explainerTotalRow]}>
+                        <Text style={styles.explainerTotalLabel}>= Real Return</Text>
+                        <Text style={[styles.explainerTotalValue, realProfit >= 0 ? styles.positive : styles.negative]}>
+                            {realProfit >= 0 ? '+' : ''}${realProfit.toFixed(2)} ({realProfitPct.toFixed(1)}%)
+                        </Text>
+                    </View>
+                    <Text style={styles.explainerFootnote}>
+                        Real Return % = Real Return ÷ Amount Invested × 100
+                    </Text>
                 </View>
 
                 {/* Positions */}
@@ -143,8 +209,11 @@ const PortfolioTrackerScreen: React.FC<Props> = ({ navigation }) => {
                             </View>
                             <View style={styles.posRight}>
                                 <Text style={styles.posValue}>${pos.market_value?.toFixed(2) ?? '—'}</Text>
-                                <Text style={[styles.posProfit, pos.profit >= 0 ? styles.positive : styles.negative]}>
-                                    {pos.profit >= 0 ? '+' : ''}${pos.profit?.toFixed(2) ?? '0.00'}
+                                <Text style={[styles.posProfit, (pos.real_return ?? pos.profit) >= 0 ? styles.positive : styles.negative]}>
+                                    {(pos.real_return ?? pos.profit) >= 0 ? '+' : ''}${(pos.real_return ?? pos.profit)?.toFixed(2) ?? '0.00'}
+                                </Text>
+                                <Text style={styles.posSubtext}>
+                                    Real return {(pos.real_return_pct ?? pos.profit_pct ?? 0).toFixed(1)}%
                                 </Text>
                             </View>
                         </TouchableOpacity>
@@ -203,12 +272,26 @@ const styles = StyleSheet.create({
     center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
     loadingText: { marginTop: 12, color: '#64748b' },
     header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, paddingTop: 50, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
-    headerTitle: { fontSize: 20, fontWeight: '700', color: '#1e293b' },
+    backBtn: { padding: 4, marginRight: 8 },
+    headerTitle: { flex: 1, fontSize: 20, fontWeight: '700', color: '#1e293b' },
+    headerAction: { padding: 2 },
     scrollContent: { padding: 16 },
     summaryCard: { backgroundColor: '#2563eb', borderRadius: 16, padding: 20, marginBottom: 16 },
     summaryLabel: { color: '#93c5fd', fontSize: 14 },
     summaryValue: { color: '#fff', fontSize: 32, fontWeight: '700', marginTop: 4 },
+    adjustedNote: { color: '#dbeafe', fontSize: 12, marginTop: 6 },
     summaryRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 16 },
+    explainerCard: { backgroundColor: '#fff', borderRadius: 14, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: '#dbeafe' },
+    explainerTitle: { fontSize: 16, fontWeight: '700', color: '#1e293b', marginBottom: 6 },
+    explainerText: { fontSize: 13, color: '#475569', lineHeight: 18 },
+    formulaText: { fontSize: 12, color: '#2563eb', fontWeight: '700', marginTop: 10, marginBottom: 8 },
+    explainerRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 5 },
+    explainerLabel: { fontSize: 13, color: '#475569' },
+    explainerValue: { fontSize: 13, fontWeight: '700', color: '#1e293b' },
+    explainerTotalRow: { borderTopWidth: 1, borderTopColor: '#e2e8f0', marginTop: 4, paddingTop: 10 },
+    explainerTotalLabel: { fontSize: 14, fontWeight: '700', color: '#1e293b' },
+    explainerTotalValue: { fontSize: 14, fontWeight: '800' },
+    explainerFootnote: { fontSize: 12, color: '#64748b', marginTop: 8 },
     miniLabel: { color: '#93c5fd', fontSize: 12 },
     miniValue: { color: '#fff', fontSize: 16, fontWeight: '600' },
     positive: { color: '#22c55e' },
@@ -219,6 +302,7 @@ const styles = StyleSheet.create({
     posRight: { alignItems: 'flex-end' },
     posValue: { fontSize: 16, fontWeight: '600', color: '#1e293b' },
     posProfit: { fontSize: 13, marginTop: 2 },
+    posSubtext: { fontSize: 11, marginTop: 2, color: '#64748b' },
     emptyState: { alignItems: 'center', paddingVertical: 48 },
     emptyText: { marginTop: 12, color: '#94a3b8', fontSize: 15 },
     modalOverlay: { flex: 1, justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.5)', padding: 24 },

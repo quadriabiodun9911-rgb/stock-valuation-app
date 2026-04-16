@@ -6,7 +6,8 @@
       "dom",
       "esnext"
     ],
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
+    "ignoreDeprecations": "6.0",
     "noEmit": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,

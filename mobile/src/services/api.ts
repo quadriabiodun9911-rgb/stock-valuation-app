@@ -265,6 +265,15 @@ export interface PortfolioPosition {
     purchase_price: number;
     current_value: number;
     return_pct: number;
+    capital_gain?: number;
+    dividend_income?: number;
+    transaction_costs?: number;
+    total_return?: number;
+    total_return_pct?: number;
+    inflation_impact?: number;
+    real_return?: number;
+    real_return_pct?: number;
+    holding_period_years?: number;
 }
 
 export interface PortfolioSummary {
@@ -272,6 +281,13 @@ export interface PortfolioSummary {
     total_cost: number;
     total_profit: number;
     total_profit_pct: number;
+    total_dividends?: number;
+    total_transaction_costs?: number;
+    total_return?: number;
+    total_return_pct?: number;
+    total_inflation_impact?: number;
+    total_real_profit?: number;
+    total_real_profit_pct?: number;
     total_equity: number;
     best_performer?: PortfolioPosition | null;
     worst_performer?: PortfolioPosition | null;
@@ -746,8 +762,31 @@ export class StockValuationAPI {
         });
     }
 
-    async getPortfolio(): Promise<PortfolioResponse> {
-        return this.request<PortfolioResponse>('/portfolio');
+    async getPortfolio(params?: { inflationRate?: number; transactionCostRate?: number }): Promise<PortfolioResponse> {
+        return this.request<PortfolioResponse>('/portfolio', {
+            params: {
+                inflation_rate: params?.inflationRate,
+                transaction_cost_rate: params?.transactionCostRate,
+            },
+        });
+    }
+
+    async calculateInvestorReturns(params: {
+        symbol?: string;
+        shares: number;
+        purchase_price: number;
+        current_price?: number;
+        purchase_date?: string;
+        total_dividends?: number;
+        annual_dividend_per_share?: number;
+        inflation_rate_pct?: number;
+        transaction_cost_rate_pct?: number;
+        fixed_transaction_cost?: number;
+    }): Promise<any> {
+        return this.request<any>('/analysis/investor-returns', {
+            method: 'POST',
+            body: params,
+        });
     }
 
     async updatePortfolio(payload: { positions: Array<{ symbol: string; shares: number; cost_basis: number }>; cash: number }): Promise<{ status: string; last_updated: string }> {

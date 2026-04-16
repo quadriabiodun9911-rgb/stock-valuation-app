@@ -65,10 +65,11 @@ const RegisterScreen: React.FC<Props> = ({ navigation }) => {
                             <Ionicons name="person-add" size={28} color="#2563eb" />
                         </View>
                         <Text style={styles.appName}>Join StockVal</Text>
-                        <Text style={styles.tagline}>Create your free account</Text>
+                        <Text style={styles.tagline}>Start building smarter money habits with others</Text>
                     </Animated.View>
 
                     <Animated.View style={[styles.formCard, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
+                        <Text style={styles.welcomeMission}>Build confidence, make clearer investment decisions, and grow toward financial freedom with a supportive community.</Text>
                         <View style={styles.inputGroup}>
                             <View style={styles.inputWrap}>
                                 <Ionicons name="mail-outline" size={20} color="#94a3b8" style={styles.inputIcon} />
@@ -114,7 +115,7 @@ const RegisterScreen: React.FC<Props> = ({ navigation }) => {
                             <LinearGradient colors={['#2563eb', '#1d4ed8']} style={styles.buttonGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
                                 {loading ? <ActivityIndicator color="#fff" /> : (
                                     <>
-                                        <Text style={styles.buttonText}>Create Account</Text>
+                                        <Text style={styles.buttonText}>Start My Journey</Text>
                                         <Ionicons name="arrow-forward" size={18} color="#fff" />
                                     </>
                                 )}
@@ -151,6 +152,13 @@ const styles = StyleSheet.create({
     formCard: {
         backgroundColor: '#fff', borderRadius: 24, padding: 24,
         shadowColor: '#000', shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.15, shadowRadius: 24, elevation: 12,
+    },
+    welcomeMission: {
+        fontSize: 14,
+        lineHeight: 21,
+        color: '#475569',
+        textAlign: 'center',
+        marginBottom: 18,
     },
     inputGroup: { marginBottom: 14 },
     inputWrap: {

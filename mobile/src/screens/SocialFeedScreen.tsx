@@ -154,6 +154,14 @@ const SocialFeedScreen: React.FC<{ navigation?: any }> = ({ navigation }) => {
         </View>
     );
 
+    const handleBack = () => {
+        if (navigation?.canGoBack?.()) {
+            navigation.goBack();
+            return;
+        }
+        navigation?.navigate?.('MainTabs');
+    };
+
     if (loading) {
         return (
             <View style={styles.center}>
@@ -164,6 +172,18 @@ const SocialFeedScreen: React.FC<{ navigation?: any }> = ({ navigation }) => {
 
     return (
         <View style={styles.container}>
+            <View style={styles.topBar}>
+                <TouchableOpacity onPress={handleBack} style={styles.backBtn}>
+                    <Ionicons name="arrow-back" size={24} color="#0f172a" />
+                </TouchableOpacity>
+                <Text style={styles.topBarTitle}>Community Feed</Text>
+                <View style={styles.headerSpacer} />
+            </View>
+            <View style={styles.communityBanner}>
+                <Text style={styles.communityTitle}>Grow together</Text>
+                <Text style={styles.communityText}>Share ideas, ask questions, and help each other build better money habits and long-term financial freedom.</Text>
+            </View>
+
             {/* Composer */}
             <View style={styles.composer}>
                 <View style={styles.composerRow}>
@@ -176,7 +196,7 @@ const SocialFeedScreen: React.FC<{ navigation?: any }> = ({ navigation }) => {
                     </View>
                     <TextInput
                         style={styles.composerInput}
-                        placeholder="What's happening in the market?"
+                        placeholder="Share a lesson, question, or investment idea"
                         placeholderTextColor="#94a3b8"
                         value={composerText}
                         onChangeText={setComposerText}
@@ -217,7 +237,7 @@ const SocialFeedScreen: React.FC<{ navigation?: any }> = ({ navigation }) => {
                 ListEmptyComponent={
                     <View style={styles.empty}>
                         <Ionicons name="chatbubbles-outline" size={48} color="#cbd5e1" />
-                        <Text style={styles.emptyText}>No posts yet. Be the first!</Text>
+                        <Text style={styles.emptyText}>No posts yet. Start the conversation and help others grow.</Text>
                     </View>
                 }
                 contentContainerStyle={posts.length === 0 ? { flex: 1 } : undefined}
@@ -278,6 +298,24 @@ const SocialFeedScreen: React.FC<{ navigation?: any }> = ({ navigation }) => {
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#f1f5f9' },
     center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f1f5f9' },
+    communityBanner: {
+        backgroundColor: '#eef2ff',
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+        borderBottomWidth: 1,
+        borderBottomColor: '#dbeafe',
+    },
+    communityTitle: {
+        fontSize: 16,
+        fontWeight: '800',
+        color: '#312e81',
+        marginBottom: 4,
+    },
+    communityText: {
+        fontSize: 13,
+        color: '#475569',
+        lineHeight: 19,
+    },
 
     // Composer
     composer: {

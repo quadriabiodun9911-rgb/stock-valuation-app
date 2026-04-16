@@ -128,8 +128,8 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
     const fmtPrice = (p: number) => p ? `$${p.toFixed(2)}` : 'N/A';
 
     const totalValue = portfolio?.summary?.total_equity ?? 0;
-    const totalPL = portfolio?.summary?.total_profit ?? 0;
-    const totalPct = portfolio?.summary?.total_profit_pct ?? 0;
+    const totalPL = portfolio?.summary?.total_real_profit ?? portfolio?.summary?.total_profit ?? 0;
+    const totalPct = portfolio?.summary?.total_real_profit_pct ?? portfolio?.summary?.total_profit_pct ?? 0;
     const holdingsCount = portfolio?.positions?.length ?? 0;
 
     const signal = useMemo(() => {
@@ -141,27 +141,27 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
     const quickActions = [
         {
             icon: 'search' as const,
-            label: 'Clear Calls',
-            meta: 'Buy, watch, or avoid',
+            label: 'Smart Decisions',
+            meta: 'Know what to do next',
             screen: 'Search',
             color: '#2563eb',
             gradient: ['#2563eb', '#3b82f6'] as const,
         },
         {
             icon: 'wallet' as const,
-            label: 'My Portfolio',
-            meta: 'Review gains and risk',
+            label: 'My Progress',
+            meta: 'Review goals, gains, and risk',
             screen: 'Dashboard',
             color: '#f59e0b',
             gradient: ['#f59e0b', '#fbbf24'] as const,
         },
         {
-            icon: 'bookmark' as const,
-            label: 'Watchlist',
-            meta: 'Track decision-ready stocks',
-            screen: 'Watchlist',
-            color: '#1e293b',
-            gradient: ['#1e293b', '#475569'] as const,
+            icon: 'people' as const,
+            label: 'Community',
+            meta: 'Learn and grow together',
+            screen: 'SocialFeed',
+            color: '#7c3aed',
+            gradient: ['#7c3aed', '#a855f7'] as const,
         },
         {
             icon: 'notifications' as const,
@@ -187,7 +187,7 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
                         <View>
                             <Text style={styles.greeting}>{greeting}{user?.username ? `, ${user.username}` : ''}</Text>
                             <Text style={styles.headerTitle}>StockVal</Text>
-                            <Text style={styles.heroSubtitle}>For investors who want fewer, better decisions with clear calls, fair value, and risk flags.</Text>
+                            <Text style={styles.heroSubtitle}>Simple enough for every stage of life, powerful enough to help families and communities grow toward financial freedom.</Text>
                         </View>
                         <TouchableOpacity onPress={toggleTheme} style={styles.darkModeBtn}>
                             <Ionicons name={isDark ? 'sunny' : 'moon'} size={18} color={isDark ? '#f59e0b' : '#94a3b8'} />
@@ -228,7 +228,7 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
                             </TouchableOpacity>
                         )}
                     </View>
-                    <Text style={styles.searchHint}>Search any stock for a clear call, fair value, and the key risks.</Text>
+                    <Text style={styles.searchHint}>Start with any investment idea and get clearer guidance, useful context, and the risks that matter.</Text>
                 </LinearGradient>
 
                 {/* Search Results */}
@@ -344,12 +344,12 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
                         <Text style={styles.cardTitle}>Decision Focus</Text>
                     </View>
                     <Text style={{ color: '#475569', fontSize: 13, lineHeight: 20 }}>
-                        Built for investors who want fewer, better decisions. Start with your portfolio, review the market tone, and act only when valuation and risk line up.
+                        Built for younger and older investors alike. Learn in plain language, make clearer investment decisions, and grow with a supportive community over time.
                     </Text>
                     <View style={styles.valuePropsRow}>
-                        <View style={styles.valuePropChip}><Text style={styles.valuePropText}>Clear Calls</Text></View>
-                        <View style={styles.valuePropChip}><Text style={styles.valuePropText}>Fair Value</Text></View>
-                        <View style={styles.valuePropChip}><Text style={styles.valuePropText}>Risk Flags</Text></View>
+                        <View style={styles.valuePropChip}><Text style={styles.valuePropText}>Easy Guidance</Text></View>
+                        <View style={styles.valuePropChip}><Text style={styles.valuePropText}>Grow Together</Text></View>
+                        <View style={styles.valuePropChip}><Text style={styles.valuePropText}>Financial Freedom</Text></View>
                     </View>
                 </View>
                 <View style={styles.actionGrid}>

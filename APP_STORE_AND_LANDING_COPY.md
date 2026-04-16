@@ -2,14 +2,14 @@
 
 ## Brand Positioning
 
-StockVal helps investors make smarter decisions with clear guidance, not noise.
+StockVal helps people of every age make smarter investment decisions, grow with community support, and move toward financial freedom.
 
-This product is built for people who are tired of fragmented research, endless headlines, and confusing charts without a clear takeaway. Instead of drowning users in market noise, StockVal helps them focus on what matters most:
+This product is built for people who are tired of fragmented research, endless headlines, and confusing tools without a clear takeaway. Instead of drowning users in market noise, StockVal helps them focus on what matters most:
 
-- the clearest call
-- fair value context
-- the biggest risks
-- the next best move
+- simple guidance
+- better decisions
+- supportive community
+- long-term financial freedom
 
 ---
 
@@ -21,11 +21,11 @@ StockVal
 
 ### Subtitle
 
-Clear stock guidance, fair value, and risk signals.
+Simple investing guidance for every generation.
 
 ### Short Description
 
-Make smarter investing decisions with clear guidance, not noise.
+Make smarter investment decisions together with clear guidance and community support.
 
 ### Promotional Text
 
@@ -33,17 +33,17 @@ Know what to buy, watch, or avoid with fair value, confidence signals, and portf
 
 ### Long Description
 
-StockVal is a clarity-first investing app designed for people who want fewer, better decisions.
+StockVal is a clarity-first investing app designed for people who want simpler, better decisions at every stage of life.
 
-Instead of overwhelming you with hype, headlines, and scattered research, StockVal helps you focus on the few signals that actually matter. Review fair value, understand key risks, and see a clearer path to action before you invest.
+Instead of overwhelming you with hype, headlines, and scattered research, StockVal helps you focus on the signals that actually matter. Review opportunities, understand key risks, learn with the community, and take clearer steps toward long-term financial freedom.
 
-### Why investors use StockVal
+### Why people use StockVal
 
-- Clear Calls: Quickly understand whether a stock looks attractive, risky, or worth watching.
-- Fair Value Context: Use valuation tools to compare market price with estimated intrinsic value.
-- Risk Flags: Spot downside concerns before making a move.
-- Portfolio Awareness: Monitor performance, exposure, and next actions in one place.
-- Guided Analysis: Get structure and explanation instead of raw data overload.
+- Easy Guidance: Understand what matters without getting lost in jargon.
+- Better Decisions: See opportunities, risks, and next steps more clearly.
+- Community Support: Learn, share, and grow with other investors.
+- Portfolio Awareness: Monitor performance, exposure, and progress in one place.
+- Long-Term Focus: Build habits that support financial freedom over time.
 
 ### Best for
 
@@ -63,11 +63,11 @@ StockVal is not trying to be the loudest market app. It is designed to be one of
 
 #### Headline
 
-Make smarter investing decisions with clear guidance, not noise.
+Make better investment decisions together.
 
 #### Subheadline
 
-StockVal helps you cut through market clutter with clear calls, fair value context, and risk signals that support better investing decisions.
+StockVal helps people of every age cut through confusion with simple guidance, supportive community, and smarter steps toward financial freedom.
 
 #### Primary CTA
 

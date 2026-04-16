@@ -79,9 +79,11 @@ const DashboardScreen: React.FC<Props> = ({ navigation }) => {
         </View>
     );
 
-    const profitColor = portfolio.summary.total_profit >= 0 ? '#16a34a' : '#ef4444';
-    const bestPos = portfolio.positions.reduce((a: any, b: any) => a.profit_pct > b.profit_pct ? a : b, portfolio.positions[0]);
-    const worstPos = portfolio.positions.reduce((a: any, b: any) => a.profit_pct < b.profit_pct ? a : b, portfolio.positions[0]);
+    const adjustedProfit = portfolio.summary.total_real_profit ?? portfolio.summary.total_profit;
+    const adjustedProfitPct = portfolio.summary.total_real_profit_pct ?? portfolio.summary.total_profit_pct;
+    const profitColor = adjustedProfit >= 0 ? '#16a34a' : '#ef4444';
+    const bestPos = portfolio.positions.reduce((a: any, b: any) => (a.real_return_pct ?? a.profit_pct) > (b.real_return_pct ?? b.profit_pct) ? a : b, portfolio.positions[0]);
+    const worstPos = portfolio.positions.reduce((a: any, b: any) => (a.real_return_pct ?? a.profit_pct) < (b.real_return_pct ?? b.profit_pct) ? a : b, portfolio.positions[0]);
 
     return (
         <View style={styles.container}>
@@ -99,12 +101,13 @@ const DashboardScreen: React.FC<Props> = ({ navigation }) => {
                             </Text>
                             <Text style={styles.totalValue}>{fmt(portfolio.summary.total_equity)}</Text>
                             <View style={styles.profitBadge}>
-                                <Ionicons name={portfolio.summary.total_profit >= 0 ? 'trending-up' : 'trending-down'}
+                                <Ionicons name={adjustedProfit >= 0 ? 'trending-up' : 'trending-down'}
                                     size={16} color={profitColor} />
                                 <Text style={[styles.profitText, { color: profitColor }]}>
-                                    {fmtSigned(portfolio.summary.total_profit)} ({fmtPct(portfolio.summary.total_profit_pct)})
+                                    Real Return: {fmtSigned(adjustedProfit)} ({fmtPct(adjustedProfitPct)})
                                 </Text>
                             </View>
+                            <Text style={styles.adjustedReturnNote}>Adjusted for inflation and transaction costs</Text>
                         </View>
                         <TouchableOpacity style={styles.simBtn}
                             onPress={() => navigation.navigate('TradingSimulator')}>
@@ -202,12 +205,12 @@ const DashboardScreen: React.FC<Props> = ({ navigation }) => {
                                 <View style={[styles.duoCard, { borderLeftColor: '#16a34a' }]}>
                                     <Text style={styles.duoLabel}>Best Performer</Text>
                                     <Text style={styles.duoSymbol}>{bestPos?.symbol}</Text>
-                                    <Text style={[styles.duoPct, { color: '#16a34a' }]}>{fmtPct(bestPos?.profit_pct || 0)}</Text>
+                                    <Text style={[styles.duoPct, { color: '#16a34a' }]}>{fmtPct(bestPos?.real_return_pct ?? bestPos?.profit_pct ?? 0)}</Text>
                                 </View>
                                 <View style={[styles.duoCard, { borderLeftColor: '#ef4444' }]}>
                                     <Text style={styles.duoLabel}>Worst Performer</Text>
                                     <Text style={styles.duoSymbol}>{worstPos?.symbol}</Text>
-                                    <Text style={[styles.duoPct, { color: '#ef4444' }]}>{fmtPct(worstPos?.profit_pct || 0)}</Text>
+                                    <Text style={[styles.duoPct, { color: '#ef4444' }]}>{fmtPct(worstPos?.real_return_pct ?? worstPos?.profit_pct ?? 0)}</Text>
                                 </View>
                             </View>
 
@@ -229,9 +232,9 @@ const DashboardScreen: React.FC<Props> = ({ navigation }) => {
                                         <Ionicons name="notifications" size={16} color="#2563eb" />
                                         <Text style={styles.actionChipText}>Alerts</Text>
                                     </TouchableOpacity>
-                                    <TouchableOpacity style={styles.actionChip} onPress={() => navigation.navigate('StockDetail', { symbol: bestPos?.symbol || 'AAPL' })}>
-                                        <Ionicons name="arrow-forward-circle" size={16} color="#2563eb" />
-                                        <Text style={styles.actionChipText}>Top Pick</Text>
+                                    <TouchableOpacity style={styles.actionChip} onPress={() => navigation.navigate('ReturnsCalculator', { symbol: bestPos?.symbol || 'AAPL' })}>
+                                        <Ionicons name="calculator" size={16} color="#2563eb" />
+                                        <Text style={styles.actionChipText}>Returns</Text>
                                     </TouchableOpacity>
                                 </View>
                             </View>
@@ -303,7 +306,9 @@ const DashboardScreen: React.FC<Props> = ({ navigation }) => {
                                 {portfolio.positions.length} Position{portfolio.positions.length !== 1 ? 's' : ''}
                             </Text>
                             {portfolio.positions.map((pos: any) => {
-                                const isUp = pos.profit >= 0;
+                                const displayProfit = pos.real_return ?? pos.total_return ?? pos.profit;
+                                const displayPct = pos.real_return_pct ?? pos.total_return_pct ?? pos.profit_pct;
+                                const isUp = displayProfit >= 0;
                                 return (
                                     <TouchableOpacity key={pos.symbol} style={styles.holdingCard}
                                         onPress={() => navigation.navigate('StockDetail', { symbol: pos.symbol })}
@@ -326,7 +331,7 @@ const DashboardScreen: React.FC<Props> = ({ navigation }) => {
                                                     <Ionicons name={isUp ? 'arrow-up' : 'arrow-down'} size={11}
                                                         color={isUp ? '#16a34a' : '#ef4444'} />
                                                     <Text style={{ fontSize: 12, fontWeight: '700', color: isUp ? '#16a34a' : '#ef4444', marginLeft: 2 }}>
-                                                        {fmtPct(pos.profit_pct)}
+                                                        {fmtPct(displayPct)}
                                                     </Text>
                                                 </View>
                                             </View>
@@ -347,7 +352,7 @@ const DashboardScreen: React.FC<Props> = ({ navigation }) => {
                                             <View style={styles.holdingGridItem}>
                                                 <Text style={styles.gridLabel}>P/L</Text>
                                                 <Text style={[styles.gridValue, { color: isUp ? '#16a34a' : '#ef4444' }]}>
-                                                    {fmtSigned(pos.profit)}
+                                                    {fmtSigned(displayProfit)}
                                                 </Text>
                                             </View>
                                         </View>
@@ -409,14 +414,27 @@ const DashboardScreen: React.FC<Props> = ({ navigation }) => {
                                 {[
                                     { l: 'Total Invested', v: fmt(portfolio.summary.total_cost) },
                                     { l: 'Current Value', v: fmt(portfolio.summary.total_value) },
-                                    { l: 'Unrealized P/L', v: fmtSigned(portfolio.summary.total_profit), c: profitColor },
-                                    { l: 'Return', v: fmtPct(portfolio.summary.total_profit_pct), c: profitColor },
+                                    { l: 'Market Gain/Loss', v: fmtSigned(portfolio.summary.total_profit), c: portfolio.summary.total_profit >= 0 ? '#16a34a' : '#ef4444' },
+                                    { l: 'Dividends', v: fmt(portfolio.summary.total_dividends || 0), c: '#16a34a' },
+                                    { l: 'Trading Costs', v: fmt(portfolio.summary.total_transaction_costs || 0), c: '#ef4444' },
+                                    { l: 'Inflation Drag', v: fmt(portfolio.summary.total_inflation_impact || 0), c: '#f59e0b' },
+                                    { l: 'Real Return', v: fmtSigned(adjustedProfit), c: profitColor },
+                                    { l: 'Real Return %', v: fmtPct(adjustedProfitPct), c: profitColor },
                                 ].map(({ l, v, c }) => (
                                     <View key={l} style={styles.summRow}>
                                         <Text style={styles.summLabel}>{l}</Text>
                                         <Text style={[styles.summValue, c ? { color: c } : null]}>{v}</Text>
                                     </View>
                                 ))}
+                                <View style={styles.explainBox}>
+                                    <Text style={styles.explainTitle}>How we calculate real return</Text>
+                                    <Text style={styles.explainText}>
+                                        Real Return = Market Gain/Loss + Dividends − Trading Costs − Inflation Drag
+                                    </Text>
+                                    <Text style={styles.explainSubtext}>
+                                        This shows the gain in your actual purchasing power after key costs are removed.
+                                    </Text>
+                                </View>
                             </View>
                         </>
                     )}
@@ -441,6 +459,7 @@ const styles = StyleSheet.create({
     totalValue: { color: '#fff', fontSize: 32, fontWeight: '800', marginTop: 4, letterSpacing: -1 },
     profitBadge: { flexDirection: 'row', alignItems: 'center', marginTop: 6, gap: 4 },
     profitText: { fontSize: 14, fontWeight: '700' },
+    adjustedReturnNote: { color: '#cbd5e1', fontSize: 12, marginTop: 4 },
     simBtn: { marginLeft: 'auto' },
     simBtnGrad: { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8 },
     simBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
@@ -457,6 +476,10 @@ const styles = StyleSheet.create({
     tabTextActive: { color: '#0f172a', fontWeight: '700' },
 
     body: { padding: 16, paddingBottom: 40 },
+    explainBox: { marginTop: 12, padding: 12, borderRadius: 10, backgroundColor: '#eff6ff' },
+    explainTitle: { fontSize: 13, fontWeight: '700', color: '#1e3a8a', marginBottom: 4 },
+    explainText: { fontSize: 12, fontWeight: '700', color: '#2563eb' },
+    explainSubtext: { fontSize: 12, color: '#475569', marginTop: 6, lineHeight: 17 },
 
     duoRow: { flexDirection: 'row', gap: 10, marginBottom: 14 },
     duoCard: { flex: 1, backgroundColor: '#fff', borderRadius: 14, padding: 14, borderLeftWidth: 4, shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 },

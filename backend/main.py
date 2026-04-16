@@ -42,6 +42,11 @@ from achievements import router as achievements_router
 from briefing import router as briefing_router
 from ai_chat import router as ai_chat_router
 from referral import router as referral_router
+from returns_calculator import (
+    calculate_holding_period_years,
+    calculate_investor_returns,
+    estimate_dividend_income,
+)
 import database as db
 
 # Load environment variables
@@ -253,6 +258,20 @@ class PortfolioData(BaseModel):
     positions: List[PortfolioPosition]
     cash: float = 0.0
     last_updated: Optional[str] = None
+
+
+class InvestorReturnRequest(BaseModel):
+    symbol: Optional[str] = None
+    shares: float
+    purchase_price: float
+    current_price: Optional[float] = None
+    purchase_date: Optional[str] = None
+    total_dividends: Optional[float] = None
+    annual_dividend_per_share: Optional[float] = None
+    inflation_rate_pct: float = 3.0
+    transaction_cost_rate_pct: float = 0.25
+    fixed_transaction_cost: float = 0.0
+
 
 def _load_portfolio_data(user_id: int = 1) -> PortfolioData:
     data = db.get_portfolio(user_id)
@@ -1882,8 +1901,11 @@ async def advanced_peer_comparison(symbol: str, include_ratios: bool = True):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/portfolio")
-async def get_portfolio():
-    """Get portfolio holdings with valuation, performance, and risk metrics."""
+async def get_portfolio(
+    inflation_rate: float = Query(3.0, ge=0, le=50),
+    transaction_cost_rate: float = Query(0.25, ge=0, le=10),
+):
+    """Get portfolio holdings with valuation, performance, risk, and real return metrics."""
     portfolio = _load_portfolio_data()
     positions_output = []
     allocation_by_sector: Dict[str, float] = {}
@@ -1891,6 +1913,12 @@ async def get_portfolio():
 
     total_value = 0.0
     total_cost = 0.0
+    total_dividends = 0.0
+    total_transaction_costs = 0.0
+    total_inflation_impact = 0.0
+    total_return = 0.0
+    total_real_profit = 0.0
+
     now = datetime.now()
     period_dates = {
         "monthly": now - timedelta(days=30),
@@ -1904,22 +1932,75 @@ async def get_portfolio():
     volatility_weight_sum = 0.0
     drawdown_weighted = 0.0
 
+    transactions_by_symbol: Dict[str, List[Dict[str, Any]]] = {}
+    try:
+        for txn in db.get_transactions(1):
+            txn_symbol = (txn.get("symbol") or "").upper()
+            if txn_symbol:
+                transactions_by_symbol.setdefault(txn_symbol, []).append(txn)
+    except Exception as exc:
+        logger.warning("Unable to load transaction history for portfolio adjustments: %s", exc)
+
     for position in portfolio.positions:
         symbol = position.symbol.upper()
-        data = valuation_service.get_stock_data(symbol, period="1y")
-        info = data["info"]
-        history = data.get("history")
+        try:
+            data = valuation_service.get_stock_data(symbol, period="1y")
+            info = data.get("info", {})
+            history = data.get("history")
+        except Exception as exc:
+            logger.warning(
+                "Portfolio data fetch failed for %s, using fallback values: %s",
+                symbol,
+                exc,
+            )
+            info = {"sector": "Unknown"}
+            history = None
 
         current_price = info.get("currentPrice") or info.get("regularMarketPrice")
         if not current_price and history is not None and not history.empty:
             current_price = float(history["Close"].iloc[-1])
 
-        current_price = float(current_price or 0)
+        current_price = float(current_price or position.cost_basis or 0)
         market_value = position.shares * current_price
         cost_value = position.shares * position.cost_basis
         profit = market_value - cost_value
         profit_pct = (profit / cost_value * 100) if cost_value > 0 else 0
         sector = info.get("sector", "Unknown") or "Unknown"
+
+        symbol_transactions = transactions_by_symbol.get(symbol, [])
+        buy_dates = [t.get("date") for t in symbol_transactions if t.get("action") == "buy" and t.get("date")]
+        purchase_date = min(buy_dates) if buy_dates else portfolio.last_updated
+        holding_period_years = calculate_holding_period_years(buy_dates, default_years=1.0)
+
+        explicit_transaction_costs = sum(
+            float(t.get("fee", 0) or t.get("transactionCost", 0) or 0)
+            for t in symbol_transactions
+        )
+
+        dividends_series = None
+        try:
+            dividends_series = yf.Ticker(symbol).dividends
+        except Exception:
+            dividends_series = None
+
+        dividend_income = estimate_dividend_income(
+            dividends_series,
+            position.shares,
+            purchase_date=purchase_date,
+            fallback_annual_dividend=float(info.get("dividendRate") or 0),
+            holding_period_years=holding_period_years,
+        )
+
+        return_metrics = calculate_investor_returns(
+            shares=position.shares,
+            purchase_price=position.cost_basis,
+            current_price=current_price,
+            total_dividends=dividend_income,
+            holding_period_years=holding_period_years,
+            inflation_rate_pct=inflation_rate,
+            transaction_cost_rate_pct=transaction_cost_rate,
+            explicit_transaction_costs=explicit_transaction_costs if explicit_transaction_costs > 0 else None,
+        )
 
         positions_output.append({
             "symbol": symbol,
@@ -1931,10 +2012,29 @@ async def get_portfolio():
             "profit": profit,
             "profit_pct": profit_pct,
             "sector": sector,
+            "quantity": position.shares,
+            "purchase_price": position.cost_basis,
+            "current_value": market_value,
+            "return_pct": return_metrics["total_return_pct"],
+            "capital_gain": return_metrics["capital_gain"],
+            "dividend_income": return_metrics["dividend_income"],
+            "transaction_costs": return_metrics["transaction_costs"],
+            "total_return": return_metrics["total_return"],
+            "total_return_pct": return_metrics["total_return_pct"],
+            "inflation_impact": return_metrics["inflation_impact"],
+            "real_return": return_metrics["real_return"],
+            "real_return_pct": return_metrics["real_return_pct"],
+            "holding_period_years": return_metrics["holding_period_years"],
         })
 
         total_value += market_value
         total_cost += cost_value
+        total_dividends += return_metrics["dividend_income"]
+        total_transaction_costs += return_metrics["transaction_costs"]
+        total_inflation_impact += return_metrics["inflation_impact"]
+        total_return += return_metrics["total_return"]
+        total_real_profit += return_metrics["real_return"]
+
         allocation_by_sector[sector] = allocation_by_sector.get(sector, 0.0) + market_value
         allocation_by_symbol[symbol] = allocation_by_symbol.get(symbol, 0.0) + market_value
 
@@ -1961,12 +2061,14 @@ async def get_portfolio():
     total_equity = total_value + portfolio.cash
     total_profit = total_value - total_cost
     total_profit_pct = (total_profit / total_cost * 100) if total_cost > 0 else 0
+    total_return_pct = (total_return / total_cost * 100) if total_cost > 0 else 0
+    total_real_profit_pct = (total_real_profit / total_cost * 100) if total_cost > 0 else 0
 
     best_performer = None
     worst_performer = None
     if positions_output:
-        best_performer = max(positions_output, key=lambda item: item["profit_pct"])
-        worst_performer = min(positions_output, key=lambda item: item["profit_pct"])
+        best_performer = max(positions_output, key=lambda item: item.get("real_return_pct", item["profit_pct"]))
+        worst_performer = min(positions_output, key=lambda item: item.get("real_return_pct", item["profit_pct"]))
 
     performance = {}
     for key in period_dates.keys():
@@ -1994,11 +2096,20 @@ async def get_portfolio():
     return {
         "positions": positions_output,
         "cash": portfolio.cash,
+        "portfolio_value": total_value,
+        "total_invested": total_cost,
         "summary": {
             "total_value": total_value,
             "total_cost": total_cost,
             "total_profit": total_profit,
             "total_profit_pct": total_profit_pct,
+            "total_dividends": total_dividends,
+            "total_transaction_costs": total_transaction_costs,
+            "total_return": total_return,
+            "total_return_pct": total_return_pct,
+            "total_inflation_impact": total_inflation_impact,
+            "total_real_profit": total_real_profit,
+            "total_real_profit_pct": total_real_profit_pct,
             "total_equity": total_equity,
             "best_performer": best_performer,
             "worst_performer": worst_performer,
@@ -2021,6 +2132,65 @@ async def update_portfolio(payload: PortfolioData):
     """Update portfolio holdings."""
     _save_portfolio_data(payload)
     return {"status": "updated", "last_updated": datetime.now().isoformat()}
+
+
+@app.post("/analysis/investor-returns")
+async def analyze_investor_returns(req: InvestorReturnRequest):
+    """Calculate investor returns including dividends, inflation, and transaction costs."""
+    if req.shares <= 0 or req.purchase_price <= 0:
+        raise HTTPException(status_code=400, detail="shares and purchase_price must be positive")
+
+    current_price = req.current_price
+    holding_period_years = calculate_holding_period_years([req.purchase_date], default_years=1.0)
+    total_dividends = req.total_dividends
+
+    if req.symbol:
+        try:
+            ticker = yf.Ticker(req.symbol.upper())
+            info = ticker.info or {}
+            if current_price is None:
+                current_price = info.get("currentPrice") or info.get("regularMarketPrice") or req.purchase_price
+            if total_dividends is None:
+                total_dividends = estimate_dividend_income(
+                    ticker.dividends,
+                    req.shares,
+                    purchase_date=req.purchase_date,
+                    fallback_annual_dividend=float(req.annual_dividend_per_share or info.get("dividendRate") or 0),
+                    holding_period_years=holding_period_years,
+                )
+        except Exception as exc:
+            logger.warning("Investor return enrichment failed for %s: %s", req.symbol, exc)
+
+    if current_price is None:
+        current_price = req.purchase_price
+
+    if total_dividends is None:
+        fallback_dividend = float(req.annual_dividend_per_share or 0) * req.shares * holding_period_years
+        total_dividends = fallback_dividend
+
+    result = calculate_investor_returns(
+        shares=req.shares,
+        purchase_price=req.purchase_price,
+        current_price=current_price,
+        total_dividends=total_dividends,
+        holding_period_years=holding_period_years,
+        inflation_rate_pct=req.inflation_rate_pct,
+        transaction_cost_rate_pct=req.transaction_cost_rate_pct,
+        fixed_transaction_cost=req.fixed_transaction_cost,
+    )
+
+    return {
+        "symbol": req.symbol.upper() if req.symbol else None,
+        **result,
+        "inputs": {
+            "shares": req.shares,
+            "purchase_price": req.purchase_price,
+            "current_price": current_price,
+            "purchase_date": req.purchase_date,
+            "inflation_rate_pct": req.inflation_rate_pct,
+            "transaction_cost_rate_pct": req.transaction_cost_rate_pct,
+        },
+    }
 
 @app.get("/market/ngx/summary")
 async def ngx_market_summary(symbols: Optional[str] = None):

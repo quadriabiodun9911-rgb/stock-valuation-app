@@ -40,6 +40,7 @@ import ValuationHistoryScreen from './src/screens/ValuationHistoryScreen';
 import DividendScreen from './src/screens/DividendScreen';
 import GoalPlannerScreen from './src/screens/GoalPlannerScreen';
 import DCAScreen from './src/screens/DCAScreen';
+import ReturnsCalculatorScreen from './src/screens/ReturnsCalculatorScreen';
 import EconomicDashboardScreen from './src/screens/EconomicDashboardScreen';
 import EconomicImpactScreen from './src/screens/EconomicImpactScreen';
 import TransactionScreen from './src/screens/TransactionScreen';
@@ -134,10 +135,10 @@ function MainAppStack() {
         >
             <Stack.Screen name="MainTabs" component={MainTabs} options={{ headerShown: false }} />
             <Stack.Screen name="Valuation" component={ValuationSimplified} options={{ headerShown: false }} />
-            <Stack.Screen name="ValuationFull" component={ValuationScreen} options={{ title: 'Full Analysis' }} />
-            <Stack.Screen name="Screener" component={ScreenerScreen} options={{ title: 'AI Screener' }} />
-            <Stack.Screen name="Dashboard" component={DashboardScreen} options={{ title: 'Portfolio Dashboard' }} />
-            <Stack.Screen name="StockDetail" component={StockDetailScreen} options={{ title: 'Stock Details' }} />
+            <Stack.Screen name="ValuationFull" component={ValuationScreen} options={{ title: 'Decision Deep Dive' }} />
+            <Stack.Screen name="Screener" component={ScreenerScreen} options={{ title: 'Opportunity Finder' }} />
+            <Stack.Screen name="Dashboard" component={DashboardScreen} options={{ title: 'My Financial Journey' }} />
+            <Stack.Screen name="StockDetail" component={StockDetailScreen} options={{ title: 'Investment Details' }} />
             <Stack.Screen name="Financials" component={FinancialStatementsScreen} options={{ headerShown: false }} />
             <Stack.Screen name="Earnings" component={EarningsScreen} options={{ headerShown: false }} />
             <Stack.Screen name="PeerComparison" component={PeerComparisonScreen} options={{ headerShown: false }} />
@@ -150,12 +151,13 @@ function MainAppStack() {
             <Stack.Screen name="Dividends" component={DividendScreen} options={{ headerShown: false }} />
             <Stack.Screen name="GoalPlanner" component={GoalPlannerScreen} options={{ headerShown: false }} />
             <Stack.Screen name="DCA" component={DCAScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="ReturnsCalculator" component={ReturnsCalculatorScreen} options={{ headerShown: false }} />
             <Stack.Screen name="EconomicDashboard" component={EconomicDashboardScreen} options={{ headerShown: false }} />
             <Stack.Screen name="EconomicImpact" component={EconomicImpactScreen} options={{ headerShown: false }} />
             <Stack.Screen name="Transactions" component={TransactionScreen} options={{ headerShown: false }} />
             <Stack.Screen name="Alerts" component={AlertsScreen} options={{ title: 'Price Alerts' }} />
             <Stack.Screen name="Education" component={EducationScreen} options={{ title: 'Learn' }} />
-            <Stack.Screen name="Analysis" component={AnalysisScreen} options={{ title: 'Market Analysis' }} />
+            <Stack.Screen name="Analysis" component={AnalysisScreen} options={{ title: 'Investment Guidance' }} />
             <Stack.Screen name="PortfolioTracker" component={PortfolioTrackerScreen} options={{ headerShown: false }} />
             <Stack.Screen name="PriceAlerts" component={PriceAlertsScreen} options={{ headerShown: false }} />
             <Stack.Screen name="NewsIntegration" component={NewsIntegrationScreen} options={{ headerShown: false }} />

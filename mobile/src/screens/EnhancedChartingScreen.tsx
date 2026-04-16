@@ -48,25 +48,52 @@ const EnhancedChartingScreen: React.FC<Props> = ({ route, navigation }) => {
     const [period, setPeriod] = useState('1y');
     const [chartData, setChartData] = useState<ChartData | null>(null);
     const [loading, setLoading] = useState(false);
+    const [chartError, setChartError] = useState<string | null>(null);
     const [activeIndicator, setActiveIndicator] = useState<'price' | 'rsi' | 'macd'>('price');
 
     const loadChart = async (symbolOverride?: string) => {
         const trimmed = (symbolOverride || symbol).trim().toUpperCase();
-        if (!trimmed) return;
+        if (!trimmed) {
+            setChartError('Enter a stock symbol to load chart data.');
+            setChartData(null);
+            return;
+        }
         try {
             setLoading(true);
+            setChartError(null);
             const res = await fetch(`${API_URL}/api/charts/ohlc/${trimmed}?period=${period}`);
             const data = await res.json();
-            setChartData(data);
+            const normalizedData: ChartData = {
+                symbol: data?.symbol || trimmed,
+                period: data?.period || period,
+                ohlc_data: Array.isArray(data?.ohlc_data) ? data.ohlc_data.filter((point: any) => point && typeof point.close === 'number') : [],
+            };
+
+            setChartData(normalizedData);
+
+            if (!normalizedData.ohlc_data.length) {
+                setChartError(data?.detail || 'Chart data is currently unavailable for this symbol and time period.');
+                return;
+            }
 
             // Also load technical indicators
             try {
                 const indRes = await fetch(`${API_URL}/api/charts/technical-indicators/${trimmed}?period=${period}`);
                 const indData = await indRes.json();
-                setChartData((prev) => prev ? { ...prev, ...indData } : prev);
-            } catch { /* optional */ }
+                setChartData((prev) => prev ? {
+                    ...prev,
+                    sma_20: Array.isArray(indData?.sma_20) ? indData.sma_20 : prev.sma_20,
+                    sma_50: Array.isArray(indData?.sma_50) ? indData.sma_50 : prev.sma_50,
+                    rsi: Array.isArray(indData?.rsi) ? indData.rsi : prev.rsi,
+                    macd: Array.isArray(indData?.macd) ? indData.macd : prev.macd,
+                } : prev);
+            } catch {
+                // Indicator data is optional.
+            }
         } catch (error) {
             console.error('Failed to load chart:', error);
+            setChartData(null);
+            setChartError('Unable to load chart data right now. Please try again shortly.');
         } finally {
             setLoading(false);
         }
@@ -78,7 +105,9 @@ const EnhancedChartingScreen: React.FC<Props> = ({ route, navigation }) => {
             const preset = String(incomingSymbol).toUpperCase();
             setSymbol(preset);
             loadChart(preset);
+            return;
         }
+        loadChart(symbol);
     }, [route?.params?.symbol]);
 
     const handleLoadChart = () => {
@@ -150,7 +179,7 @@ const EnhancedChartingScreen: React.FC<Props> = ({ route, navigation }) => {
                 <View style={styles.center}>
                     <ActivityIndicator size="large" color="#2563eb" />
                 </View>
-            ) : chartData ? (
+            ) : chartData && chartData.ohlc_data.length > 0 ? (
                 <ScrollView contentContainerStyle={styles.scrollContent}>
                     {/* Price summary */}
                     <View style={styles.priceCard}>
@@ -215,7 +244,7 @@ const EnhancedChartingScreen: React.FC<Props> = ({ route, navigation }) => {
                         </View>
                         {chartData.ohlc_data.slice(-10).reverse().map((row, idx) => (
                             <View key={idx} style={styles.tableRow}>
-                                <Text style={styles.td}>{row.date.slice(0, 10)}</Text>
+                                <Text style={styles.td}>{typeof row.date === 'string' ? row.date.slice(0, 10) : '—'}</Text>
                                 <Text style={styles.td}>{row.open.toFixed(2)}</Text>
                                 <Text style={styles.td}>{row.high.toFixed(2)}</Text>
                                 <Text style={styles.td}>{row.low.toFixed(2)}</Text>
@@ -227,7 +256,7 @@ const EnhancedChartingScreen: React.FC<Props> = ({ route, navigation }) => {
             ) : (
                 <View style={styles.emptyState}>
                     <Ionicons name="bar-chart-outline" size={48} color="#ccc" />
-                    <Text style={styles.emptyText}>Enter a symbol and tap Go to load charts.</Text>
+                    <Text style={styles.emptyText}>{chartError || 'Enter a symbol and tap Go to load charts.'}</Text>
                 </View>
             )}
         </View>
