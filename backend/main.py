@@ -42,6 +42,7 @@ from achievements import router as achievements_router
 from briefing import router as briefing_router
 from ai_chat import router as ai_chat_router
 from referral import router as referral_router
+from ai_service import get_efficiency_report, advisor as ai_advisor
 from returns_calculator import (
     calculate_holding_period_years,
     calculate_investor_returns,
@@ -1370,6 +1371,11 @@ async def health_check():
         "environment": APP_ENV,
         "database": "postgresql" if getattr(db, "USE_POSTGRES", False) else "sqlite",
     }
+
+@app.get("/ai-metrics")
+async def ai_efficiency_metrics():
+    """Get AI efficiency metrics for testing and optimization."""
+    return get_efficiency_report()
 
 @app.get("/search")
 async def search_stocks(

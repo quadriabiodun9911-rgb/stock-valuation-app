@@ -1,30 +1,172 @@
 """
-AI Service for Investment Advisory using OpenAI
+AI Service for Investment Advisory
+Supports both local Ollama and OpenAI cloud providers
 """
 import os
 import logging
-from typing import Optional, Dict, Any
+import requests
+import time
+from typing import Optional, Dict, Any, Tuple
 from dotenv import load_dotenv
+from abc import ABC, abstractmethod
 
 load_dotenv()
 logger = logging.getLogger(__name__)
 
+# Configuration
+AI_PROVIDER = os.getenv("AI_PROVIDER", "ollama").lower()  # "ollama" or "openai"
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-AI_ENABLED = bool(OPENAI_API_KEY)
+
+# Track efficiency metrics
+metrics = {
+    "total_requests": 0,
+    "total_latency_ms": 0,
+    "total_tokens": 0,
+    "provider": AI_PROVIDER,
+}
 
 
-class InvestmentAdvisor:
-    """Investment advisor powered by OpenAI for natural language analysis."""
+class BaseAdvisor(ABC):
+    """Base class for AI advisors."""
     
     def __init__(self):
+        self.enabled = False
+        self.provider = "base"
+        self.model = "unknown"
+    
+    @abstractmethod
+    async def enhance_response(
+        self,
+        question: str,
+        base_response: str,
+        portfolio_context: Optional[Dict[str, Any]] = None,
+        stock_context: Optional[Dict[str, Any]] = None
+    ) -> Tuple[str, Dict[str, Any]]:
+        """
+        Enhance response and return (text, metrics).
+        """
+        pass
+
+
+class OllamaAdvisor(BaseAdvisor):
+    """Local Ollama advisor (free, runs locally)."""
+    
+    def __init__(self):
+        super().__init__()
+        self.provider = "ollama"
+        self.model = OLLAMA_MODEL
+        self.url = OLLAMA_URL
+        
+        # Test connection
+        try:
+            response = requests.get(f"{self.url}/api/tags", timeout=2)
+            self.enabled = response.status_code == 200
+            if self.enabled:
+                logger.info(f"✅ Ollama enabled: {self.model} on {self.url}")
+            else:
+                logger.warning("Ollama returned non-200 status")
+        except requests.ConnectionError:
+            logger.warning(
+                f"⚠️  Ollama not running. Start it with: ollama serve\n"
+                f"   Download model with: ollama pull {self.model}"
+            )
+            self.enabled = False
+        except Exception as e:
+            logger.warning(f"Ollama connection error: {str(e)}")
+            self.enabled = False
+    
+    async def enhance_response(
+        self,
+        question: str,
+        base_response: str,
+        portfolio_context: Optional[Dict[str, Any]] = None,
+        stock_context: Optional[Dict[str, Any]] = None
+    ) -> Tuple[str, Dict[str, Any]]:
+        """Enhance response using Ollama."""
+        if not self.enabled:
+            return base_response, {"error": "Ollama not available"}
+        
+        try:
+            start_time = time.time()
+            
+            system_prompt = (
+                "You are a knowledgeable investment advisor with expertise in "
+                "stock market analysis. Provide concise, actionable advice in "
+                "a friendly tone. Be honest about limitations."
+            )
+            
+            user_message = f"""Given this base response:
+{base_response}
+
+Enhance it to be more engaging and helpful. Keep it under 300 words.
+Question: {question}"""
+            
+            # Call Ollama local API
+            response = requests.post(
+                f"{self.url}/api/generate",
+                json={
+                    "model": self.model,
+                    "prompt": f"{system_prompt}\n\nUser: {user_message}",
+                    "stream": False,
+                    "temperature": 0.7,
+                },
+                timeout=30
+            )
+            
+            elapsed_ms = (time.time() - start_time) * 1000
+            
+            if response.status_code == 200:
+                data = response.json()
+                enhanced = data.get("response", base_response).strip()
+                
+                metrics_out = {
+                    "provider": "ollama",
+                    "model": self.model,
+                    "latency_ms": round(elapsed_ms),
+                    "tokens": data.get("prompt_eval_count", 0) + data.get("eval_count", 0),
+                    "cost": 0,  # Free!
+                }
+                
+                # Update global metrics
+                metrics["total_requests"] += 1
+                metrics["total_latency_ms"] += elapsed_ms
+                
+                logger.info(
+                    f"Ollama response: {elapsed_ms:.0f}ms, "
+                    f"{metrics_out['tokens']} tokens"
+                )
+                return enhanced, metrics_out
+            else:
+                logger.error(f"Ollama error: {response.status_code}")
+                return base_response, {"error": "Ollama request failed"}
+                
+        except requests.Timeout:
+            logger.error(f"Ollama timeout after 30s")
+            return base_response, {"error": "Ollama timeout"}
+        except Exception as e:
+            logger.error(f"Ollama error: {str(e)}")
+            return base_response, {"error": str(e)}
+
+
+class OpenAIAdvisor(BaseAdvisor):
+    """Cloud-based OpenAI advisor."""
+    
+    def __init__(self):
+        super().__init__()
+        self.provider = "openai"
+        self.model = "gpt-4-turbo-preview"
         self.api_key = OPENAI_API_KEY
-        self.enabled = AI_ENABLED
-        if self.enabled:
+        
+        if self.api_key:
             try:
                 from openai import OpenAI
                 self.client = OpenAI(api_key=self.api_key)
+                self.enabled = True
+                logger.info("✅ OpenAI enabled (GPT-4 Turbo)")
             except ImportError:
-                logger.warning("OpenAI package not installed. Install with: pip install openai")
+                logger.warning("OpenAI package not installed")
                 self.enabled = False
     
     async def enhance_response(
@@ -33,58 +175,28 @@ class InvestmentAdvisor:
         base_response: str,
         portfolio_context: Optional[Dict[str, Any]] = None,
         stock_context: Optional[Dict[str, Any]] = None
-    ) -> str:
-        """
-        Enhance a base response with OpenAI to make it more natural and personalized.
-        
-        Args:
-            question: The user's question
-            base_response: The baseline response (from rule-based system)
-            portfolio_context: User's portfolio data
-            stock_context: Stock-specific data
-            
-        Returns:
-            Enhanced response text
-        """
+    ) -> Tuple[str, Dict[str, Any]]:
+        """Enhance response using OpenAI."""
         if not self.enabled:
-            return base_response
+            return base_response, {"error": "OpenAI not available"}
         
         try:
-            # Build system prompt with context
-            system_parts = [
-                "You are a knowledgeable investment advisor with expertise in stock market analysis.",
-                "Provide concise, actionable advice in a friendly tone.",
-                "Always be honest about limitations and recommend diversification.",
-                "Use emojis sparingly but effectively.",
-            ]
+            start_time = time.time()
             
-            if portfolio_context:
-                holdings_info = " ".join([
-                    f"{h.get('symbol')}: {h.get('shares')} shares @ ${h.get('cost_basis', 0):.2f}"
-                    for h in portfolio_context.get("holdings", [])
-                ])
-                if holdings_info:
-                    system_parts.append(f"User's portfolio: {holdings_info}")
+            system_prompt = (
+                "You are a knowledgeable investment advisor with expertise in "
+                "stock market analysis. Provide concise, actionable advice in "
+                "a friendly tone. Always be honest about limitations."
+            )
             
-            system_prompt = " ".join(system_parts)
-            
-            # Build context for the enhancement request
-            context_parts = [f"User asked: {question}"]
-            if stock_context:
-                context_parts.append(f"Stock: {stock_context.get('symbol', 'N/A')} @ ${stock_context.get('price', 'N/A')}")
-            
-            user_message = f"""
-Given this base response:
+            user_message = f"""Given this base response:
 {base_response}
 
-Enhance it to be more engaging, personalized, and helpful. Keep it under 300 words.
-Keep the structure but improve the tone and add any relevant insights.
-
-Context: {" | ".join(context_parts)}
-"""
+Enhance it to be more engaging and helpful. Keep it under 300 words.
+Question: {question}"""
             
             response = self.client.chat.completions.create(
-                model="gpt-4-turbo-preview",
+                model=self.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message}
@@ -94,108 +206,86 @@ Context: {" | ".join(context_parts)}
                 timeout=10
             )
             
+            elapsed_ms = (time.time() - start_time) * 1000
             enhanced = response.choices[0].message.content.strip()
-            logger.info(f"Enhanced response for: {question[:50]}")
-            return enhanced
             
-        except Exception as e:
-            logger.error(f"Error enhancing response with OpenAI: {str(e)}")
-            return base_response
-    
-    async def analyze_question(self, question: str) -> Dict[str, Any]:
-        """
-        Use OpenAI to understand the user's question and intent.
-        
-        Returns classification and extracted entities.
-        """
-        if not self.enabled:
-            return {"intent": "general", "symbols": [], "question_type": "unknown"}
-        
-        try:
-            response = self.client.chat.completions.create(
-                model="gpt-4-turbo-preview",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": """Analyze a stock market question and return JSON with:
-- intent: "buy_sell_advice", "portfolio_review", "comparison", "sentiment", "general", "unknown"
-- symbols: list of stock symbols mentioned (e.g. ["AAPL", "MSFT"])
-- question_type: "analysis", "questions", "recommendation", "education"
-
-Return valid JSON only, no other text."""
-                    },
-                    {"role": "user", "content": question}
-                ],
-                temperature=0.3,
-                max_tokens=200,
-                timeout=10
+            # Estimate cost: GPT-4 Turbo ~$0.01 per 1K input + $0.03 per 1K output tokens
+            input_tokens = response.usage.prompt_tokens
+            output_tokens = response.usage.completion_tokens
+            total_tokens = input_tokens + output_tokens
+            cost_cents = (input_tokens * 0.01 + output_tokens * 0.03) / 1000
+            
+            metrics_out = {
+                "provider": "openai",
+                "model": self.model,
+                "latency_ms": round(elapsed_ms),
+                "tokens": total_tokens,
+                "cost": round(cost_cents, 4),
+            }
+            
+            # Update global metrics
+            metrics["total_requests"] += 1
+            metrics["total_latency_ms"] += elapsed_ms
+            metrics["total_tokens"] += total_tokens
+            
+            logger.info(
+                f"OpenAI response: {elapsed_ms:.0f}ms, "
+                f"{total_tokens} tokens, ${cost_cents:.4f}"
             )
-            
-            import json
-            result_text = response.choices[0].message.content.strip()
-            result = json.loads(result_text)
-            return result
+            return enhanced, metrics_out
             
         except Exception as e:
-            logger.error(f"Error analyzing question: {str(e)}")
-            return {"intent": "general", "symbols": [], "question_type": "unknown"}
+            logger.error(f"OpenAI error: {str(e)}")
+            return base_response, {"error": str(e)}
+
+
+def _initialize_advisor() -> BaseAdvisor:
+    """Initialize the appropriate advisor based on configuration."""
+    if AI_PROVIDER == "openai":
+        advisor = OpenAIAdvisor()
+        if advisor.enabled:
+            return advisor
+        # Fallback to Ollama if OpenAI not available
+        logger.warning("OpenAI not available, trying Ollama...")
     
-    async def generate_personalized_advice(
-        self,
-        portfolio: Dict[str, Any],
-        question: str
-    ) -> str:
-        """
-        Generate personalized investment advice based on user's portfolio.
-        """
-        if not self.enabled:
-            return ""
-        
-        try:
-            holdings = portfolio.get("holdings", [])
-            total_value = portfolio.get("total_value", 0)
-            total_cost = portfolio.get("total_cost", 0)
-            
-            holdings_text = "\n".join([
-                f"- {h.get('symbol')}: {h.get('shares')} shares, ${h.get('market_value', 0):.2f} value, {h.get('gain_pct', 0):.1f}% return"
-                for h in holdings
-            ])
-            
-            prompt = f"""
-User's portfolio:
-Total value: ${total_value:,.2f}
-Total invested: ${total_cost:,.2f}
-Return: {((total_value - total_cost) / total_cost * 100) if total_cost else 0:.1f}%
-
-Holdings:
-{holdings_text}
-
-Question: {question}
-
-Provide 2-3 actionable suggestions considering their portfolio composition, risk profile, and diversification.
-"""
-            
-            response = self.client.chat.completions.create(
-                model="gpt-4-turbo-preview",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are an expert investment advisor. Provide personalized advice based on the user's portfolio."
-                    },
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.7,
-                max_tokens=300,
-                timeout=10
-            )
-            
-            advice = response.choices[0].message.content.strip()
-            return advice
-            
-        except Exception as e:
-            logger.error(f"Error generating advice: {str(e)}")
-            return ""
+    # Try Ollama
+    advisor = OllamaAdvisor()
+    if advisor.enabled:
+        return advisor
+    
+    # Neither available - return disabled advisor
+    logger.warning("⚠️  No AI provider available!")
+    logger.info("To use Ollama:")
+    logger.info("  1. Install: brew install ollama")
+    logger.info("  2. Download model: ollama pull mistral")
+    logger.info("  3. Run: ollama serve")
+    logger.info("")
+    logger.info("To use OpenAI:")
+    logger.info("  1. Set OPENAI_API_KEY in .env")
+    logger.info("  2. Set AI_PROVIDER=openai in .env")
+    
+    return OllamaAdvisor()  # Return disabled instance
 
 
-# Global instance
-advisor = InvestmentAdvisor()
+# Global advisor instance - automatically selects best available provider
+advisor = _initialize_advisor()
+
+
+# Efficiency metrics endpoint
+def get_efficiency_report() -> Dict[str, Any]:
+    """Get efficiency metrics for testing."""
+    avg_latency = (
+        metrics["total_latency_ms"] / metrics["total_requests"]
+        if metrics["total_requests"] > 0
+        else 0
+    )
+    
+    return {
+        "provider": advisor.provider,
+        "model": advisor.model,
+        "enabled": advisor.enabled,
+        "total_requests": metrics["total_requests"],
+        "avg_latency_ms": round(avg_latency, 2),
+        "total_tokens": metrics["total_tokens"],
+        "estimated_cost": metrics.get("total_cost", 0),
+    }

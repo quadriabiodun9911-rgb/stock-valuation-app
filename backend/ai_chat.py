@@ -77,14 +77,14 @@ async def ai_chat(msg: ChatMessage, user: dict = Depends(get_current_user)):
             "data": None,
         }
     
-    # Enhance response with OpenAI if not a help message
+    # Enhance response with AI if not a help message
     if result.get("type") != "help" and advisor.enabled:
         try:
             portfolio_context = {
                 "holdings": [dict(h) for h in holdings]
             } if holdings else None
             
-            enhanced = await advisor.enhance_response(
+            enhanced, metrics = await advisor.enhance_response(
                 question=msg.message,
                 base_response=result.get("response", ""),
                 portfolio_context=portfolio_context,
@@ -92,6 +92,7 @@ async def ai_chat(msg: ChatMessage, user: dict = Depends(get_current_user)):
             )
             result["response"] = enhanced
             result["enhanced"] = True
+            result["ai_metrics"] = metrics
         except Exception as e:
             logger.warning(f"Could not enhance response: {str(e)}")
             # Keep original response if enhancement fails
