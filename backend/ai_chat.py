@@ -5,10 +5,11 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from typing import Optional
 import yfinance as yf
-import math
 import logging
 from auth import get_current_user, get_user_id
 import database as db
+from ai_service import advisor
+
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["ai-chat"])
@@ -21,7 +22,7 @@ class ChatMessage(BaseModel):
 
 @router.post("/ai-chat")
 async def ai_chat(msg: ChatMessage, user: dict = Depends(get_current_user)):
-    """AI-powered stock analysis chat. Uses real data to answer questions."""
+    """AI-powered stock analysis chat. Uses real data and OpenAI for intelligent responses."""
     uid = get_user_id(user)
     question = msg.message.lower().strip()
     symbol = msg.symbol
@@ -44,27 +45,27 @@ async def ai_chat(msg: ChatMessage, user: dict = Depends(get_current_user)):
     # Portfolio context
     conn = db._get_conn()
     holdings = conn.execute(
-        "SELECT symbol, shares, cost_basis FROM portfolio WHERE user_id = ? AND shares > 0", (uid,)
+        "SELECT symbol, shares, cost_basis FROM portfolio "
+        "WHERE user_id = ? AND shares > 0", (uid,)
     ).fetchall()
-    portfolio_symbols = [h["symbol"] for h in holdings]
 
-    # Route question type
+    # Route question type and get base response
     if any(kw in question for kw in ["should i buy", "worth buying", "good buy", "buy or sell"]):
-        return _buy_sell_analysis(symbol, holdings)
+        result = _buy_sell_analysis(symbol, holdings)
     elif any(kw in question for kw in ["portfolio", "my stocks", "my holdings"]):
-        return _portfolio_summary(holdings)
+        result = _portfolio_summary(holdings)
     elif any(kw in question for kw in ["compare", "versus", " vs "]):
-        return _compare_stocks(question, symbol)
+        result = _compare_stocks(question, symbol)
     elif any(kw in question for kw in ["dividend", "yield", "payout"]):
-        return _dividend_analysis(symbol)
+        result = _dividend_analysis(symbol)
     elif any(kw in question for kw in ["earnings", "revenue", "profit", "financials"]):
-        return _financials_summary(symbol)
+        result = _financials_summary(symbol)
     elif any(kw in question for kw in ["risk", "volatility", "beta"]):
-        return _risk_analysis(symbol)
+        result = _risk_analysis(symbol)
     elif symbol:
-        return _general_stock_info(symbol)
+        result = _general_stock_info(symbol)
     else:
-        return {
+        result = {
             "response": "I can help you with stock analysis! Try asking:\n\n"
                         "• \"Should I buy AAPL?\"\n"
                         "• \"Compare MSFT vs GOOGL\"\n"
@@ -75,6 +76,27 @@ async def ai_chat(msg: ChatMessage, user: dict = Depends(get_current_user)):
             "type": "help",
             "data": None,
         }
+    
+    # Enhance response with OpenAI if not a help message
+    if result.get("type") != "help" and advisor.enabled:
+        try:
+            portfolio_context = {
+                "holdings": [dict(h) for h in holdings]
+            } if holdings else None
+            
+            enhanced = await advisor.enhance_response(
+                question=msg.message,
+                base_response=result.get("response", ""),
+                portfolio_context=portfolio_context,
+                stock_context=result.get("data")
+            )
+            result["response"] = enhanced
+            result["enhanced"] = True
+        except Exception as e:
+            logger.warning(f"Could not enhance response: {str(e)}")
+            # Keep original response if enhancement fails
+    
+    return result
 
 
 def _buy_sell_analysis(symbol: str, holdings):
