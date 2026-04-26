@@ -501,6 +501,25 @@ export interface MarketInfo {
     featured_stocks: string[];
 }
 
+export interface ProfileRecommendation {
+    symbol: string;
+    name: string;
+    assetType: 'ETF' | 'Stock';
+    riskLevel: 'low' | 'medium' | 'high';
+    horizon: 'short' | 'medium' | 'long';
+    style: string;
+    fitScore: number;
+    reasons: string[];
+    market: Market | string;
+}
+
+export interface ProfileRecommendationsResponse {
+    persona: string;
+    market: string;
+    generatedAt: string;
+    recommendations: ProfileRecommendation[];
+}
+
 export const AVAILABLE_MARKETS: Record<Market, MarketInfo> = {
     US: {
         code: 'US',
@@ -1276,6 +1295,26 @@ export class StockValuationAPI {
     // ── Stock Recommendations ──
     async getRecommendations(): Promise<any> {
         return this.request<any>('/recommendations');
+    }
+
+    async getProfileRecommendations(params: {
+        market: Market;
+        limit?: number;
+        persona?: string;
+        riskTolerance?: string;
+        primaryGoal?: string;
+        timeHorizon?: string;
+    }): Promise<ProfileRecommendationsResponse> {
+        return this.request<ProfileRecommendationsResponse>('/recommendations/profile', {
+            params: {
+                market: params.market,
+                limit: params.limit ?? 4,
+                persona: params.persona,
+                riskTolerance: params.riskTolerance,
+                primaryGoal: params.primaryGoal,
+                timeHorizon: params.timeHorizon,
+            },
+        });
     }
 
     // ── AI Chat ──

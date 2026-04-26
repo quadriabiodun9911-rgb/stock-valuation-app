@@ -14,7 +14,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { MarketSummaryResponse, stockAPI, SearchResult, Market, AVAILABLE_MARKETS, PortfolioResponse } from '../services/api';
+import { MarketSummaryResponse, stockAPI, SearchResult, Market, AVAILABLE_MARKETS, PortfolioResponse, ProfileRecommendation } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { SkeletonCard } from '../components/SkeletonLoader';
@@ -49,6 +49,8 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
     const [briefing, setBriefing] = useState<any>(null);
     const [briefingLoading, setBriefingLoading] = useState(false);
     const [personaProfile, setPersonaProfile] = useState<PersonaProfile | null>(null);
+    const [recommendations, setRecommendations] = useState<ProfileRecommendation[]>([]);
+    const [recommendationsLoading, setRecommendationsLoading] = useState(false);
 
     const fadeAnim = useRef(new Animated.Value(0)).current;
 
@@ -73,7 +75,7 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
 
     useEffect(() => {
         loadAll();
-    }, [selectedMarket]);
+    }, [selectedMarket, personaProfile]);
 
     useEffect(() => {
         const id = setInterval(loadAll, 300000);
@@ -84,6 +86,7 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
         loadMarketSummary();
         loadPortfolioSnapshot();
         loadBriefing();
+        loadProfileRecommendations();
     };
 
     const onRefresh = async () => {
@@ -123,6 +126,26 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
             console.error('Briefing error:', e);
         } finally {
             setBriefingLoading(false);
+        }
+    };
+
+    const loadProfileRecommendations = async () => {
+        try {
+            setRecommendationsLoading(true);
+            const response = await stockAPI.getProfileRecommendations({
+                market: selectedMarket,
+                limit: 4,
+                persona: personaProfile?.persona,
+                riskTolerance: personaProfile?.riskTolerance,
+                primaryGoal: personaProfile?.primaryGoal,
+                timeHorizon: personaProfile?.timeHorizon,
+            });
+            setRecommendations(response.recommendations || []);
+        } catch (e) {
+            console.error('Profile recommendations error:', e);
+            setRecommendations([]);
+        } finally {
+            setRecommendationsLoading(false);
         }
     };
 
@@ -407,6 +430,46 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
                         <View style={styles.valuePropChip}><Text style={styles.valuePropText}>Financial Freedom</Text></View>
                     </View>
                 </View>
+
+                {/* Recommended For You */}
+                <View style={styles.card}>
+                    <View style={styles.cardTitleRow}>
+                        <Ionicons name="sparkles" size={18} color="#7c3aed" />
+                        <Text style={styles.cardTitle}>Recommended For You</Text>
+                    </View>
+                    {recommendationsLoading ? (
+                        <ActivityIndicator color="#7c3aed" style={{ paddingVertical: 20 }} />
+                    ) : recommendations.length > 0 ? (
+                        recommendations.map((rec) => (
+                            <TouchableOpacity
+                                key={rec.symbol}
+                                style={styles.recommendationRow}
+                                onPress={() => navigation.navigate('StockDetail', { symbol: rec.symbol })}
+                                activeOpacity={0.7}
+                            >
+                                <View style={{ flex: 1 }}>
+                                    <View style={styles.recommendationTopRow}>
+                                        <Text style={styles.recommendationSymbol}>{rec.symbol}</Text>
+                                        <View style={styles.fitScoreChip}>
+                                            <Text style={styles.fitScoreText}>Fit {rec.fitScore}%</Text>
+                                        </View>
+                                    </View>
+                                    <Text style={styles.recommendationName} numberOfLines={1}>{rec.name}</Text>
+                                    <View style={styles.reasonTagsWrap}>
+                                        {rec.reasons.slice(0, 2).map((reason) => (
+                                            <View key={`${rec.symbol}-${reason}`} style={styles.reasonTag}>
+                                                <Text style={styles.reasonTagText}>{reason}</Text>
+                                            </View>
+                                        ))}
+                                    </View>
+                                </View>
+                            </TouchableOpacity>
+                        ))
+                    ) : (
+                        <Text style={styles.mutedText}>No personalized picks available right now.</Text>
+                    )}
+                </View>
+
                 <View style={styles.actionGrid}>
                     {personalizedQuickActions.map((a) => (
                         <TouchableOpacity
@@ -696,6 +759,56 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontWeight: '700',
         color: '#1d4ed8',
+    },
+    recommendationRow: {
+        paddingVertical: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: '#f1f5f9',
+    },
+    recommendationTopRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 4,
+    },
+    recommendationSymbol: {
+        fontSize: 15,
+        fontWeight: '800',
+        color: '#0f172a',
+    },
+    recommendationName: {
+        fontSize: 13,
+        color: '#475569',
+        marginBottom: 8,
+    },
+    fitScoreChip: {
+        backgroundColor: '#f3e8ff',
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 999,
+    },
+    fitScoreText: {
+        fontSize: 12,
+        fontWeight: '800',
+        color: '#6d28d9',
+    },
+    reasonTagsWrap: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 6,
+    },
+    reasonTag: {
+        backgroundColor: '#f8fafc',
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 999,
+    },
+    reasonTagText: {
+        fontSize: 11,
+        color: '#334155',
+        fontWeight: '600',
     },
     /* ── Section Header ── */
     sectionHeader: {

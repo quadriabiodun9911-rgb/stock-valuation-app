@@ -3959,6 +3959,162 @@ class GoalPlannerRequest(BaseModel):
     weeks: int = 12
     weeklyContribution: Optional[float] = None
 
+
+_RECOMMENDATION_UNIVERSE: Dict[str, List[Dict[str, Any]]] = {
+    "US": [
+        {"symbol": "VTI", "name": "Vanguard Total Stock Market ETF", "assetType": "ETF", "riskLevel": "medium", "horizon": "long", "style": "core"},
+        {"symbol": "VOO", "name": "Vanguard S&P 500 ETF", "assetType": "ETF", "riskLevel": "medium", "horizon": "long", "style": "core"},
+        {"symbol": "SCHD", "name": "Schwab US Dividend Equity ETF", "assetType": "ETF", "riskLevel": "low", "horizon": "long", "style": "income"},
+        {"symbol": "BND", "name": "Vanguard Total Bond Market ETF", "assetType": "ETF", "riskLevel": "low", "horizon": "long", "style": "defensive"},
+        {"symbol": "QQQ", "name": "Invesco QQQ ETF", "assetType": "ETF", "riskLevel": "high", "horizon": "medium", "style": "growth"},
+        {"symbol": "AAPL", "name": "Apple Inc.", "assetType": "Stock", "riskLevel": "medium", "horizon": "medium", "style": "quality"},
+        {"symbol": "MSFT", "name": "Microsoft Corp.", "assetType": "Stock", "riskLevel": "medium", "horizon": "long", "style": "quality"},
+        {"symbol": "NVDA", "name": "NVIDIA Corp.", "assetType": "Stock", "riskLevel": "high", "horizon": "medium", "style": "growth"},
+    ],
+    "NGX": [
+        {"symbol": "DANGCEM.NG", "name": "Dangote Cement", "assetType": "Stock", "riskLevel": "medium", "horizon": "long", "style": "core"},
+        {"symbol": "GTCO.NG", "name": "GTCO", "assetType": "Stock", "riskLevel": "medium", "horizon": "long", "style": "income"},
+        {"symbol": "ZENITHBANK.NG", "name": "Zenith Bank", "assetType": "Stock", "riskLevel": "medium", "horizon": "long", "style": "income"},
+        {"symbol": "MTNN.NG", "name": "MTN Nigeria", "assetType": "Stock", "riskLevel": "medium", "horizon": "long", "style": "quality"},
+        {"symbol": "SEPLAT.NG", "name": "Seplat Energy", "assetType": "Stock", "riskLevel": "high", "horizon": "medium", "style": "growth"},
+    ],
+    "UK": [
+        {"symbol": "VUSA.L", "name": "Vanguard S&P 500 UCITS ETF", "assetType": "ETF", "riskLevel": "medium", "horizon": "long", "style": "core"},
+        {"symbol": "VUKE.L", "name": "Vanguard FTSE 100 UCITS ETF", "assetType": "ETF", "riskLevel": "medium", "horizon": "long", "style": "income"},
+        {"symbol": "LLOY.L", "name": "Lloyds Banking Group", "assetType": "Stock", "riskLevel": "medium", "horizon": "medium", "style": "value"},
+        {"symbol": "AZN.L", "name": "AstraZeneca", "assetType": "Stock", "riskLevel": "low", "horizon": "long", "style": "quality"},
+    ],
+    "EU": [
+        {"symbol": "EXSA.DE", "name": "iShares STOXX Europe 600 UCITS ETF", "assetType": "ETF", "riskLevel": "medium", "horizon": "long", "style": "core"},
+        {"symbol": "ASML.AS", "name": "ASML Holding", "assetType": "Stock", "riskLevel": "high", "horizon": "medium", "style": "growth"},
+        {"symbol": "SAP.DE", "name": "SAP SE", "assetType": "Stock", "riskLevel": "medium", "horizon": "long", "style": "quality"},
+    ],
+    "ASIA": [
+        {"symbol": "EWJ", "name": "iShares MSCI Japan ETF", "assetType": "ETF", "riskLevel": "medium", "horizon": "long", "style": "core"},
+        {"symbol": "0700.HK", "name": "Tencent Holdings", "assetType": "Stock", "riskLevel": "high", "horizon": "medium", "style": "growth"},
+        {"symbol": "7203.T", "name": "Toyota Motor", "assetType": "Stock", "riskLevel": "medium", "horizon": "long", "style": "quality"},
+    ],
+    "EMERGING": [
+        {"symbol": "VWO", "name": "Vanguard FTSE Emerging Markets ETF", "assetType": "ETF", "riskLevel": "high", "horizon": "long", "style": "core"},
+        {"symbol": "INDA", "name": "iShares MSCI India ETF", "assetType": "ETF", "riskLevel": "high", "horizon": "long", "style": "growth"},
+        {"symbol": "TSM", "name": "Taiwan Semiconductor", "assetType": "Stock", "riskLevel": "high", "horizon": "long", "style": "quality"},
+    ],
+}
+
+
+def _match_score(
+    asset: Dict[str, Any],
+    persona: str,
+    risk_tolerance: Optional[str],
+    primary_goal: Optional[str],
+    time_horizon: Optional[str],
+) -> Dict[str, Any]:
+    score = 40
+    reasons: List[str] = []
+
+    if persona == "beginner_protector":
+        if asset["riskLevel"] == "low":
+            score += 26
+            reasons.append("Lower-volatility fit for confidence building")
+        if asset["style"] in {"income", "defensive", "quality"}:
+            score += 12
+            reasons.append("Focuses on steadier assets")
+    elif persona == "wealth_builder":
+        if asset["horizon"] == "long":
+            score += 22
+            reasons.append("Built for long-term compounding")
+        if asset["style"] in {"core", "quality", "income"}:
+            score += 12
+            reasons.append("Matches disciplined wealth-building style")
+    elif persona == "active_opportunity_seeker":
+        if asset["riskLevel"] == "high":
+            score += 20
+            reasons.append("Higher-upside profile alignment")
+        if asset["style"] in {"growth", "value"}:
+            score += 14
+            reasons.append("Supports opportunity-focused strategy")
+
+    if risk_tolerance:
+        if risk_tolerance == "low" and asset["riskLevel"] == "low":
+            score += 18
+            reasons.append("Matches low-risk preference")
+        elif risk_tolerance == "medium" and asset["riskLevel"] == "medium":
+            score += 18
+            reasons.append("Matches balanced risk preference")
+        elif risk_tolerance == "high" and asset["riskLevel"] == "high":
+            score += 18
+            reasons.append("Matches higher-risk preference")
+
+    if primary_goal:
+        if primary_goal == "avoid_losses" and asset["style"] in {"defensive", "income", "quality"}:
+            score += 14
+            reasons.append("Supports downside-awareness goal")
+        elif primary_goal == "long_term_growth" and asset["horizon"] == "long":
+            score += 14
+            reasons.append("Aligned with long-term growth goal")
+        elif primary_goal == "find_setups" and asset["style"] in {"growth", "value"}:
+            score += 14
+            reasons.append("Better suited for setup hunting")
+
+    if time_horizon:
+        if time_horizon == "long" and asset["horizon"] == "long":
+            score += 10
+            reasons.append("Matches your multi-year horizon")
+        elif time_horizon == "medium" and asset["horizon"] in {"medium", "long"}:
+            score += 8
+            reasons.append("Fits your medium-term plan")
+        elif time_horizon == "short" and asset["horizon"] == "medium":
+            score += 6
+            reasons.append("Suitable for shorter tactical horizon")
+
+    if not reasons:
+        reasons.append("Balanced fit for your current profile")
+
+    return {
+        "fitScore": max(1, min(99, score)),
+        "reasons": reasons[:3],
+    }
+
+
+@app.get("/recommendations/profile")
+async def get_profile_recommendations(
+    market: str = Query("US"),
+    limit: int = Query(5, ge=1, le=10),
+    persona: str = Query("wealth_builder"),
+    riskTolerance: Optional[str] = Query(None),
+    primaryGoal: Optional[str] = Query(None),
+    timeHorizon: Optional[str] = Query(None),
+):
+    market_code = market.upper()
+    universe = _RECOMMENDATION_UNIVERSE.get(market_code) or _RECOMMENDATION_UNIVERSE["US"]
+
+    scored = []
+    for asset in universe:
+        match = _match_score(asset, persona, riskTolerance, primaryGoal, timeHorizon)
+        scored.append({
+            **asset,
+            "fitScore": match["fitScore"],
+            "reasons": match["reasons"],
+            "market": market_code,
+        })
+
+    scored.sort(key=lambda item: item["fitScore"], reverse=True)
+
+    return {
+        "persona": persona,
+        "market": market_code,
+        "generatedAt": datetime.now().isoformat(),
+        "recommendations": scored[:limit],
+    }
+
+
+@app.get("/recommendations")
+async def get_recommendations(
+    market: str = Query("US"),
+    limit: int = Query(5, ge=1, le=10),
+):
+    return await get_profile_recommendations(market=market, limit=limit)
+
 @app.post("/goal-planner")
 async def goal_planner(req: GoalPlannerRequest):
     """Calculate path to financial goal with long-term or 12-week breakdown."""
