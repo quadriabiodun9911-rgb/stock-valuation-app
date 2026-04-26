@@ -42,7 +42,7 @@ from achievements import router as achievements_router
 from briefing import router as briefing_router
 from ai_chat import router as ai_chat_router
 from referral import router as referral_router
-from ai_service import get_efficiency_report, advisor as ai_advisor
+from ai_service import get_efficiency_report
 from returns_calculator import (
     calculate_holding_period_years,
     calculate_investor_returns,
@@ -97,14 +97,23 @@ app = FastAPI(
 )
 
 # CORS middleware
-ALLOWED_ORIGINS = os.getenv(
-    "ALLOWED_ORIGINS",
-    "http://localhost:3000,http://localhost:8081,http://localhost:19006"
-).split(",")
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "ALLOWED_ORIGINS",
+        "http://localhost:3000,http://localhost:8081,http://localhost:19006,http://localhost:8123"
+    ).split(",")
+    if origin.strip()
+]
+ALLOWED_ORIGIN_REGEX = os.getenv(
+    "ALLOWED_ORIGIN_REGEX",
+    r"^https?://(localhost|127\.0\.0\.1)(:\\d+)?$",
+)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=ALLOWED_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
@@ -272,6 +281,7 @@ class InvestorReturnRequest(BaseModel):
     inflation_rate_pct: float = 3.0
     transaction_cost_rate_pct: float = 0.25
     fixed_transaction_cost: float = 0.0
+    capital_gains_tax_rate_pct: float = 15.0
 
 
 def _load_portfolio_data(user_id: int = 1) -> PortfolioData:
@@ -585,18 +595,55 @@ class ValuationResult:
 class StockValuationService:
     def __init__(self):
         self.cache = {}
-        self.cache_duration = 300  # 5 minutes
-    
+        self.cache_duration = int(os.getenv("MARKET_CACHE_TTL_SECONDS", "300"))
+        self.stale_cache_duration = int(
+            os.getenv("MARKET_STALE_CACHE_TTL_SECONDS", "1800")
+        )
+        self.fetch_backoff_seconds = int(
+            os.getenv("MARKET_FETCH_BACKOFF_SECONDS", "30")
+        )
+        self.last_failure = {}
+        self.cache_lock = threading.Lock()
+
     def get_stock_data(self, symbol: str, period: str = "1y"):
         """Get stock data with caching"""
         cache_key = f"{symbol}_{period}"
         current_time = datetime.now()
-        
-        if cache_key in self.cache:
-            cached_data, cached_time = self.cache[cache_key]
-            if (current_time - cached_time).seconds < self.cache_duration:
+
+        with self.cache_lock:
+            cached_entry = self.cache.get(cache_key)
+            last_failure_time = self.last_failure.get(cache_key)
+
+        if cached_entry:
+            cached_data, cached_time = cached_entry
+            cache_age = (current_time - cached_time).total_seconds()
+            if cache_age < self.cache_duration:
                 return cached_data
-        
+
+            if (
+                last_failure_time
+                and (current_time - last_failure_time).total_seconds()
+                < self.fetch_backoff_seconds
+            ):
+                logger.warning(
+                    "Using stale cached market data for %s during fetch backoff",
+                    symbol,
+                )
+                return cached_data
+
+        if (
+            last_failure_time
+            and (current_time - last_failure_time).total_seconds()
+            < self.fetch_backoff_seconds
+        ):
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"Market data provider is busy for {symbol}. "
+                    "Please retry shortly."
+                ),
+            )
+
         try:
             stock = yf.Ticker(symbol)
             data = {
@@ -610,10 +657,27 @@ class StockValuationService:
                 'major_holders': stock.major_holders,
                 'institutional_holders': stock.institutional_holders
             }
-            
-            self.cache[cache_key] = (data, current_time)
+
+            with self.cache_lock:
+                self.cache[cache_key] = (data, current_time)
+                self.last_failure.pop(cache_key, None)
             return data
         except Exception as e:
+            with self.cache_lock:
+                self.last_failure[cache_key] = current_time
+                cached_entry = self.cache.get(cache_key)
+
+            if cached_entry:
+                cached_data, cached_time = cached_entry
+                cache_age = (current_time - cached_time).total_seconds()
+                if cache_age < self.stale_cache_duration:
+                    logger.warning(
+                        "Using stale cached market data for %s after fetch failure: %s",
+                        symbol,
+                        e,
+                    )
+                    return cached_data
+
             logger.error(f"Error fetching data for {symbol}: {e}")
             raise HTTPException(status_code=400, detail=f"Error fetching stock data: {str(e)}")
     
@@ -1372,6 +1436,30 @@ async def health_check():
         "database": "postgresql" if getattr(db, "USE_POSTGRES", False) else "sqlite",
     }
 
+
+@app.get("/readiness")
+async def readiness_check():
+    production_config_ok = True
+    production_issues: List[str] = []
+
+    if APP_ENV == "production":
+        if not API_KEY:
+            production_config_ok = False
+            production_issues.append("API_KEY is not configured")
+        if any("localhost" in origin for origin in ALLOWED_ORIGINS):
+            production_issues.append("ALLOWED_ORIGINS still includes localhost")
+
+    return {
+        "status": "ready" if production_config_ok else "degraded",
+        "timestamp": datetime.now().isoformat(),
+        "checks": {
+            "database": "ok",
+            "environment": APP_ENV,
+            "production_config_ok": production_config_ok,
+        },
+        "issues": production_issues,
+    }
+
 @app.get("/ai-metrics")
 async def ai_efficiency_metrics():
     """Get AI efficiency metrics for testing and optimization."""
@@ -1580,39 +1668,109 @@ async def get_financial_growth(symbol: str, period: str = "1y"):
 @app.get("/analysis/comprehensive/{symbol}")
 async def get_comprehensive_analysis(symbol: str):
     """Get comprehensive valuation analysis (DCF + Comparable + Technical)"""
+    symbol = symbol.upper()
+    errors: List[str] = []
+    dcf_result: Optional[Dict[str, Any]] = None
+    comp_result: Optional[Dict[str, Any]] = None
+    tech_result: Optional[Dict[str, Any]] = None
+
     try:
-        # Get all three analyses
-        dcf_result = valuation_service.calculate_dcf_valuation(symbol.upper())
-        comp_result = valuation_service.calculate_comparable_analysis(symbol.upper())
-        tech_result = valuation_service.calculate_technical_indicators(symbol.upper())
-        
-        # Combine results
-        return {
-            "symbol": symbol.upper(),
-            "timestamp": datetime.now().isoformat(),
-            "current_price": dcf_result['current_price'],
-            "valuations": {
-                "dcf": {
-                    "intrinsic_value": dcf_result['intrinsic_value'],
-                    "upside": dcf_result['upside_percentage'],
-                    "confidence": dcf_result['confidence_level']
-                },
-                "comparable": {
-                    "average_valuation": comp_result['average_valuation'],
-                    "upside": comp_result['upside_percentage'],
-                    "confidence": comp_result['confidence_level']
-                }
-            },
-            "technical_analysis": {
-                "signals": tech_result['signals'],
-                "rsi": tech_result['momentum_indicators']['rsi'],
-                "support": tech_result['support_resistance']['support'],
-                "resistance": tech_result['support_resistance']['resistance']
-            },
-            "recommendation": get_overall_recommendation(dcf_result, comp_result, tech_result)
+        dcf_result = valuation_service.calculate_dcf_valuation(symbol)
+    except Exception as exc:
+        logger.warning("Comprehensive DCF unavailable for %s: %s", symbol, exc)
+        errors.append(f"DCF unavailable: {str(exc)}")
+
+    try:
+        comp_result = valuation_service.calculate_comparable_analysis(symbol)
+    except Exception as exc:
+        logger.warning("Comprehensive comparable unavailable for %s: %s", symbol, exc)
+        errors.append(f"Comparable unavailable: {str(exc)}")
+
+    try:
+        tech_result = valuation_service.calculate_technical_indicators(symbol)
+    except Exception as exc:
+        logger.warning("Comprehensive technical unavailable for %s: %s", symbol, exc)
+        errors.append(f"Technical unavailable: {str(exc)}")
+
+    current_price = 0.0
+    if dcf_result:
+        current_price = float(dcf_result.get("current_price") or 0.0)
+    elif comp_result:
+        current_price = float(comp_result.get("current_price") or 0.0)
+    elif tech_result:
+        current_price = float(tech_result.get("current_price") or 0.0)
+
+    if current_price <= 0:
+        try:
+            fallback_data = valuation_service.get_stock_data(symbol)
+            info = fallback_data.get("info", {}) if isinstance(fallback_data, dict) else {}
+            current_price = float(
+                info.get("currentPrice")
+                or info.get("regularMarketPrice")
+                or 0.0
+            )
+        except Exception as exc:
+            logger.warning("Comprehensive price fallback unavailable for %s: %s", symbol, exc)
+
+    recommendation = {"action": "HOLD", "confidence": "Low", "reasoning": "Limited market data available right now."}
+    if dcf_result and comp_result and tech_result:
+        recommendation = get_overall_recommendation(dcf_result, comp_result, tech_result)
+    elif dcf_result:
+        dcf_upside = float(dcf_result.get("upside_percentage") or 0.0)
+        if dcf_upside > 10:
+            recommendation = {
+                "action": "BUY",
+                "confidence": "Medium",
+                "reasoning": "DCF indicates material upside while some inputs are temporarily unavailable.",
+            }
+        elif dcf_upside < -10:
+            recommendation = {
+                "action": "SELL",
+                "confidence": "Medium",
+                "reasoning": "DCF indicates downside risk while some inputs are temporarily unavailable.",
+            }
+        else:
+            recommendation = {
+                "action": "HOLD",
+                "confidence": "Medium",
+                "reasoning": "DCF is near fair value; waiting for more confirmation from other signals.",
+            }
+    elif comp_result:
+        comp_upside = float(comp_result.get("upside_percentage") or 0.0)
+        recommendation = {
+            "action": "BUY" if comp_upside > 8 else "SELL" if comp_upside < -8 else "HOLD",
+            "confidence": "Low",
+            "reasoning": "Recommendation is based on peer valuation only due temporary data gaps.",
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Comprehensive analysis failed: {str(e)}")
+
+    return {
+        "symbol": symbol,
+        "timestamp": datetime.now().isoformat(),
+        "current_price": current_price,
+        "valuations": {
+            "dcf": {
+                "intrinsic_value": float(dcf_result.get("intrinsic_value") or current_price or 0.0) if dcf_result else float(current_price or 0.0),
+                "upside": float(dcf_result.get("upside_percentage") or 0.0) if dcf_result else 0.0,
+                "confidence": str(dcf_result.get("confidence_level") or "Unavailable") if dcf_result else "Unavailable",
+            },
+            "comparable": {
+                "average_valuation": float(comp_result.get("average_valuation") or current_price or 0.0) if comp_result else float(current_price or 0.0),
+                "upside": float(comp_result.get("upside_percentage") or 0.0) if comp_result else 0.0,
+                "confidence": str(comp_result.get("confidence_level") or "Unavailable") if comp_result else "Unavailable",
+            },
+        },
+        "technical_analysis": {
+            "signals": tech_result.get("signals", []) if tech_result else [],
+            "rsi": float(tech_result.get("momentum_indicators", {}).get("rsi", 50.0)) if tech_result else 50.0,
+            "support": float(tech_result.get("support_resistance", {}).get("support", current_price or 0.0)) if tech_result else float(current_price or 0.0),
+            "resistance": float(tech_result.get("support_resistance", {}).get("resistance", current_price or 0.0)) if tech_result else float(current_price or 0.0),
+        },
+        "recommendation": recommendation,
+        "data_quality": {
+            "partial": bool(errors),
+            "errors": errors,
+        },
+    }
 
 def get_overall_recommendation(dcf_result, comp_result, tech_result):
     """Generate overall buy/hold/sell recommendation"""
@@ -2183,6 +2341,7 @@ async def analyze_investor_returns(req: InvestorReturnRequest):
         inflation_rate_pct=req.inflation_rate_pct,
         transaction_cost_rate_pct=req.transaction_cost_rate_pct,
         fixed_transaction_cost=req.fixed_transaction_cost,
+        capital_gains_tax_rate_pct=req.capital_gains_tax_rate_pct,
     )
 
     return {
@@ -2195,6 +2354,7 @@ async def analyze_investor_returns(req: InvestorReturnRequest):
             "purchase_date": req.purchase_date,
             "inflation_rate_pct": req.inflation_rate_pct,
             "transaction_cost_rate_pct": req.transaction_cost_rate_pct,
+            "capital_gains_tax_rate_pct": req.capital_gains_tax_rate_pct,
         },
     }
 
@@ -3795,14 +3955,86 @@ class GoalPlannerRequest(BaseModel):
     annualReturn: float = 10.0
     years: int = 20
     inflationRate: float = 3.0
+    mode: str = "long_term"
+    weeks: int = 12
+    weeklyContribution: Optional[float] = None
 
 @app.post("/goal-planner")
 async def goal_planner(req: GoalPlannerRequest):
-    """Calculate path to financial goal with year-by-year breakdown."""
+    """Calculate path to financial goal with long-term or 12-week breakdown."""
     try:
+        if req.mode == "12_week":
+            weeks = max(1, min(req.weeks, 52))
+            weekly_contribution = req.weeklyContribution
+            if weekly_contribution is None:
+                weekly_contribution = req.monthlyContribution / 4 if req.monthlyContribution > 0 else 125
+
+            weekly_rate = (1 + (req.annualReturn / 100)) ** (1 / 52) - 1
+            balance = req.currentSavings
+            total_contributed = req.currentSavings
+            weekly_data = []
+
+            for week in range(1, weeks + 1):
+                balance = balance * (1 + weekly_rate) + weekly_contribution
+                total_contributed += weekly_contribution
+                earnings = balance - total_contributed
+                weekly_data.append({
+                    "week": week,
+                    "balance": round(balance, 2),
+                    "contributed": round(total_contributed, 2),
+                    "earnings": round(earnings, 2),
+                })
+
+            final_balance = balance
+            goal_reached = final_balance >= req.targetAmount
+
+            goal_week = None
+            for wd in weekly_data:
+                if wd["balance"] >= req.targetAmount:
+                    goal_week = wd["week"]
+                    break
+
+            if not goal_reached and weeks > 0:
+                fv_factor = (1 + weekly_rate) ** weeks
+                if weekly_rate > 0:
+                    needed_weekly = (req.targetAmount - req.currentSavings * fv_factor) / ((fv_factor - 1) / weekly_rate)
+                else:
+                    needed_weekly = (req.targetAmount - req.currentSavings) / weeks
+                required_weekly = max(0, round(needed_weekly, 2))
+            else:
+                required_weekly = round(weekly_contribution, 2)
+
+            milestones = []
+            for pct in [25, 50, 75, 100]:
+                target = req.targetAmount * pct / 100
+                for wd in weekly_data:
+                    if wd["balance"] >= target:
+                        milestones.append({"percent": pct, "week": wd["week"], "amount": target})
+                        break
+
+            progress_percent = min(100.0, (final_balance / req.targetAmount) * 100) if req.targetAmount > 0 else 0.0
+
+            return {
+                "mode": "12_week",
+                "goalAmount": req.targetAmount,
+                "finalBalance": round(final_balance, 2),
+                "goalReached": goal_reached,
+                "goalWeek": goal_week,
+                "totalContributed": round(total_contributed, 2),
+                "totalEarnings": round(final_balance - total_contributed, 2),
+                "requiredWeekly": required_weekly,
+                "weeklyProjection": weekly_data,
+                "milestones": milestones,
+                "progressPercent": round(progress_percent, 1),
+                "assumptions": {
+                    "annualReturn": req.annualReturn,
+                    "weeklyRatePct": round(weekly_rate * 100, 4),
+                    "weeks": weeks,
+                    "weeklyContribution": round(weekly_contribution, 2),
+                },
+            }
+
         monthly_rate = req.annualReturn / 100 / 12
-        inflation_monthly = req.inflationRate / 100 / 12
-        real_monthly = monthly_rate - inflation_monthly
         total_months = req.years * 12
 
         # Nominal projection
@@ -3858,6 +4090,7 @@ async def goal_planner(req: GoalPlannerRequest):
                     break
 
         return {
+            "mode": "long_term",
             "goalAmount": req.targetAmount,
             "finalBalance": round(final_balance, 2),
             "goalReached": goal_reached,

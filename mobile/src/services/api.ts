@@ -1,5 +1,6 @@
 // API Configuration
 import Constants from 'expo-constants';
+import { getCached, setCache } from '../utils/cache';
 
 const resolveApiBaseUrl = () => {
     const envUrl = process.env.EXPO_PUBLIC_API_URL;
@@ -20,6 +21,8 @@ const resolveApiBaseUrl = () => {
 };
 
 const API_BASE_URL = resolveApiBaseUrl();
+const REQUEST_TIMEOUT_MS = 10000;
+const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1000;
 
 // Export for screens that need the raw URL (e.g. axios calls)
 export const API_URL = API_BASE_URL;
@@ -212,6 +215,21 @@ export interface ComprehensiveResult {
         confidence: string;
         reasoning: string;
     };
+    data_quality?: {
+        partial: boolean;
+        errors: string[];
+    };
+}
+
+export interface AIRecommendationResult {
+    symbol: string;
+    action: string;
+    confidence: number;
+    target_price: number;
+    stop_loss: number;
+    risk_reward_ratio: number;
+    catalysts: string[];
+    risks: string[];
 }
 
 export interface PriceEpsPoint {
@@ -550,6 +568,9 @@ type RequestOptions = {
     method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
     params?: Record<string, string | number | boolean | undefined>;
     body?: unknown;
+    cacheTtlMs?: number;
+    disableCache?: boolean;
+    retryCount?: number;
 };
 
 // ── Financial Upload Types ──────────────────────────────────────
@@ -619,8 +640,49 @@ export class StockValuationAPI {
         this.authToken = token;
     }
 
+    private buildFriendlyErrorMessage(status?: number, path?: string): string {
+        if (status === 429) {
+            return 'Service is busy right now. Please try again in a moment.';
+        }
+
+        if (status !== undefined && status >= 500) {
+            return 'Service is temporarily unavailable. Please try again shortly.';
+        }
+
+        if (path?.includes('/ai') || path?.includes('/ai-chat')) {
+            return 'AI is temporarily unavailable. You can keep using the rest of the analysis tools.';
+        }
+
+        return 'Unable to load fresh data right now. Please try again.';
+    }
+
+    private shouldCache(method: string, path: string, disableCache?: boolean): boolean {
+        if (disableCache || method !== 'GET') {
+            return false;
+        }
+
+        return !(
+            path.startsWith('/auth') ||
+            path.startsWith('/portfolio') ||
+            path.startsWith('/referrals') ||
+            path.startsWith('/achievements') ||
+            path.startsWith('/api/social')
+        );
+    }
+
+    private buildCacheKey(path: string, url: URL): string {
+        return `api:${path}:${url.searchParams.toString() || 'no-params'}`;
+    }
+
     private async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-        const { method = 'GET', params, body } = options;
+        const {
+            method = 'GET',
+            params,
+            body,
+            cacheTtlMs = DEFAULT_CACHE_TTL_MS,
+            disableCache = false,
+            retryCount = 1,
+        } = options;
         const url = new URL(`${API_BASE_URL}${path}`);
 
         if (params) {
@@ -631,40 +693,88 @@ export class StockValuationAPI {
             });
         }
 
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 30000);
+        const cacheKey = this.buildCacheKey(path, url);
+        const allowCache = this.shouldCache(method, path, disableCache);
 
-        try {
-            const headers: Record<string, string> = {
-                'Content-Type': 'application/json',
-            };
-            if (this.authToken) {
-                headers['Authorization'] = `Bearer ${this.authToken}`;
+        const executeRequest = async (attempt: number): Promise<T> => {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+            const startTime = Date.now();
+
+            try {
+                const headers: Record<string, string> = {
+                    'Content-Type': 'application/json',
+                };
+                if (this.authToken) {
+                    headers['Authorization'] = `Bearer ${this.authToken}`;
+                }
+
+                const response = await fetch(url.toString(), {
+                    method,
+                    headers,
+                    body: body ? JSON.stringify(body) : undefined,
+                    signal: controller.signal,
+                });
+
+                const durationMs = Date.now() - startTime;
+                console.info(`[API] ${method} ${path} -> ${response.status} in ${durationMs}ms`);
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    const transient = method === 'GET' && attempt < retryCount && (response.status === 429 || response.status >= 500);
+
+                    if (transient) {
+                        console.warn(`[API] retrying ${method} ${path} after status ${response.status}`);
+                        return executeRequest(attempt + 1);
+                    }
+
+                    console.error('API Error:', response.status, errorText);
+                    throw new Error(this.buildFriendlyErrorMessage(response.status, path));
+                }
+
+                const data = await response.json() as T;
+                if (allowCache) {
+                    await setCache(cacheKey, data, cacheTtlMs);
+                }
+                return data;
+            } catch (error: any) {
+                if (error.name === 'AbortError') {
+                    if (method === 'GET' && attempt < retryCount) {
+                        console.warn(`[API] retrying ${method} ${path} after timeout`);
+                        return executeRequest(attempt + 1);
+                    }
+                    throw new Error('Request timed out. Service may be busy. Please try again.');
+                }
+
+                const message = String(error?.message || 'Unknown error');
+                const isTransientNetworkError = method === 'GET' && attempt < retryCount && (
+                    message.includes('Network request failed') ||
+                    message.includes('Load failed') ||
+                    message.includes('ERR_ABORTED')
+                );
+
+                if (isTransientNetworkError) {
+                    console.warn(`[API] retrying ${method} ${path} after network error`);
+                    return executeRequest(attempt + 1);
+                }
+
+                console.error('API Error:', error);
+
+                if (allowCache) {
+                    const cached = await getCached<T>(cacheKey);
+                    if (cached !== null) {
+                        console.warn(`[API] using cached fallback for ${path}`);
+                        return cached;
+                    }
+                }
+
+                throw error instanceof Error ? error : new Error(this.buildFriendlyErrorMessage(undefined, path));
+            } finally {
+                clearTimeout(timeoutId);
             }
+        };
 
-            const response = await fetch(url.toString(), {
-                method,
-                headers,
-                body: body ? JSON.stringify(body) : undefined,
-                signal: controller.signal,
-            });
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                console.error('API Error:', response.status, errorText);
-                throw new Error(errorText || `Request failed with status ${response.status}`);
-            }
-
-            return response.json() as Promise<T>;
-        } catch (error: any) {
-            if (error.name === 'AbortError') {
-                throw new Error('Request timed out. Please check your connection and try again.');
-            }
-            console.error('API Error:', error);
-            throw error;
-        } finally {
-            clearTimeout(timeoutId);
-        }
+        return executeRequest(0);
     }
 
     async getStockInfo(symbol: string): Promise<StockInfo> {
@@ -782,6 +892,7 @@ export class StockValuationAPI {
         inflation_rate_pct?: number;
         transaction_cost_rate_pct?: number;
         fixed_transaction_cost?: number;
+        capital_gains_tax_rate_pct?: number;
     }): Promise<any> {
         return this.request<any>('/analysis/investor-returns', {
             method: 'POST',
@@ -957,6 +1068,9 @@ export class StockValuationAPI {
         annualReturn: number;
         years: number;
         inflationRate?: number;
+        mode?: 'long_term' | '12_week';
+        weeks?: number;
+        weeklyContribution?: number;
     }): Promise<any> {
         return this.request<any>('/goal-planner', { method: 'POST', body: params });
     }
@@ -1169,6 +1283,14 @@ export class StockValuationAPI {
         return this.request<any>('/ai-chat', {
             method: 'POST',
             body: { message, symbol },
+        });
+    }
+
+    // ── AI Recommendation ──
+    async getAIRecommendation(symbol: string, period: string = '1y'): Promise<AIRecommendationResult> {
+        return this.request<AIRecommendationResult>('/api/ai/recommendation', {
+            method: 'POST',
+            body: { symbol, period },
         });
     }
 
