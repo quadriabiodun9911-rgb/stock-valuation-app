@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MarketSummaryResponse, stockAPI, SearchResult, Market, AVAILABLE_MARKETS, PortfolioResponse } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
@@ -21,6 +22,17 @@ import { SkeletonCard } from '../components/SkeletonLoader';
 interface Props {
     navigation: any;
 }
+
+type Persona = 'beginner_protector' | 'wealth_builder' | 'active_opportunity_seeker';
+
+type PersonaProfile = {
+    persona: Persona;
+    experience: string;
+    riskTolerance: string;
+    primaryGoal: string;
+    timeHorizon: string;
+    monthlyBudget: string;
+};
 
 const HomeScreen: React.FC<Props> = ({ navigation }) => {
     const { user } = useAuth();
@@ -36,11 +48,27 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
     const [refreshing, setRefreshing] = useState(false);
     const [briefing, setBriefing] = useState<any>(null);
     const [briefingLoading, setBriefingLoading] = useState(false);
+    const [personaProfile, setPersonaProfile] = useState<PersonaProfile | null>(null);
 
     const fadeAnim = useRef(new Animated.Value(0)).current;
 
     useEffect(() => {
         Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: true }).start();
+    }, []);
+
+    useEffect(() => {
+        const loadPersonaProfile = async () => {
+            try {
+                const raw = await AsyncStorage.getItem('onboarding_persona_profile');
+                if (raw) {
+                    setPersonaProfile(JSON.parse(raw));
+                }
+            } catch (e) {
+                console.error('Failed to load persona profile:', e);
+            }
+        };
+
+        loadPersonaProfile();
     }, []);
 
     useEffect(() => {
@@ -173,6 +201,33 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
         },
     ];
 
+    const personalizedQuickActions = useMemo(() => {
+        if (!personaProfile) return quickActions;
+
+        const priorityByPersona: Record<Persona, string[]> = {
+            beginner_protector: ['Alerts', 'My Progress', 'Smart Decisions', 'Community'],
+            wealth_builder: ['My Progress', 'Alerts', 'Smart Decisions', 'Community'],
+            active_opportunity_seeker: ['Smart Decisions', 'Alerts', 'Community', 'My Progress'],
+        };
+
+        const order = priorityByPersona[personaProfile.persona];
+        return [...quickActions].sort((a, b) => order.indexOf(a.label) - order.indexOf(b.label));
+    }, [personaProfile]);
+
+    const personaHeadline = useMemo(() => {
+        if (!personaProfile) {
+            return 'Simple enough for every stage of life, powerful enough to help families and communities grow toward financial freedom.';
+        }
+
+        if (personaProfile.persona === 'beginner_protector') {
+            return 'Build confidence with safer steps, clearer guidance, and risk-first investing decisions.';
+        }
+        if (personaProfile.persona === 'wealth_builder') {
+            return 'Stay consistent with long-term plans, disciplined contributions, and clear wealth milestones.';
+        }
+        return 'Spot faster opportunities, protect downside, and act on higher-conviction market signals.';
+    }, [personaProfile]);
+
     const greeting = new Date().getHours() < 12 ? 'Good Morning' : new Date().getHours() < 18 ? 'Good Afternoon' : 'Good Evening';
 
     return (
@@ -187,7 +242,7 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
                         <View>
                             <Text style={styles.greeting}>{greeting}{user?.username ? `, ${user.username}` : ''}</Text>
                             <Text style={styles.headerTitle}>StockVal</Text>
-                            <Text style={styles.heroSubtitle}>Simple enough for every stage of life, powerful enough to help families and communities grow toward financial freedom.</Text>
+                            <Text style={styles.heroSubtitle}>{personaHeadline}</Text>
                         </View>
                         <TouchableOpacity onPress={toggleTheme} style={styles.darkModeBtn}>
                             <Ionicons name={isDark ? 'sunny' : 'moon'} size={18} color={isDark ? '#f59e0b' : '#94a3b8'} />
@@ -353,7 +408,7 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
                     </View>
                 </View>
                 <View style={styles.actionGrid}>
-                    {quickActions.map((a) => (
+                    {personalizedQuickActions.map((a) => (
                         <TouchableOpacity
                             key={a.screen}
                             style={styles.actionTile}
