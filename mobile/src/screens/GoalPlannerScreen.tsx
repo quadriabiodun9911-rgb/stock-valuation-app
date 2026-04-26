@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
     View,
     Text,
@@ -10,11 +10,20 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { stockAPI } from '../services/api';
 
 interface Props {
     navigation: any;
 }
+
+type Persona = 'beginner_protector' | 'wealth_builder' | 'active_opportunity_seeker';
+
+type PersonaProfile = {
+    persona: Persona;
+    monthlyBudget?: string;
+    timeHorizon?: string;
+};
 
 const fmt = (n: number): string => {
     if (n >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
@@ -34,6 +43,49 @@ const GoalPlannerScreen: React.FC<Props> = ({ navigation }) => {
     const [data, setData] = useState<any>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [personalizedHint, setPersonalizedHint] = useState<string | null>(null);
+
+    useEffect(() => {
+        const applyPersonaDefaults = async () => {
+            try {
+                const raw = await AsyncStorage.getItem('onboarding_persona_profile');
+                if (!raw) return;
+
+                const profile = JSON.parse(raw) as PersonaProfile;
+                const budgetToMonthly: Record<string, number> = {
+                    under_300: 250,
+                    '300_1500': 900,
+                    over_1500: 2000,
+                };
+                const monthly = budgetToMonthly[profile.monthlyBudget || ''] ?? 500;
+                const weekly = Math.round(monthly * 12 / 52);
+
+                if (profile.persona === 'wealth_builder') {
+                    setMode('long_term');
+                    setYears(profile.timeHorizon === 'long' ? '20' : profile.timeHorizon === 'medium' ? '10' : '5');
+                    setAnnualReturn('10');
+                    setPersonalizedHint('Long-term mode selected from your onboarding profile.');
+                } else if (profile.persona === 'active_opportunity_seeker') {
+                    setMode('12_week');
+                    setWeeks('12');
+                    setAnnualReturn('12');
+                    setPersonalizedHint('12-week sprint mode selected for opportunity-focused planning.');
+                } else {
+                    setMode('12_week');
+                    setWeeks('12');
+                    setAnnualReturn('8');
+                    setPersonalizedHint('12-week risk-aware mode selected to build confidence first.');
+                }
+
+                setMonthlyContribution(String(monthly));
+                setWeeklyContribution(String(weekly));
+            } catch (e) {
+                console.error('Failed to apply planner personalization:', e);
+            }
+        };
+
+        applyPersonaDefaults();
+    }, []);
 
     const calculate = async () => {
         setLoading(true);
@@ -85,6 +137,7 @@ const GoalPlannerScreen: React.FC<Props> = ({ navigation }) => {
                             <Text style={[styles.modeTabText, mode === 'long_term' && styles.modeTabTextActive]}>Long-Term</Text>
                         </TouchableOpacity>
                     </View>
+                    {personalizedHint ? <Text style={styles.personalizedHint}>{personalizedHint}</Text> : null}
                 </View>
 
                 <View style={styles.card}>
@@ -265,6 +318,7 @@ const styles = StyleSheet.create({
     modeTabActive: { backgroundColor: 'white' },
     modeTabText: { fontSize: 13, fontWeight: '600', color: '#64748b' },
     modeTabTextActive: { color: '#0f172a', fontWeight: '700' },
+    personalizedHint: { marginTop: 10, fontSize: 12, color: '#2563eb', fontWeight: '600' },
     inputGroup: { marginBottom: 12 },
     inputLabel: { fontSize: 12, fontWeight: '600', color: '#555', marginBottom: 4 },
     input: { borderWidth: 1, borderColor: '#d1d5db', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 16 },
