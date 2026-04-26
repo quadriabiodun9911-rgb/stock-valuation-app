@@ -83,10 +83,10 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
     }, [selectedMarket]);
 
     const loadAll = async () => {
-        loadMarketSummary();
-        loadPortfolioSnapshot();
-        loadBriefing();
-        loadProfileRecommendations();
+        await loadMarketSummary();
+        await loadPortfolioSnapshot();
+        await loadBriefing();
+        await loadProfileRecommendations();
     };
 
     const onRefresh = async () => {
