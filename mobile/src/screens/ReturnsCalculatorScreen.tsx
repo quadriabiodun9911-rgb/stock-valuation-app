@@ -31,6 +31,7 @@ const ReturnsCalculatorScreen: React.FC<Props> = ({ route, navigation }) => {
     const [dividends, setDividends] = useState('0');
     const [inflationRate, setInflationRate] = useState('3');
     const [transactionCostRate, setTransactionCostRate] = useState('0.25');
+    const [capitalGainsTaxRate, setCapitalGainsTaxRate] = useState('15');
     const [fixedCost, setFixedCost] = useState('0');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -51,6 +52,7 @@ const ReturnsCalculatorScreen: React.FC<Props> = ({ route, navigation }) => {
                 inflation_rate_pct: parseFloat(inflationRate) || 0,
                 transaction_cost_rate_pct: parseFloat(transactionCostRate) || 0,
                 fixed_transaction_cost: parseFloat(fixedCost) || 0,
+                capital_gains_tax_rate_pct: parseFloat(capitalGainsTaxRate) || 0,
             });
             setResult(response);
         } catch (e: any) {
@@ -65,6 +67,7 @@ const ReturnsCalculatorScreen: React.FC<Props> = ({ route, navigation }) => {
             { label: 'Capital Gain', value: money(result.capital_gain), color: '#2563eb' },
             { label: 'Dividend Income', value: money(result.dividend_income), color: '#16a34a' },
             { label: 'Transaction Costs', value: money(result.transaction_costs), color: '#ef4444' },
+            { label: 'Estimated Tax', value: money(result.tax_impact), color: '#b91c1c' },
             { label: 'Inflation Drag', value: money(result.inflation_impact), color: '#f59e0b' },
         ]
         : [];
@@ -133,8 +136,18 @@ const ReturnsCalculatorScreen: React.FC<Props> = ({ route, navigation }) => {
                             <TextInput style={styles.input} value={transactionCostRate} onChangeText={setTransactionCostRate} keyboardType="numeric" />
                         </View>
                         <View style={[styles.inputGroup, { flex: 1 }]}>
+                            <Text style={styles.inputLabel}>Capital Gains Tax %</Text>
+                            <TextInput style={styles.input} value={capitalGainsTaxRate} onChangeText={setCapitalGainsTaxRate} keyboardType="numeric" />
+                        </View>
+                    </View>
+
+                    <View style={styles.row}>
+                        <View style={[styles.inputGroup, { flex: 1 }]}>
                             <Text style={styles.inputLabel}>Fixed Cost</Text>
                             <TextInput style={styles.input} value={fixedCost} onChangeText={setFixedCost} keyboardType="numeric" />
+                        </View>
+                        <View style={[styles.inputGroup, { flex: 1 }]}>
+                            <Text style={styles.inputLabel}> </Text>
                         </View>
                     </View>
 
@@ -171,12 +184,33 @@ const ReturnsCalculatorScreen: React.FC<Props> = ({ route, navigation }) => {
                                     </Text>
                                 </View>
                                 <View style={styles.heroBox}>
-                                    <Text style={styles.heroLabel}>Real Return</Text>
+                                    <Text style={styles.heroLabel}>Real Return (Pre-Tax)</Text>
                                     <Text style={[styles.heroValue, { color: result.real_return >= 0 ? '#16a34a' : '#ef4444' }]}>
                                         {money(result.real_return)}
                                     </Text>
                                     <Text style={[styles.heroPct, { color: result.real_return >= 0 ? '#16a34a' : '#ef4444' }]}>
                                         {pct(result.real_return_pct)}
+                                    </Text>
+                                </View>
+                            </View>
+
+                            <View style={[styles.heroResult, { marginTop: 10 }]}>
+                                <View style={styles.heroBox}>
+                                    <Text style={styles.heroLabel}>After-Tax Return</Text>
+                                    <Text style={[styles.heroValue, { color: result.after_tax_return >= 0 ? '#16a34a' : '#ef4444' }]}>
+                                        {money(result.after_tax_return)}
+                                    </Text>
+                                    <Text style={[styles.heroPct, { color: result.after_tax_return >= 0 ? '#16a34a' : '#ef4444' }]}>
+                                        {pct(result.after_tax_return_pct)}
+                                    </Text>
+                                </View>
+                                <View style={styles.heroBox}>
+                                    <Text style={styles.heroLabel}>Real Take-Home Return</Text>
+                                    <Text style={[styles.heroValue, { color: result.real_after_tax_return >= 0 ? '#16a34a' : '#ef4444' }]}>
+                                        {money(result.real_after_tax_return)}
+                                    </Text>
+                                    <Text style={[styles.heroPct, { color: result.real_after_tax_return >= 0 ? '#16a34a' : '#ef4444' }]}>
+                                        {pct(result.real_after_tax_return_pct)}
                                     </Text>
                                 </View>
                             </View>
@@ -203,6 +237,8 @@ const ReturnsCalculatorScreen: React.FC<Props> = ({ route, navigation }) => {
                                 ['Holding Period', `${result.holding_period_years} years`],
                                 ['Annualized Return', pct(result.annualized_return_pct)],
                                 ['Real Annualized Return', pct(result.real_annualized_return_pct)],
+                                ['After-Tax Annualized Return', pct(result.after_tax_annualized_return_pct)],
+                                ['Real Take-Home Annualized Return', pct(result.real_after_tax_annualized_return_pct)],
                             ].map(([label, value]) => (
                                 <View key={label} style={styles.detailRow}>
                                     <Text style={styles.detailLabel}>{label}</Text>
@@ -210,6 +246,22 @@ const ReturnsCalculatorScreen: React.FC<Props> = ({ route, navigation }) => {
                                 </View>
                             ))}
                         </View>
+
+                        {Array.isArray(result.opportunities) && result.opportunities.length > 0 && (
+                            <View style={styles.card}>
+                                <Text style={styles.sectionTitle}>Opportunities to Improve</Text>
+                                {result.opportunities.map((op: any, idx: number) => (
+                                    <View key={`${op.title}-${idx}`} style={styles.opportunityCard}>
+                                        <View style={styles.opportunityHead}>
+                                            <Text style={styles.opportunityTitle}>{op.title}</Text>
+                                            <Text style={styles.opportunityImpact}>-{op.impact_pct}%</Text>
+                                        </View>
+                                        <Text style={styles.opportunityDetail}>{op.detail}</Text>
+                                        <Text style={styles.opportunityAction}>Action: {op.action}</Text>
+                                    </View>
+                                ))}
+                            </View>
+                        )}
                     </>
                 )}
 
@@ -289,6 +341,19 @@ const styles = StyleSheet.create({
     },
     detailLabel: { fontSize: 13, color: '#475569' },
     detailValue: { fontSize: 13, fontWeight: '700', color: '#111827' },
+    opportunityCard: {
+        backgroundColor: '#f8fafc',
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+        borderRadius: 10,
+        padding: 12,
+        marginBottom: 10,
+    },
+    opportunityHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    opportunityTitle: { fontSize: 13, fontWeight: '800', color: '#1e293b' },
+    opportunityImpact: { fontSize: 12, fontWeight: '700', color: '#b91c1c' },
+    opportunityDetail: { fontSize: 12, color: '#334155', marginTop: 6 },
+    opportunityAction: { fontSize: 12, color: '#0f766e', marginTop: 6, fontWeight: '600' },
 });
 
 export default ReturnsCalculatorScreen;

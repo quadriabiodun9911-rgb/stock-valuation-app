@@ -17,8 +17,8 @@ const sections = [
     {
         title: 'Research & Valuation',
         items: [
-            { label: 'Quick Valuation', icon: 'calculator', screen: 'Valuation', color: '#2563eb' },
-            { label: 'Full Analysis', icon: 'analytics', screen: 'ValuationFull', color: '#0ea5e9' },
+            { label: 'Quick Valuation', icon: 'calculator', screen: 'Valuation', color: '#2563eb', params: { symbol: 'AAPL' } },
+            { label: 'Full Analysis', icon: 'analytics', screen: 'ValuationFull', color: '#0ea5e9', params: { symbol: 'AAPL' } },
             { label: 'AI Screener', icon: 'filter', screen: 'Screener', color: '#8b5cf6' },
             { label: 'Compare Stocks', icon: 'git-compare', screen: 'StockComparison', color: '#7c3aed' },
         ],
@@ -50,6 +50,14 @@ const featuredActions = [
 ];
 
 const MarketsHubScreen: React.FC<Props> = ({ navigation }) => {
+    const openItem = (item: any) => {
+        if (item.screen === 'Valuation' || item.screen === 'ValuationFull') {
+            navigation.push(item.screen, item.params || { symbol: 'AAPL' });
+            return;
+        }
+        navigation.navigate(item.screen, item.params);
+    };
+
     return (
         <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
             <LinearGradient colors={['#0f172a', '#1d4ed8']} style={styles.header}>
@@ -95,7 +103,7 @@ const MarketsHubScreen: React.FC<Props> = ({ navigation }) => {
                             <TouchableOpacity
                                 key={item.screen}
                                 style={styles.card}
-                                onPress={() => navigation.navigate(item.screen)}
+                                onPress={() => openItem(item)}
                                 activeOpacity={0.85}
                             >
                                 <View style={styles.cardTopRow}>

@@ -10,7 +10,7 @@ import {
     ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { stockAPI, DCFParams, DCFResult, ComparableResult, TechnicalResult } from '../services/api';
+import { stockAPI, DCFParams, DCFResult, ComparableResult, TechnicalResult, AIRecommendationResult } from '../services/api';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 
@@ -20,7 +20,10 @@ interface Props {
 }
 
 const ValuationScreen: React.FC<Props> = ({ route, navigation }) => {
-    const { symbol, stockInfo } = route.params;
+    const routeParams = route?.params || {};
+    const symbol = routeParams?.symbol ? String(routeParams.symbol).toUpperCase() : 'AAPL';
+    const usingFallbackSymbol = !routeParams?.symbol;
+    const stockInfo = routeParams?.stockInfo;
 
     // State
     const [activeTab, setActiveTab] = useState<'dcf' | 'comparable' | 'technical' | 'full'>('dcf');
@@ -56,29 +59,33 @@ const ValuationScreen: React.FC<Props> = ({ route, navigation }) => {
 
     // Technical Analysis State
     const [technicalResult, setTechnicalResult] = useState<TechnicalResult | null>(null);
+    const [aiRecommendation, setAiRecommendation] = useState<AIRecommendationResult | null>(null);
+    const [aiLoading, setAiLoading] = useState(false);
+    const [aiError, setAiError] = useState<string | null>(null);
+    const [fullAnalysisNote, setFullAnalysisNote] = useState<string | null>(null);
 
     useEffect(() => {
         navigation.setOptions({
-            title: `${symbol} Valuation`,
+            title: symbol ? `${symbol} Valuation` : 'Valuation',
         });
     }, [symbol, navigation]);
 
-    const runDCFAnalysis = async () => {
+    const runDCFAnalysis = async (silent: boolean = false) => {
         try {
-            setLoading(true);
+            if (!silent) setLoading(true);
             const result = await stockAPI.calculateDCF(dcfParams);
             setDcfResult(result);
         } catch (error) {
             console.error('DCF Analysis Error:', error);
             Alert.alert('Error', 'Failed to perform DCF analysis. Please try again.');
         } finally {
-            setLoading(false);
+            if (!silent) setLoading(false);
         }
     };
 
-    const runComparableAnalysis = async () => {
+    const runComparableAnalysis = async (silent: boolean = false) => {
         try {
-            setLoading(true);
+            if (!silent) setLoading(true);
             const peers = peerSymbolsText
                 .split(',')
                 .map((item) => item.trim().toUpperCase())
@@ -89,29 +96,126 @@ const ValuationScreen: React.FC<Props> = ({ route, navigation }) => {
             console.error('Comparable Analysis Error:', error);
             Alert.alert('Error', 'Failed to perform comparable analysis. Please try again.');
         } finally {
-            setLoading(false);
+            if (!silent) setLoading(false);
         }
     };
 
-    const runTechnicalAnalysis = async () => {
+    const runTechnicalAnalysis = async (silent: boolean = false) => {
         try {
-            setLoading(true);
+            if (!silent) setLoading(true);
             const result = await stockAPI.getTechnicalAnalysis(symbol);
             setTechnicalResult(result);
         } catch (error) {
             console.error('Technical Analysis Error:', error);
             Alert.alert('Error', 'Failed to perform technical analysis. Please try again.');
         } finally {
-            setLoading(false);
+            if (!silent) setLoading(false);
+        }
+    };
+
+    const runAIRecommendation = async (silent: boolean = false) => {
+        try {
+            setAiError(null);
+            if (!silent) setAiLoading(true);
+            const result = await stockAPI.getAIRecommendation(symbol);
+            setAiRecommendation(result);
+        } catch (error: any) {
+            console.error('AI Recommendation Error:', error);
+            const fallbackMessage = 'AI recommendation is temporarily unavailable. You can still use DCF, comparable, and technical analysis.';
+            setAiError(fallbackMessage);
+            if (!silent) {
+                Alert.alert('AI Unavailable', fallbackMessage);
+            }
+        } finally {
+            if (!silent) setAiLoading(false);
         }
     };
 
     const runFullAnalysis = async () => {
         try {
             setLoading(true);
-            await runDCFAnalysis();
-            await runComparableAnalysis();
-            await runTechnicalAnalysis();
+            setFullAnalysisNote(null);
+
+            const comprehensive = await stockAPI.getComprehensiveAnalysis(symbol);
+            const currentPrice = Number(comprehensive.current_price || stockInfo?.current_price || 0);
+
+            setDcfResult({
+                symbol,
+                current_price: currentPrice,
+                intrinsic_value: Number(comprehensive.valuations?.dcf?.intrinsic_value || currentPrice),
+                upside_percentage: Number(comprehensive.valuations?.dcf?.upside || 0),
+                enterprise_value: Number(comprehensive.valuations?.dcf?.intrinsic_value || currentPrice),
+                equity_value: Number(comprehensive.valuations?.dcf?.intrinsic_value || currentPrice),
+                terminal_value: 0,
+                projected_fcf: [],
+                pv_fcf: [],
+                assumptions: {
+                    growth_rate: dcfParams.growth_rate,
+                    discount_rate: dcfParams.discount_rate,
+                    terminal_growth_rate: dcfParams.terminal_growth_rate,
+                },
+                confidence_level: comprehensive.valuations?.dcf?.confidence || 'Unavailable',
+            });
+
+            setComparableResult({
+                symbol,
+                current_price: currentPrice,
+                implied_valuations: {},
+                average_valuation: Number(comprehensive.valuations?.comparable?.average_valuation || currentPrice),
+                upside_percentage: Number(comprehensive.valuations?.comparable?.upside || 0),
+                peer_averages: {
+                    pe_ratio: 0,
+                    pb_ratio: 0,
+                    ps_ratio: 0,
+                    ev_ebitda: 0,
+                },
+                peer_symbols: [],
+                target_metrics: {
+                    pe_ratio: 0,
+                    pb_ratio: 0,
+                    ps_ratio: 0,
+                    ev_ebitda: 0,
+                },
+                confidence_level: comprehensive.valuations?.comparable?.confidence || 'Unavailable',
+            });
+
+            setTechnicalResult({
+                symbol,
+                current_price: currentPrice,
+                moving_averages: {
+                    sma_20: 0,
+                    sma_50: 0,
+                    sma_200: 0,
+                    ema_12: 0,
+                    ema_26: 0,
+                },
+                momentum_indicators: {
+                    rsi: Number(comprehensive.technical_analysis?.rsi || 50),
+                    macd: 0,
+                    macd_signal: 0,
+                    macd_histogram: 0,
+                },
+                volatility_indicators: {
+                    bollinger_upper: 0,
+                    bollinger_middle: 0,
+                    bollinger_lower: 0,
+                },
+                support_resistance: {
+                    support: Number(comprehensive.technical_analysis?.support || currentPrice),
+                    resistance: Number(comprehensive.technical_analysis?.resistance || currentPrice),
+                },
+                signals: comprehensive.technical_analysis?.signals || [],
+                trend: {
+                    direction: comprehensive.recommendation?.action || 'HOLD',
+                    strength: comprehensive.recommendation?.confidence || 'Low',
+                },
+            });
+
+            if (comprehensive.data_quality?.partial) {
+                setFullAnalysisNote('Partial analysis loaded due temporary market-data provider limits.');
+            }
+
+            await runAIRecommendation(true);
         } finally {
             setLoading(false);
         }
@@ -415,7 +519,7 @@ const ValuationScreen: React.FC<Props> = ({ route, navigation }) => {
 
                 <TouchableOpacity
                     style={styles.analyzeButton}
-                    onPress={runDCFAnalysis}
+                    onPress={() => runDCFAnalysis()}
                     disabled={loading}
                 >
                     {loading ? (
@@ -518,7 +622,7 @@ const ValuationScreen: React.FC<Props> = ({ route, navigation }) => {
 
                 <TouchableOpacity
                     style={styles.analyzeButton}
-                    onPress={runTechnicalAnalysis}
+                    onPress={() => runTechnicalAnalysis()}
                     disabled={loading}
                 >
                     {loading ? (
@@ -648,7 +752,7 @@ const ValuationScreen: React.FC<Props> = ({ route, navigation }) => {
                 </View>
                 <TouchableOpacity
                     style={styles.analyzeButton}
-                    onPress={runComparableAnalysis}
+                    onPress={() => runComparableAnalysis()}
                     disabled={loading}
                 >
                     {loading ? (
@@ -738,6 +842,7 @@ const ValuationScreen: React.FC<Props> = ({ route, navigation }) => {
             <View style={styles.section}>
                 <Text style={styles.sectionTitle}>Smart Summary</Text>
                 <Text style={styles.sectionSubtitle}>{buildFullSummary()}</Text>
+                {fullAnalysisNote ? <Text style={styles.fullAnalysisNote}>{fullAnalysisNote}</Text> : null}
                 <View style={styles.flagRow}>
                     {buildRiskFlags().map((flag, index) => (
                         <View
@@ -754,6 +859,57 @@ const ValuationScreen: React.FC<Props> = ({ route, navigation }) => {
                         </View>
                     ))}
                 </View>
+            </View>
+
+            <View style={styles.section}>
+                <View style={styles.sectionHeaderRow}>
+                    <Text style={styles.sectionTitle}>AI Implementation</Text>
+                    <View style={styles.aiHeaderActions}>
+                        <TouchableOpacity style={styles.aiSecondaryButton} onPress={() => navigation.navigate('AIChat', { symbol })}>
+                            <Ionicons name="chatbubbles" size={14} color="#1d4ed8" />
+                            <Text style={styles.aiSecondaryButtonText}>AI Chat</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.aiPrimaryButton} onPress={() => runAIRecommendation()} disabled={aiLoading}>
+                            {aiLoading ? <ActivityIndicator color="white" size="small" /> : <Ionicons name="sparkles" size={14} color="white" />}
+                            <Text style={styles.aiPrimaryButtonText}>{aiLoading ? 'Running' : 'Run AI'}</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+
+                {aiRecommendation ? (
+                    <View style={styles.aiCard}>
+                        <View style={styles.aiRow}>
+                            <Text style={styles.aiLabel}>Action</Text>
+                            <Text style={styles.aiValue}>{aiRecommendation.action}</Text>
+                        </View>
+                        <View style={styles.aiRow}>
+                            <Text style={styles.aiLabel}>Confidence</Text>
+                            <Text style={styles.aiValue}>{(aiRecommendation.confidence * 100).toFixed(0)}%</Text>
+                        </View>
+                        <View style={styles.aiRow}>
+                            <Text style={styles.aiLabel}>Target Price</Text>
+                            <Text style={styles.aiValue}>{formatPrice(aiRecommendation.target_price)}</Text>
+                        </View>
+                        <View style={styles.aiRow}>
+                            <Text style={styles.aiLabel}>Risk/Reward</Text>
+                            <Text style={styles.aiValue}>{aiRecommendation.risk_reward_ratio.toFixed(2)}</Text>
+                        </View>
+                        <Text style={styles.aiSubTitle}>Top Catalysts</Text>
+                        {(aiRecommendation.catalysts || []).slice(0, 2).map((item, index) => (
+                            <Text key={`${item}-${index}`} style={styles.aiBullet}>• {item}</Text>
+                        ))}
+                        <Text style={styles.aiSubTitle}>Key Risks</Text>
+                        {(aiRecommendation.risks || []).slice(0, 2).map((item, index) => (
+                            <Text key={`${item}-${index}`} style={styles.aiBullet}>• {item}</Text>
+                        ))}
+                    </View>
+                ) : (
+                    <Text style={styles.sectionSubtitle}>
+                        Run AI to generate an action, confidence, target, and risk summary for {symbol}.
+                    </Text>
+                )}
+
+                {aiError ? <Text style={styles.aiErrorText}>{aiError}</Text> : null}
             </View>
 
             <View style={styles.section}>
@@ -898,6 +1054,19 @@ const ValuationScreen: React.FC<Props> = ({ route, navigation }) => {
 
     return (
         <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+            {usingFallbackSymbol ? (
+                <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Using Default Symbol</Text>
+                    <Text style={styles.sectionSubtitle}>
+                        This screen opened without a selected symbol, so analysis is running for AAPL.
+                    </Text>
+                    <TouchableOpacity style={styles.analyzeButton} onPress={() => navigation.navigate('Search')}>
+                        <Ionicons name="search" size={18} color="white" />
+                        <Text style={styles.analyzeButtonText}>Choose Another Stock</Text>
+                    </TouchableOpacity>
+                </View>
+            ) : null}
+
             {/* Stock Header */}
             <View style={styles.stockHeader}>
                 <View style={styles.stockHeaderContent}>
@@ -1218,6 +1387,84 @@ const styles = StyleSheet.create({
         fontSize: 11,
         color: '#111827',
         fontWeight: '600',
+    },
+    aiHeaderActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    aiPrimaryButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#1d4ed8',
+        paddingHorizontal: 10,
+        paddingVertical: 7,
+        borderRadius: 8,
+    },
+    aiPrimaryButtonText: {
+        color: 'white',
+        fontSize: 12,
+        fontWeight: '600',
+        marginLeft: 6,
+    },
+    aiSecondaryButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#dbeafe',
+        paddingHorizontal: 10,
+        paddingVertical: 7,
+        borderRadius: 8,
+    },
+    aiSecondaryButtonText: {
+        color: '#1d4ed8',
+        fontSize: 12,
+        fontWeight: '600',
+        marginLeft: 6,
+    },
+    aiCard: {
+        borderWidth: 1,
+        borderColor: '#bfdbfe',
+        backgroundColor: '#eff6ff',
+        borderRadius: 12,
+        padding: 14,
+    },
+    aiRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginBottom: 8,
+    },
+    aiLabel: {
+        color: '#1e3a8a',
+        fontSize: 13,
+        fontWeight: '500',
+    },
+    aiValue: {
+        color: '#0f172a',
+        fontSize: 13,
+        fontWeight: '700',
+    },
+    aiSubTitle: {
+        marginTop: 8,
+        marginBottom: 4,
+        color: '#1e3a8a',
+        fontSize: 12,
+        fontWeight: '700',
+    },
+    aiBullet: {
+        color: '#334155',
+        fontSize: 12,
+        marginBottom: 2,
+    },
+    aiErrorText: {
+        marginTop: 10,
+        fontSize: 12,
+        color: '#b91c1c',
+    },
+    fullAnalysisNote: {
+        marginTop: -6,
+        marginBottom: 10,
+        fontSize: 12,
+        color: '#92400e',
     },
     tabContainer: {
         flexDirection: 'row',

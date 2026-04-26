@@ -46,6 +46,26 @@ def test_calculate_investor_returns_handles_flat_position():
     assert result["annualized_return_pct"] == pytest.approx(0.0)
 
 
+def test_calculate_investor_returns_includes_tax_impact_fields():
+    result = calculate_investor_returns(
+        shares=10,
+        purchase_price=100.0,
+        current_price=120.0,
+        total_dividends=0.0,
+        holding_period_years=1.0,
+        inflation_rate_pct=0.0,
+        transaction_cost_rate_pct=0.0,
+        capital_gains_tax_rate_pct=10.0,
+    )
+
+    assert result["total_return"] == pytest.approx(200.0)
+    assert result["tax_impact"] == pytest.approx(20.0)
+    assert result["after_tax_return"] == pytest.approx(180.0)
+    assert result["real_after_tax_return"] == pytest.approx(180.0)
+    assert isinstance(result["opportunities"], list)
+    assert any(item["title"] == "Improve Tax Efficiency" for item in result["opportunities"])
+
+
 def test_get_portfolio_handles_rate_limited_market_data(monkeypatch):
     fake_portfolio = SimpleNamespace(
         positions=[SimpleNamespace(symbol="AAPL", shares=2, cost_basis=150.0)],

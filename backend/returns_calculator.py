@@ -86,6 +86,7 @@ def calculate_investor_returns(
     inflation_rate_pct: float = 3.0,
     transaction_cost_rate_pct: float = 0.25,
     fixed_transaction_cost: float = 0.0,
+    capital_gains_tax_rate_pct: float = 15.0,
     explicit_transaction_costs: Optional[float] = None,
 ) -> dict:
     shares = _to_float(shares)
@@ -96,6 +97,7 @@ def calculate_investor_returns(
     inflation_rate_pct = max(_to_float(inflation_rate_pct), 0.0)
     transaction_cost_rate_pct = max(_to_float(transaction_cost_rate_pct), 0.0)
     fixed_transaction_cost = max(_to_float(fixed_transaction_cost), 0.0)
+    capital_gains_tax_rate_pct = max(_to_float(capital_gains_tax_rate_pct), 0.0)
 
     purchase_value = shares * purchase_price
     market_value = shares * current_price
@@ -110,21 +112,82 @@ def calculate_investor_returns(
     total_return = gross_return - transaction_costs
     total_return_pct = (total_return / purchase_value * 100.0) if purchase_value > 0 else 0.0
 
+    taxable_return = max(total_return, 0.0)
+    tax_impact = taxable_return * (capital_gains_tax_rate_pct / 100.0)
+    after_tax_return = total_return - tax_impact
+    after_tax_return_pct = (after_tax_return / purchase_value * 100.0) if purchase_value > 0 else 0.0
+
     inflation_factor = (1 + inflation_rate_pct / 100.0) ** holding_period_years
     inflation_impact = purchase_value * (inflation_factor - 1)
     real_return = total_return - inflation_impact
     real_return_pct = (real_return / purchase_value * 100.0) if purchase_value > 0 else 0.0
+    real_after_tax_return = after_tax_return - inflation_impact
+    real_after_tax_return_pct = (real_after_tax_return / purchase_value * 100.0) if purchase_value > 0 else 0.0
 
     annualized_return_pct = 0.0
     real_annualized_return_pct = 0.0
+    after_tax_annualized_return_pct = 0.0
+    real_after_tax_annualized_return_pct = 0.0
     if purchase_value > 0:
         ending_multiple = (purchase_value + total_return) / purchase_value
         real_multiple = (purchase_value + total_return) / (purchase_value * inflation_factor)
+        after_tax_ending_multiple = (purchase_value + after_tax_return) / purchase_value
+        real_after_tax_multiple = (purchase_value + after_tax_return) / (purchase_value * inflation_factor)
 
         if ending_multiple > 0:
             annualized_return_pct = ((ending_multiple ** (1 / holding_period_years)) - 1) * 100.0
         if real_multiple > 0:
             real_annualized_return_pct = ((real_multiple ** (1 / holding_period_years)) - 1) * 100.0
+        if after_tax_ending_multiple > 0:
+            after_tax_annualized_return_pct = ((after_tax_ending_multiple ** (1 / holding_period_years)) - 1) * 100.0
+        if real_after_tax_multiple > 0:
+            real_after_tax_annualized_return_pct = ((real_after_tax_multiple ** (1 / holding_period_years)) - 1) * 100.0
+
+    opportunities = []
+    if purchase_value > 0:
+        transaction_drag_pct = (transaction_costs / purchase_value) * 100.0
+        inflation_drag_pct = (inflation_impact / purchase_value) * 100.0
+        tax_drag_pct = (tax_impact / purchase_value) * 100.0
+
+        if transaction_drag_pct >= 1.0:
+            opportunities.append(
+                {
+                    "title": "Reduce Trading Costs",
+                    "detail": "Fees are materially reducing your return.",
+                    "impact_pct": round(transaction_drag_pct, 2),
+                    "action": "Use lower-fee brokers and reduce unnecessary trading frequency.",
+                }
+            )
+
+        if inflation_drag_pct >= 2.0:
+            opportunities.append(
+                {
+                    "title": "Beat Inflation More Consistently",
+                    "detail": "Inflation is eroding purchasing power.",
+                    "impact_pct": round(inflation_drag_pct, 2),
+                    "action": "Focus on assets with stronger real-return potential and longer holding periods.",
+                }
+            )
+
+        if tax_drag_pct >= 1.0:
+            opportunities.append(
+                {
+                    "title": "Improve Tax Efficiency",
+                    "detail": "Tax impact is taking a noticeable share of gains.",
+                    "impact_pct": round(tax_drag_pct, 2),
+                    "action": "Prioritize long-term holdings and consider tax-advantaged accounts where possible.",
+                }
+            )
+
+        if real_after_tax_return_pct < 0 and total_return_pct > 0:
+            opportunities.append(
+                {
+                    "title": "Nominal Gain, Real Loss",
+                    "detail": "Your gains are positive before inflation/tax but negative after adjustments.",
+                    "impact_pct": round(abs(real_after_tax_return_pct), 2),
+                    "action": "Target higher-conviction positions and improve cost/tax discipline.",
+                }
+            )
 
     return {
         "purchase_value": round(purchase_value, 2),
@@ -135,10 +198,19 @@ def calculate_investor_returns(
         "gross_return": round(gross_return, 2),
         "total_return": round(total_return, 2),
         "total_return_pct": round(total_return_pct, 2),
+        "capital_gains_tax_rate_pct": round(capital_gains_tax_rate_pct, 2),
+        "tax_impact": round(tax_impact, 2),
+        "after_tax_return": round(after_tax_return, 2),
+        "after_tax_return_pct": round(after_tax_return_pct, 2),
         "inflation_impact": round(inflation_impact, 2),
         "real_return": round(real_return, 2),
         "real_return_pct": round(real_return_pct, 2),
+        "real_after_tax_return": round(real_after_tax_return, 2),
+        "real_after_tax_return_pct": round(real_after_tax_return_pct, 2),
         "annualized_return_pct": round(annualized_return_pct, 2),
         "real_annualized_return_pct": round(real_annualized_return_pct, 2),
+        "after_tax_annualized_return_pct": round(after_tax_annualized_return_pct, 2),
+        "real_after_tax_annualized_return_pct": round(real_after_tax_annualized_return_pct, 2),
         "holding_period_years": round(holding_period_years, 2),
+        "opportunities": opportunities,
     }
