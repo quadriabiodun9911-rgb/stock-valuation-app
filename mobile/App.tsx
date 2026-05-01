@@ -60,6 +60,7 @@ import LeaderboardScreen from './src/screens/LeaderboardScreen';
 import StockComparisonScreen from './src/screens/StockComparisonScreen';
 import AchievementsScreen from './src/screens/AchievementsScreen';
 import AIChatScreen from './src/screens/AIChatScreen';
+import AssistiveMetricsScreen from './src/screens/AssistiveMetricsScreen';
 import EarningsCalendarScreen from './src/screens/EarningsCalendarScreen';
 import OptionsCalculatorScreen from './src/screens/OptionsCalculatorScreen';
 import ReferralScreen from './src/screens/ReferralScreen';
@@ -172,6 +173,7 @@ function MainAppStack() {
             <Stack.Screen name="StockComparison" component={StockComparisonScreen} options={{ headerShown: false }} />
             <Stack.Screen name="Achievements" component={AchievementsScreen} options={{ headerShown: false }} />
             <Stack.Screen name="AIChat" component={AIChatScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="AssistiveMetrics" component={AssistiveMetricsScreen} options={{ headerShown: false }} />
             <Stack.Screen name="EarningsCalendar" component={EarningsCalendarScreen} options={{ headerShown: false }} />
             <Stack.Screen name="OptionsCalculator" component={OptionsCalculatorScreen} options={{ headerShown: false }} />
             <Stack.Screen name="Referral" component={ReferralScreen} options={{ headerShown: false }} />

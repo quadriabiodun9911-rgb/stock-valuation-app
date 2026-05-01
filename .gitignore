@@ -1,3 +1,6 @@
 *.db
 *.db-shm
 *.db-wal
+.expo/
+mobile/.expo/
+mobile-app/.expo/

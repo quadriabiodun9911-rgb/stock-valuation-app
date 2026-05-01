@@ -24,11 +24,14 @@ const SUGGESTIONS = [
     "Tell me about AMD",
 ];
 
-const AIChatScreen = ({ navigation }: any) => {
+const AIChatScreen = ({ navigation, route }: any) => {
+    const symbolFromRoute: string | undefined = route?.params?.symbol;
     const [messages, setMessages] = useState<Message[]>([
         {
             id: '0',
-            text: "Hi! I'm your AI stock analyst. Ask me anything about stocks, your portfolio, or market trends.\n\nTry: \"Should I buy AAPL?\" or \"How is my portfolio doing?\"",
+            text: symbolFromRoute
+                ? `Hi! I'm your AI stock analyst. I can focus on ${symbolFromRoute.toUpperCase()} or your broader portfolio.`
+                : "Hi! I'm your AI stock analyst. Ask me anything about stocks, your portfolio, or market trends.\n\nTry: \"Should I buy AAPL?\" or \"How is my portfolio doing?\"",
             isUser: false,
             type: 'help',
             timestamp: new Date(),
@@ -53,7 +56,7 @@ const AIChatScreen = ({ navigation }: any) => {
         setLoading(true);
 
         try {
-            const res = await stockAPI.sendAIChat(msg);
+            const res = await stockAPI.sendAIChat(msg, symbolFromRoute);
             const aiMsg: Message = {
                 id: (Date.now() + 1).toString(),
                 text: res.response,
@@ -81,6 +84,12 @@ const AIChatScreen = ({ navigation }: any) => {
         }
     }, [messages]);
 
+    useEffect(() => {
+        if (symbolFromRoute) {
+            sendMessage(`Give me a concise valuation brief for ${symbolFromRoute.toUpperCase()}.`);
+        }
+    }, [symbolFromRoute]);
+
     const renderMessage = ({ item }: { item: Message }) => (
         <View style={[styles.msgRow, item.isUser && styles.msgRowUser]}>
             {!item.isUser && (
@@ -107,7 +116,12 @@ const AIChatScreen = ({ navigation }: any) => {
                     <Text style={styles.headerTitle}>AI Analyst</Text>
                     <View style={styles.onlineDot} />
                 </View>
-                <View style={{ width: 36 }} />
+                <TouchableOpacity
+                    onPress={() => navigation.navigate('AssistiveMetrics')}
+                    style={styles.metricsBtn}
+                >
+                    <Ionicons name="stats-chart" size={18} color="#fff" />
+                </TouchableOpacity>
             </LinearGradient>
 
             <FlatList
@@ -181,6 +195,14 @@ const styles = StyleSheet.create({
     headerCenter: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
     headerTitle: { fontSize: 18, fontWeight: '800', color: '#fff' },
     onlineDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#10b981', marginLeft: 8 },
+    metricsBtn: {
+        width: 36,
+        height: 36,
+        borderRadius: 12,
+        backgroundColor: 'rgba(255,255,255,0.1)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
     chatList: { padding: 16, paddingBottom: 8 },
     msgRow: { flexDirection: 'row', marginBottom: 12, alignItems: 'flex-end' },
     msgRowUser: { flexDirection: 'row-reverse' },

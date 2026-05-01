@@ -94,6 +94,12 @@ def get_user_id(user: Optional[dict]) -> int:
     return user["id"] if user else 1
 
 
+async def get_user_id_dep(request: Request) -> int:
+    """FastAPI dependency that resolves user_id from bearer token."""
+    user = await get_current_user(request)
+    return get_user_id(user)
+
+
 # ── Request/Response models ──────────────────────────────────────
 
 class RegisterRequest(BaseModel):

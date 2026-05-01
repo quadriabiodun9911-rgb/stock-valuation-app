@@ -3,8 +3,16 @@ import Constants from 'expo-constants';
 import { getCached, setCache } from '../utils/cache';
 
 const resolveApiBaseUrl = () => {
-    const envUrl = process.env.EXPO_PUBLIC_API_URL;
+    const normalize = (value?: string | null) => {
+        if (!value) return null;
+        return value.replace(/\/$/, '');
+    };
+
+    const envUrl = normalize(process.env.EXPO_PUBLIC_API_URL);
     if (envUrl) return envUrl;
+
+    const configuredUrl = normalize((Constants.expoConfig as any)?.extra?.apiUrl);
+    if (configuredUrl) return configuredUrl;
 
     const hostUri =
         Constants.expoConfig?.hostUri ||
@@ -17,7 +25,8 @@ const resolveApiBaseUrl = () => {
         return `http://${host}:8000`;
     }
 
-    return 'http://localhost:8000';
+    // Last-resort fallback for standalone tester builds.
+    return 'https://stock-valuation-api.onrender.com';
 };
 
 const API_BASE_URL = resolveApiBaseUrl();
@@ -230,6 +239,92 @@ export interface AIRecommendationResult {
     risk_reward_ratio: number;
     catalysts: string[];
     risks: string[];
+}
+
+export interface AssistiveValuationBriefRequest {
+    symbol: string;
+    analysis?: {
+        recommendation?: {
+            action?: string;
+            confidence?: string;
+        };
+        valuations?: {
+            dcf?: {
+                upside?: number;
+            };
+            comparable?: {
+                upside?: number;
+            };
+        };
+        technical_analysis?: {
+            rsi?: number;
+            support?: number;
+            resistance?: number;
+        };
+    };
+    risk_profile?: string;
+    time_horizon?: string;
+}
+
+export interface AssistiveValuationBriefResponse {
+    symbol: string;
+    summary: string;
+    evidence: string[];
+    risks: string[];
+    next_actions: string[];
+    confidence: string;
+    used_ai: boolean;
+    disclaimer: string;
+}
+
+export interface AssistiveNewsImpactResponse {
+    symbol: string;
+    summary: string;
+    overall_sentiment: 'positive' | 'negative' | 'neutral';
+    evidence: string[];
+    risks: string[];
+    next_actions: string[];
+    headlines: string[];
+    used_ai: boolean;
+    disclaimer: string;
+}
+
+export interface AssistiveMetricsResponse {
+    total_feedback: number;
+    helpful_feedback: number;
+    helpfulness_rate: number;
+    total_events: number;
+    feedback_breakdown: Array<{
+        brief_type: string;
+        total: number;
+        helpful: number;
+    }>;
+    event_breakdown: Array<{
+        event_name: string;
+        total: number;
+    }>;
+}
+
+export interface AssistiveDashboardMetricsResponse {
+    window_days: number;
+    feedback_by_symbol: Array<{
+        symbol: string;
+        total: number;
+        helpful: number;
+    }>;
+    feedback_by_day: Array<{
+        day: string;
+        total: number;
+        helpful: number;
+    }>;
+    events_by_symbol: Array<{
+        symbol: string;
+        total: number;
+    }>;
+    events_by_day: Array<{
+        day: string;
+        total: number;
+    }>;
 }
 
 export interface PriceEpsPoint {
@@ -660,6 +755,14 @@ export class StockValuationAPI {
     }
 
     private buildFriendlyErrorMessage(status?: number, path?: string): string {
+        if ((status === 401 || status === 403) && path?.includes('/ai-chat')) {
+            return 'Please sign in to use AI chat.';
+        }
+
+        if (status === 401 || status === 403) {
+            return 'Your session expired. Please sign in again.';
+        }
+
         if (status === 429) {
             return 'Service is busy right now. Please try again in a moment.';
         }
@@ -1030,7 +1133,7 @@ export class StockValuationAPI {
     async submitTradeReason(body: TradeReasonSubmit): Promise<{ status: string; entry: any }> {
         return this.request<{ status: string; entry: any }>('/api/trade-reasons/submit', {
             method: 'POST',
-            body: JSON.stringify(body),
+            body,
         });
     }
 
@@ -1331,6 +1434,58 @@ export class StockValuationAPI {
             method: 'POST',
             body: { symbol, period },
         });
+    }
+
+    async getAssistiveValuationBrief(
+        payload: AssistiveValuationBriefRequest,
+    ): Promise<AssistiveValuationBriefResponse> {
+        return this.request<AssistiveValuationBriefResponse>('/api/assistive/valuation-brief', {
+            method: 'POST',
+            body: payload,
+        });
+    }
+
+    async getAssistiveNewsImpact(symbol: string, limit: number = 6): Promise<AssistiveNewsImpactResponse> {
+        return this.request<AssistiveNewsImpactResponse>('/api/assistive/news-impact', {
+            method: 'POST',
+            body: { symbol, limit },
+        });
+    }
+
+    async submitAssistiveFeedback(payload: {
+        symbol?: string;
+        brief_type: string;
+        helpful: boolean;
+        comment?: string;
+    }): Promise<any> {
+        return this.request<any>('/api/assistive/feedback', {
+            method: 'POST',
+            body: payload,
+        });
+    }
+
+    async trackAssistiveEvent(payload: {
+        event_name: string;
+        symbol?: string;
+        metadata?: Record<string, any>;
+    }): Promise<any> {
+        return this.request<any>('/api/assistive/event', {
+            method: 'POST',
+            body: payload,
+        });
+    }
+
+    async getAssistiveMetrics(): Promise<AssistiveMetricsResponse> {
+        return this.request<AssistiveMetricsResponse>('/api/assistive/metrics');
+    }
+
+    async getAssistiveDashboardMetrics(
+        days: number = 30,
+    ): Promise<AssistiveDashboardMetricsResponse> {
+        return this.request<AssistiveDashboardMetricsResponse>(
+            '/api/assistive/metrics/dashboard',
+            { params: { days } },
+        );
     }
 
     // ── Options Calculator ──

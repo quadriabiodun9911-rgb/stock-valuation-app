@@ -41,6 +41,7 @@ from social import router as social_router
 from achievements import router as achievements_router
 from briefing import router as briefing_router
 from ai_chat import router as ai_chat_router
+from assistive_ai import router as assistive_ai_router
 from referral import router as referral_router
 from ai_service import get_efficiency_report
 from returns_calculator import (
@@ -220,6 +221,7 @@ app.include_router(social_router)
 app.include_router(achievements_router)
 app.include_router(briefing_router)
 app.include_router(ai_chat_router)
+app.include_router(assistive_ai_router)
 app.include_router(referral_router)
 
 # Pydantic models
@@ -4108,7 +4110,7 @@ async def get_profile_recommendations(
     }
 
 
-@app.get("/recommendations")
+@app.get("/recommendations/public")
 async def get_recommendations(
     market: str = Query("US"),
     limit: int = Query(5, ge=1, le=10),

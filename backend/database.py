@@ -250,6 +250,27 @@ def _get_schema_sql() -> str:
             created_at      {dt_type} NOT NULL DEFAULT {dt_default},
             FOREIGN KEY (user_id) REFERENCES users(id)
         );
+
+        CREATE TABLE IF NOT EXISTS assistive_feedback (
+            id          {pk_type},
+            user_id     INTEGER,
+            symbol      TEXT,
+            brief_type  TEXT NOT NULL,
+            helpful     INTEGER NOT NULL,
+            comment     TEXT,
+            created_at  {dt_type} NOT NULL DEFAULT {dt_default},
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS assistive_events (
+            id            {pk_type},
+            user_id       INTEGER,
+            event_name    TEXT NOT NULL,
+            symbol        TEXT,
+            metadata_json TEXT,
+            created_at    {dt_type} NOT NULL DEFAULT {dt_default},
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        );
     """
 
 
@@ -870,3 +891,165 @@ def delete_financial_upload(upload_id: int, user_id: int) -> bool:
     )
     conn.commit()
     return cur.rowcount > 0
+
+
+# ── Assistive AI Feedback and Telemetry ──────────────────────────
+
+def add_assistive_feedback(
+    brief_type: str,
+    helpful: bool,
+    symbol: Optional[str] = None,
+    comment: Optional[str] = None,
+    user_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    conn = _get_conn()
+    cur = conn.execute(
+        """INSERT INTO assistive_feedback
+           (user_id, symbol, brief_type, helpful, comment)
+           VALUES (?, ?, ?, ?, ?)""",
+        (
+            user_id,
+            symbol.upper() if symbol else None,
+            brief_type,
+            1 if helpful else 0,
+            comment,
+        ),
+    )
+    conn.commit()
+    return {
+        "id": cur.lastrowid,
+        "symbol": symbol.upper() if symbol else None,
+        "brief_type": brief_type,
+        "helpful": helpful,
+        "comment": comment,
+        "created_at": datetime.now().isoformat(),
+    }
+
+
+def add_assistive_event(
+    event_name: str,
+    symbol: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    user_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    conn = _get_conn()
+    metadata_json = json.dumps(metadata or {})
+    cur = conn.execute(
+        """INSERT INTO assistive_events
+           (user_id, event_name, symbol, metadata_json)
+           VALUES (?, ?, ?, ?)""",
+        (user_id, event_name, symbol.upper() if symbol else None, metadata_json),
+    )
+    conn.commit()
+    return {
+        "id": cur.lastrowid,
+        "event_name": event_name,
+        "symbol": symbol.upper() if symbol else None,
+        "metadata": metadata or {},
+        "created_at": datetime.now().isoformat(),
+    }
+
+
+def get_assistive_metrics() -> Dict[str, Any]:
+    conn = _get_conn()
+
+    total_feedback_row = conn.execute(
+        "SELECT COUNT(*) AS c FROM assistive_feedback"
+    ).fetchone()
+    helpful_feedback_row = conn.execute(
+        "SELECT COUNT(*) AS c FROM assistive_feedback WHERE helpful = 1"
+    ).fetchone()
+    total_events_row = conn.execute(
+        "SELECT COUNT(*) AS c FROM assistive_events"
+    ).fetchone()
+
+    total_feedback = int(total_feedback_row["c"] if total_feedback_row else 0)
+    helpful_feedback = int(helpful_feedback_row["c"] if helpful_feedback_row else 0)
+    total_events = int(total_events_row["c"] if total_events_row else 0)
+
+    feedback_breakdown_rows = conn.execute(
+        """SELECT brief_type, COUNT(*) AS total,
+               SUM(CASE WHEN helpful = 1 THEN 1 ELSE 0 END) AS helpful
+           FROM assistive_feedback
+           GROUP BY brief_type
+           ORDER BY total DESC"""
+    ).fetchall()
+
+    event_breakdown_rows = conn.execute(
+        """SELECT event_name, COUNT(*) AS total
+           FROM assistive_events
+           GROUP BY event_name
+           ORDER BY total DESC"""
+    ).fetchall()
+
+    return {
+        "total_feedback": total_feedback,
+        "helpful_feedback": helpful_feedback,
+        "helpfulness_rate": round(
+            helpful_feedback / total_feedback * 100, 1
+        ) if total_feedback else 0.0,
+        "total_events": total_events,
+        "feedback_breakdown": [dict(r) for r in feedback_breakdown_rows],
+        "event_breakdown": [dict(r) for r in event_breakdown_rows],
+    }
+
+
+def get_assistive_dashboard_metrics(days: int = 30) -> Dict[str, Any]:
+    conn = _get_conn()
+
+    if USE_POSTGRES:
+        date_filter = "created_at >= NOW() - (%s * INTERVAL '1 day')"
+        date_params = (days,)
+    else:
+        date_filter = "DATE(created_at) >= DATE('now', ?)"
+        date_params = (f"-{days} day",)
+
+    feedback_by_symbol_rows = conn.execute(
+        """SELECT COALESCE(symbol, 'UNKNOWN') AS symbol,
+               COUNT(*) AS total,
+               SUM(CASE WHEN helpful = 1 THEN 1 ELSE 0 END) AS helpful
+           FROM assistive_feedback
+           WHERE """ + date_filter + """
+           GROUP BY COALESCE(symbol, 'UNKNOWN')
+           ORDER BY total DESC""",
+        date_params,
+    ).fetchall()
+
+    feedback_by_day_rows = conn.execute(
+        """SELECT DATE(created_at) AS day,
+               COUNT(*) AS total,
+               SUM(CASE WHEN helpful = 1 THEN 1 ELSE 0 END) AS helpful
+           FROM assistive_feedback
+           WHERE """ + date_filter + """
+           GROUP BY DATE(created_at)
+           ORDER BY day DESC""",
+        date_params,
+    ).fetchall()
+
+    events_by_symbol_rows = conn.execute(
+        """SELECT COALESCE(symbol, 'UNKNOWN') AS symbol,
+               COUNT(*) AS total
+           FROM assistive_events
+           WHERE """ + date_filter + """
+           GROUP BY COALESCE(symbol, 'UNKNOWN')
+           ORDER BY total DESC""",
+        date_params,
+    ).fetchall()
+
+    events_by_day_rows = conn.execute(
+        """SELECT DATE(created_at) AS day,
+               COUNT(*) AS total
+           FROM assistive_events
+           WHERE """ + date_filter + """
+           GROUP BY DATE(created_at)
+           ORDER BY day DESC""",
+        date_params,
+    ).fetchall()
+
+    return {
+        "window_days": days,
+        "feedback_by_symbol": [dict(r) for r in feedback_by_symbol_rows],
+        "feedback_by_day": [dict(r) for r in feedback_by_day_rows],
+        "events_by_symbol": [dict(r) for r in events_by_symbol_rows],
+        "events_by_day": [dict(r) for r in events_by_day_rows],
+    }

@@ -46,7 +46,7 @@ SELL_REASONS = [
 class TradeReasonSubmit(BaseModel):
     symbol: str = Field(..., min_length=1, max_length=10)
     action: Literal["buy", "sell"]
-    reasons: List[str] = Field(..., min_items=1, max_items=5)
+    reasons: List[str] = Field(..., min_length=1, max_length=5)
     note: Optional[str] = Field(None, max_length=280)
     confidence: Optional[int] = Field(None, ge=1, le=5)
 

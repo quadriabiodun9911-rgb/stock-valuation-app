@@ -9,15 +9,19 @@ services:
     envVars:
       - key: APP_ENV
         value: production
-      - key: PORT
-        value: 10000
       - key: ENABLE_HTTPS_REDIRECT
-        value: true
+        value: false
       - key: RATE_LIMIT_PER_MINUTE
         value: 120
       - key: ALLOWED_HOSTS
         value: "*"
       - key: ALLOWED_ORIGINS
-        value: "https://your-production-client.example.com"
+        value: "*"
+      - key: ALLOWED_ORIGIN_REGEX
+        value: ".*"
       - key: API_KEY
         generateValue: true
+      - key: DATABASE_URL
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false

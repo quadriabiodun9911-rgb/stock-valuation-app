@@ -178,7 +178,7 @@ const OnboardingScreen = ({ navigation }: any) => {
     };
 
     const renderSlide = ({ item, index }: any) => (
-        <LinearGradient colors={[...item.gradient]} style={styles.slide}>
+        <LinearGradient colors={item.gradient as [string, string, ...string[]]} style={styles.slide}>
             <View style={styles.slideContent}>
                 {/* Icon */}
                 <View style={[styles.iconCircle, { backgroundColor: `${item.accent}20` }]}>

@@ -8,10 +8,19 @@ import {
     Alert,
     ActivityIndicator,
     Dimensions,
+    TextInput,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LineChart } from 'react-native-chart-kit';
-import { stockAPI, StockInfo, ComprehensiveResult, PriceEpsSeries, FinancialGrowthMetrics } from '../services/api';
+import {
+    stockAPI,
+    StockInfo,
+    ComprehensiveResult,
+    PriceEpsSeries,
+    FinancialGrowthMetrics,
+    AssistiveValuationBriefResponse,
+    AssistiveNewsImpactResponse,
+} from '../services/api';
 
 interface Props {
     route: any;
@@ -30,14 +39,38 @@ const StockDetailScreen: React.FC<Props> = ({ route, navigation }) => {
     const [growthMetrics, setGrowthMetrics] = useState<FinancialGrowthMetrics | null>(null);
     const [growthLoading, setGrowthLoading] = useState(false);
     const [priceEpsPeriod, setPriceEpsPeriod] = useState<'6mo' | '1y' | '3y' | '5y'>('1y');
+    const [assistiveBrief, setAssistiveBrief] = useState<AssistiveValuationBriefResponse | null>(null);
+    const [assistiveLoading, setAssistiveLoading] = useState(false);
+    const [assistiveFeedbackSent, setAssistiveFeedbackSent] = useState(false);
+    const [pendingNegativeFeedback, setPendingNegativeFeedback] = useState(false);
+    const [assistiveFeedbackComment, setAssistiveFeedbackComment] = useState('');
+    const [newsImpactBrief, setNewsImpactBrief] = useState<AssistiveNewsImpactResponse | null>(null);
+    const [newsImpactLoading, setNewsImpactLoading] = useState(false);
+    const [showConfidenceTip, setShowConfidenceTip] = useState(false);
 
     useEffect(() => {
         loadStockData();
     }, [symbol]);
 
     useEffect(() => {
+        setAssistiveBrief(null);
+        setAssistiveLoading(false);
+        setAssistiveFeedbackSent(false);
+        setPendingNegativeFeedback(false);
+        setAssistiveFeedbackComment('');
+        setNewsImpactBrief(null);
+        setNewsImpactLoading(false);
+    }, [symbol]);
+
+    useEffect(() => {
         loadAnalysis();
     }, [symbol]);
+
+    useEffect(() => {
+        if (analysis && !assistiveBrief && !assistiveLoading) {
+            loadAssistiveBrief(analysis);
+        }
+    }, [analysis]);
 
     useEffect(() => {
         loadPriceEpsSeries(priceEpsPeriod);
@@ -147,6 +180,119 @@ const StockDetailScreen: React.FC<Props> = ({ route, navigation }) => {
         } finally {
             setAnalysisLoading(false);
         }
+    };
+
+    const loadAssistiveBrief = async (analysisPayload?: ComprehensiveResult | null) => {
+        const source = analysisPayload || analysis;
+        if (!source) return;
+
+        try {
+            setAssistiveLoading(true);
+            const brief = await stockAPI.getAssistiveValuationBrief({
+                symbol,
+                analysis: {
+                    recommendation: {
+                        action: source.recommendation?.action,
+                        confidence: source.recommendation?.confidence,
+                    },
+                    valuations: {
+                        dcf: { upside: source.valuations?.dcf?.upside },
+                        comparable: { upside: source.valuations?.comparable?.upside },
+                    },
+                    technical_analysis: {
+                        rsi: source.technical_analysis?.rsi,
+                        support: source.technical_analysis?.support,
+                        resistance: source.technical_analysis?.resistance,
+                    },
+                },
+            });
+            setAssistiveBrief(brief);
+            stockAPI.trackAssistiveEvent({
+                event_name: 'assistive_valuation_brief_generated',
+                symbol,
+                metadata: { used_ai: brief.used_ai },
+            }).catch(() => undefined);
+        } catch (error) {
+            console.error('Error loading assistive AI brief:', error);
+        } finally {
+            setAssistiveLoading(false);
+        }
+    };
+
+    const submitAssistiveFeedback = async (helpful: boolean) => {
+        if (!assistiveBrief || assistiveFeedbackSent) return;
+
+        try {
+            await stockAPI.submitAssistiveFeedback({
+                symbol,
+                brief_type: 'valuation',
+                helpful,
+            });
+            await stockAPI.trackAssistiveEvent({
+                event_name: 'assistive_valuation_feedback_submitted',
+                symbol,
+                metadata: { helpful },
+            });
+            setAssistiveFeedbackSent(true);
+            setPendingNegativeFeedback(false);
+        } catch (error) {
+            console.error('Error submitting assistive feedback:', error);
+        }
+    };
+
+    const submitNegativeFeedbackWithComment = async () => {
+        if (!assistiveBrief || assistiveFeedbackSent) return;
+
+        try {
+            await stockAPI.submitAssistiveFeedback({
+                symbol,
+                brief_type: 'valuation',
+                helpful: false,
+                comment: assistiveFeedbackComment.trim() || undefined,
+            });
+            await stockAPI.trackAssistiveEvent({
+                event_name: 'assistive_valuation_feedback_submitted',
+                symbol,
+                metadata: {
+                    helpful: false,
+                    has_comment: Boolean(assistiveFeedbackComment.trim()),
+                },
+            });
+            setAssistiveFeedbackSent(true);
+            setPendingNegativeFeedback(false);
+        } catch (error) {
+            console.error('Error submitting assistive feedback with comment:', error);
+        }
+    };
+
+    const loadNewsImpactBrief = async () => {
+        try {
+            setNewsImpactLoading(true);
+            const brief = await stockAPI.getAssistiveNewsImpact(symbol, 6);
+            setNewsImpactBrief(brief);
+            await stockAPI.trackAssistiveEvent({
+                event_name: 'assistive_news_impact_generated',
+                symbol,
+                metadata: { sentiment: brief.overall_sentiment, used_ai: brief.used_ai },
+            });
+        } catch (error) {
+            console.error('Error loading assistive news impact:', error);
+        } finally {
+            setNewsImpactLoading(false);
+        }
+    };
+
+    const openAssistiveChat = async () => {
+        try {
+            await stockAPI.trackAssistiveEvent({
+                event_name: 'assistive_chat_opened_from_brief',
+                symbol,
+                metadata: { source: 'stock_detail' },
+            });
+        } catch {
+            // no-op
+        }
+        navigation.navigate('AIChat', { symbol });
     };
 
     const handleAnalysisTab = () => {
@@ -709,6 +855,152 @@ const StockDetailScreen: React.FC<Props> = ({ route, navigation }) => {
                                 </View>
                             </View>
 
+                            <View style={styles.section}>
+                                <Text style={styles.sectionTitle}>Assistive AI Brief</Text>
+                                {assistiveLoading ? (
+                                    <View style={styles.assistiveLoadingRow}>
+                                        <ActivityIndicator size="small" color="#2563eb" />
+                                        <Text style={styles.assistiveLoadingText}>Preparing grounded brief...</Text>
+                                    </View>
+                                ) : assistiveBrief ? (
+                                    <View style={styles.assistiveCard}>
+                                        <Text style={styles.assistiveSummary}>{assistiveBrief.summary}</Text>
+
+                                        {assistiveBrief.next_actions.length > 0 && (
+                                            <View style={styles.nextBestStepCard}>
+                                                <View style={styles.nextBestStepHeader}>
+                                                    <Ionicons name="arrow-forward-circle" size={16} color="#1d4ed8" />
+                                                    <Text style={styles.nextBestStepLabel}>Next Best Step</Text>
+                                                </View>
+                                                <Text style={styles.nextBestStepText}>
+                                                    {assistiveBrief.next_actions[0]}
+                                                </Text>
+                                            </View>
+                                        )}
+
+                                        <Text style={styles.assistiveHeading}>Evidence</Text>
+                                        {assistiveBrief.evidence.map((item, idx) => (
+                                            <Text key={`e-${idx}`} style={styles.assistiveListItem}>• {item}</Text>
+                                        ))}
+
+                                        <Text style={styles.assistiveHeading}>Risks</Text>
+                                        {assistiveBrief.risks.map((item, idx) => (
+                                            <Text key={`r-${idx}`} style={styles.assistiveListItem}>• {item}</Text>
+                                        ))}
+
+                                        <Text style={styles.assistiveHeading}>Next Actions</Text>
+                                        {assistiveBrief.next_actions.map((item, idx) => (
+                                            <Text key={`n-${idx}`} style={styles.assistiveListItem}>• {item}</Text>
+                                        ))}
+
+                                        <Text style={styles.assistiveDisclaimer}>{assistiveBrief.disclaimer}</Text>
+
+                                        <View style={styles.assistiveFeedbackRow}>
+                                            <Text style={styles.assistiveFeedbackLabel}>Was this helpful?</Text>
+                                            <View style={styles.assistiveFeedbackButtons}>
+                                                <TouchableOpacity
+                                                    style={[
+                                                        styles.assistiveFeedbackButton,
+                                                        assistiveFeedbackSent && styles.assistiveFeedbackButtonDisabled,
+                                                    ]}
+                                                    onPress={() => submitAssistiveFeedback(true)}
+                                                    disabled={assistiveFeedbackSent}
+                                                >
+                                                    <Ionicons name="thumbs-up" size={14} color="#166534" />
+                                                    <Text style={styles.assistiveFeedbackText}>Yes</Text>
+                                                </TouchableOpacity>
+                                                <TouchableOpacity
+                                                    style={[
+                                                        styles.assistiveFeedbackButton,
+                                                        assistiveFeedbackSent && styles.assistiveFeedbackButtonDisabled,
+                                                    ]}
+                                                    onPress={() => setPendingNegativeFeedback(true)}
+                                                    disabled={assistiveFeedbackSent}
+                                                >
+                                                    <Ionicons name="thumbs-down" size={14} color="#b91c1c" />
+                                                    <Text style={styles.assistiveFeedbackText}>No</Text>
+                                                </TouchableOpacity>
+                                            </View>
+                                        </View>
+
+                                        {pendingNegativeFeedback && !assistiveFeedbackSent && (
+                                            <View style={styles.assistiveCommentBox}>
+                                                <Text style={styles.assistiveCommentLabel}>What should improve?</Text>
+                                                <TextInput
+                                                    style={styles.assistiveCommentInput}
+                                                    value={assistiveFeedbackComment}
+                                                    onChangeText={setAssistiveFeedbackComment}
+                                                    placeholder="Add a short note (optional)..."
+                                                    placeholderTextColor="#94a3b8"
+                                                    multiline
+                                                    maxLength={300}
+                                                />
+                                                <View style={styles.assistiveCommentActions}>
+                                                    <TouchableOpacity
+                                                        style={styles.assistiveCommentCancel}
+                                                        onPress={() => {
+                                                            setPendingNegativeFeedback(false);
+                                                            setAssistiveFeedbackComment('');
+                                                        }}
+                                                    >
+                                                        <Text style={styles.assistiveCommentCancelText}>Cancel</Text>
+                                                    </TouchableOpacity>
+                                                    <TouchableOpacity
+                                                        style={styles.assistiveCommentSubmit}
+                                                        onPress={submitNegativeFeedbackWithComment}
+                                                    >
+                                                        <Text style={styles.assistiveCommentSubmitText}>Submit</Text>
+                                                    </TouchableOpacity>
+                                                </View>
+                                            </View>
+                                        )}
+
+                                        {assistiveFeedbackSent && (
+                                            <Text style={styles.assistiveFeedbackThanks}>Thanks for the feedback.</Text>
+                                        )}
+
+                                        <TouchableOpacity
+                                            style={styles.assistiveNewsButton}
+                                            onPress={loadNewsImpactBrief}
+                                            disabled={newsImpactLoading}
+                                        >
+                                            {newsImpactLoading ? (
+                                                <ActivityIndicator size="small" color="#1d4ed8" />
+                                            ) : (
+                                                <Ionicons name="newspaper" size={16} color="#1d4ed8" />
+                                            )}
+                                            <Text style={styles.assistiveNewsButtonText}>Generate News Impact Brief</Text>
+                                        </TouchableOpacity>
+
+                                        {newsImpactBrief && (
+                                            <View style={styles.newsImpactCard}>
+                                                <Text style={styles.newsImpactTitle}>News Impact ({newsImpactBrief.overall_sentiment})</Text>
+                                                <Text style={styles.newsImpactSummary}>{newsImpactBrief.summary}</Text>
+                                                {newsImpactBrief.headlines.slice(0, 3).map((headline, idx) => (
+                                                    <Text key={`h-${idx}`} style={styles.newsImpactHeadline}>• {headline}</Text>
+                                                ))}
+                                            </View>
+                                        )}
+
+                                        <TouchableOpacity
+                                            style={styles.assistiveChatButton}
+                                            onPress={openAssistiveChat}
+                                        >
+                                            <Ionicons name="sparkles" size={16} color="#fff" />
+                                            <Text style={styles.assistiveChatButtonText}>Discuss in AI Chat</Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                ) : (
+                                    <TouchableOpacity
+                                        style={styles.assistiveRetryButton}
+                                        onPress={() => loadAssistiveBrief()}
+                                    >
+                                        <Ionicons name="refresh" size={16} color="#2563eb" />
+                                        <Text style={styles.assistiveRetryText}>Generate Assistive Brief</Text>
+                                    </TouchableOpacity>
+                                )}
+                            </View>
+
                             {/* Recommendation */}
                             <View style={styles.section}>
                                 <Text style={styles.sectionTitle}>Clear Call</Text>
@@ -717,9 +1009,27 @@ const StockDetailScreen: React.FC<Props> = ({ route, navigation }) => {
                                         <Text style={[styles.recommendationAction, { color: getRecommendationColor(analysis.recommendation.action) }]}>
                                             {analysis.recommendation.action}
                                         </Text>
-                                        <Text style={styles.recommendationConfidence}>
-                                            {analysis.recommendation.confidence} Confidence
-                                        </Text>
+                                        <TouchableOpacity
+                                            onPress={() => setShowConfidenceTip((v) => !v)}
+                                            activeOpacity={0.7}
+                                        >
+                                            <Text style={styles.recommendationConfidence}>
+                                                {analysis.recommendation.confidence} Confidence{' '}
+                                                <Text style={styles.confidenceTipIcon}>(?)</Text>
+                                            </Text>
+                                        </TouchableOpacity>
+                                        {showConfidenceTip && (
+                                            <View style={styles.confidenceTipBox}>
+                                                <Text style={styles.confidenceTipText}>
+                                                    <Text style={{ fontWeight: '700' }}>High</Text>
+                                                    {' — Strong signal across multiple methods. Still manage risk.\n'}
+                                                    <Text style={{ fontWeight: '700' }}>Medium</Text>
+                                                    {' — Reasonable case, but mixed signals. Size carefully.\n'}
+                                                    <Text style={{ fontWeight: '700' }}>Low</Text>
+                                                    {' — Limited data or conflicting signals. Watch before acting.'}
+                                                </Text>
+                                            </View>
+                                        )}
                                     </View>
                                     <Text style={styles.recommendationReason}>
                                         {analysis.recommendation.reasoning}
@@ -1186,6 +1496,257 @@ const styles = StyleSheet.create({
         fontSize: 13,
         color: '#334155',
         lineHeight: 19,
+    },
+    assistiveLoadingRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    assistiveLoadingText: {
+        fontSize: 13,
+        color: '#475569',
+    },
+    assistiveCard: {
+        backgroundColor: '#f8fafc',
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: '#dbeafe',
+        padding: 14,
+    },
+    assistiveSummary: {
+        fontSize: 14,
+        lineHeight: 20,
+        color: '#0f172a',
+        marginBottom: 10,
+        fontWeight: '500',
+    },
+    assistiveHeading: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: '#1e3a8a',
+        marginTop: 6,
+        marginBottom: 4,
+    },
+    assistiveListItem: {
+        fontSize: 13,
+        color: '#334155',
+        lineHeight: 19,
+        marginBottom: 2,
+    },
+    assistiveDisclaimer: {
+        fontSize: 11,
+        color: '#64748b',
+        marginTop: 10,
+    },
+    nextBestStepCard: {
+        backgroundColor: '#eff6ff',
+        borderWidth: 1,
+        borderColor: '#bfdbfe',
+        borderRadius: 12,
+        padding: 12,
+        marginTop: 10,
+        marginBottom: 4,
+    },
+    nextBestStepHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        marginBottom: 6,
+    },
+    nextBestStepLabel: {
+        fontSize: 12,
+        fontWeight: '800',
+        color: '#1d4ed8',
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+    },
+    nextBestStepText: {
+        fontSize: 14,
+        color: '#1e3a5f',
+        lineHeight: 20,
+        fontWeight: '600',
+    },
+    confidenceTipIcon: {
+        fontSize: 12,
+        color: '#94a3b8',
+    },
+    confidenceTipBox: {
+        backgroundColor: '#f8fafc',
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+        borderRadius: 10,
+        padding: 10,
+        marginTop: 6,
+    },
+    confidenceTipText: {
+        fontSize: 12,
+        color: '#475569',
+        lineHeight: 19,
+    },
+    assistiveFeedbackRow: {
+        marginTop: 10,
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+    },
+    assistiveFeedbackLabel: {
+        fontSize: 12,
+        color: '#334155',
+        fontWeight: '600',
+    },
+    assistiveFeedbackButtons: {
+        flexDirection: 'row',
+        gap: 8,
+    },
+    assistiveFeedbackButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        borderWidth: 1,
+        borderColor: '#cbd5e1',
+        backgroundColor: '#ffffff',
+        borderRadius: 8,
+        paddingVertical: 6,
+        paddingHorizontal: 10,
+    },
+    assistiveFeedbackButtonDisabled: {
+        opacity: 0.55,
+    },
+    assistiveFeedbackText: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#334155',
+    },
+    assistiveFeedbackThanks: {
+        marginTop: 6,
+        fontSize: 11,
+        color: '#065f46',
+    },
+    assistiveCommentBox: {
+        marginTop: 8,
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+        borderRadius: 8,
+        backgroundColor: '#ffffff',
+        padding: 8,
+    },
+    assistiveCommentLabel: {
+        fontSize: 12,
+        color: '#334155',
+        fontWeight: '600',
+        marginBottom: 6,
+    },
+    assistiveCommentInput: {
+        borderWidth: 1,
+        borderColor: '#cbd5e1',
+        borderRadius: 8,
+        paddingHorizontal: 10,
+        paddingVertical: 8,
+        color: '#0f172a',
+        minHeight: 56,
+        textAlignVertical: 'top',
+        fontSize: 12,
+    },
+    assistiveCommentActions: {
+        marginTop: 8,
+        flexDirection: 'row',
+        justifyContent: 'flex-end',
+        gap: 8,
+    },
+    assistiveCommentCancel: {
+        paddingVertical: 7,
+        paddingHorizontal: 10,
+        borderRadius: 6,
+        backgroundColor: '#e2e8f0',
+    },
+    assistiveCommentCancelText: {
+        color: '#334155',
+        fontSize: 12,
+        fontWeight: '600',
+    },
+    assistiveCommentSubmit: {
+        paddingVertical: 7,
+        paddingHorizontal: 10,
+        borderRadius: 6,
+        backgroundColor: '#1d4ed8',
+    },
+    assistiveCommentSubmitText: {
+        color: '#ffffff',
+        fontSize: 12,
+        fontWeight: '600',
+    },
+    assistiveNewsButton: {
+        marginTop: 10,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: '#bfdbfe',
+        backgroundColor: '#eff6ff',
+        paddingVertical: 9,
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexDirection: 'row',
+        gap: 6,
+    },
+    assistiveNewsButtonText: {
+        color: '#1d4ed8',
+        fontSize: 12,
+        fontWeight: '700',
+    },
+    newsImpactCard: {
+        marginTop: 10,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: '#d1fae5',
+        backgroundColor: '#ecfdf5',
+        padding: 10,
+    },
+    newsImpactTitle: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#065f46',
+        marginBottom: 4,
+    },
+    newsImpactSummary: {
+        fontSize: 12,
+        color: '#064e3b',
+        lineHeight: 18,
+        marginBottom: 6,
+    },
+    newsImpactHeadline: {
+        fontSize: 11,
+        color: '#065f46',
+        lineHeight: 16,
+    },
+    assistiveChatButton: {
+        marginTop: 12,
+        backgroundColor: '#1d4ed8',
+        borderRadius: 8,
+        paddingVertical: 10,
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexDirection: 'row',
+        gap: 6,
+    },
+    assistiveChatButtonText: {
+        color: 'white',
+        fontSize: 13,
+        fontWeight: '700',
+    },
+    assistiveRetryButton: {
+        borderWidth: 1,
+        borderColor: '#bfdbfe',
+        borderRadius: 8,
+        paddingVertical: 10,
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexDirection: 'row',
+        gap: 6,
+        backgroundColor: '#eff6ff',
+    },
+    assistiveRetryText: {
+        color: '#1d4ed8',
+        fontSize: 13,
+        fontWeight: '700',
     },
     recommendationCard: {
         backgroundColor: '#f8f9fa',

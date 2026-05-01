@@ -9,7 +9,7 @@ from datetime import datetime
 from enum import Enum
 import yfinance as yf
 import database as db
-from auth import get_current_user, get_user_id
+from auth import get_current_user, get_user_id, get_user_id_dep
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
 
@@ -26,7 +26,7 @@ class PriceAlert(BaseModel):
 
 
 @router.post("/create")
-async def create_alert(alert: PriceAlert, request: Request):
+async def create_alert(alert: PriceAlert, user_id: int = Depends(get_user_id_dep)):
     """Create a new price alert"""
     try:
         ticker = yf.Ticker(alert.symbol)
@@ -35,8 +35,7 @@ async def create_alert(alert: PriceAlert, request: Request):
         if not current_price:
             raise HTTPException(status_code=400, detail="Invalid stock symbol")
 
-        user = await get_current_user(request)
-        user_id = get_user_id(user)
+        # user_id is injected by dependency
         result = db.create_alert(user_id, alert.symbol, alert.target_price, alert.alert_type.value)
 
         return {
@@ -51,10 +50,9 @@ async def create_alert(alert: PriceAlert, request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/list")
-async def list_alerts(request: Request):
+async def list_alerts(user_id: int = Depends(get_user_id_dep)):
     """Get all active alerts"""
-    user = await get_current_user(request)
-    user_id = get_user_id(user)
+    # user_id is injected by dependency
     alerts = db.get_alerts(user_id, enabled_only=True)
     return {"total": len(alerts), "alerts": alerts}
 
@@ -109,7 +107,7 @@ async def check_all_alerts():
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/check/{symbol}")
-async def check_symbol_alerts(symbol: str, request: Request):
+async def check_symbol_alerts(symbol: str, user_id: int = Depends(get_user_id_dep)):
     """Check alerts for specific symbol"""
     try:
         ticker = yf.Ticker(symbol)
@@ -117,8 +115,7 @@ async def check_symbol_alerts(symbol: str, request: Request):
         if not current_price:
             raise HTTPException(status_code=400, detail="Invalid stock symbol")
 
-        user = await get_current_user(request)
-        user_id = get_user_id(user)
+        # user_id is injected by dependency
         alerts = db.get_alerts(user_id, enabled_only=True)
         symbol_alerts = [a for a in alerts if a["symbol"] == symbol]
         triggered = [a for a in symbol_alerts if _check_trigger(a["alert_type"], a["target_price"], current_price)]
@@ -137,19 +134,17 @@ async def check_symbol_alerts(symbol: str, request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/delete/{alert_id}")
-async def delete_alert_endpoint(alert_id: int, request: Request):
+async def delete_alert_endpoint(alert_id: int, user_id: int = Depends(get_user_id_dep)):
     """Delete a specific alert by ID"""
-    user = await get_current_user(request)
-    user_id = get_user_id(user)
+    # user_id is injected by dependency
     if db.delete_alert(user_id, alert_id):
         return {"status": "success", "message": "Alert deleted"}
     raise HTTPException(status_code=404, detail="Alert not found")
 
 @router.get("/summary")
-async def alert_summary(request: Request):
+async def alert_summary(user_id: int = Depends(get_user_id_dep)):
     """Get summary of all alerts"""
-    user = await get_current_user(request)
-    user_id = get_user_id(user)
+    # user_id is injected by dependency
     alerts = db.get_alerts(user_id, enabled_only=False)
     enabled = [a for a in alerts if a.get("enabled")]
     disabled = [a for a in alerts if not a.get("enabled")]

@@ -5,7 +5,7 @@ Tracks user milestones and awards badges for engagement.
 from fastapi import APIRouter, Depends
 from datetime import datetime
 import database as db
-from auth import get_current_user, get_user_id
+from auth import get_current_user, get_user_id, get_user_id_dep
 import logging
 
 logger = logging.getLogger(__name__)
@@ -166,8 +166,8 @@ def update_streak(user_id: int):
 
 
 @router.get("")
-async def get_achievements(user: dict = Depends(get_current_user)):
-    uid = get_user_id(user)
+async def get_achievements(user_id: int = Depends(get_user_id_dep)):
+    uid = user_id
     conn = db._get_conn()
 
     # Update streak on each visit

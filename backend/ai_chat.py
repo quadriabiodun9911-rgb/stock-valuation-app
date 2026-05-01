@@ -6,13 +6,75 @@ from pydantic import BaseModel
 from typing import Optional
 import yfinance as yf
 import logging
-from auth import get_current_user, get_user_id
+import re
+from auth import get_current_user, get_user_id, get_user_id_dep
 import database as db
 from ai_service import advisor
 
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["ai-chat"])
+
+_SYMBOL_STOPWORDS = {
+    "A", "AN", "AND", "ARE", "AS", "AT", "BE", "BEST", "BRIEF", "BUY",
+    "BY", "CAN", "COMPARE", "CONCISE", "DO", "FOR", "FROM", "GIVE", "GOOD",
+    "HELP", "HOW", "I", "IN", "IS", "IT", "ME", "MY", "OF", "ON", "OR",
+    "PLEASE", "PORTFOLIO", "SELL", "SHOULD", "STOCK", "TELL", "THAT", "THE",
+    "THIS", "TO", "US", "VS", "WHAT", "WITH", "WORTH", "YOU", "YOUR",
+}
+
+
+def _extract_symbol_from_text(raw_message: str) -> Optional[str]:
+    text = raw_message.strip()
+
+    # Highest confidence: explicit ticker marker, e.g. $TSLA
+    explicit = re.findall(r"\$([A-Za-z]{1,5})\b", text)
+    for candidate in explicit:
+        symbol = candidate.upper()
+        if symbol in _SYMBOL_STOPWORDS:
+            continue
+        try:
+            t = yf.Ticker(symbol)
+            p = t.fast_info.get("lastPrice") or t.fast_info.get("last_price")
+            if p and float(p) > 0:
+                return symbol
+        except Exception:
+            pass
+
+    # Next: context phrase, e.g. "about AAPL" or "buy TSLA"
+    context_match = re.search(
+        r"(?:about|on|for|buy|sell|compare|vs|versus|analyze)\s+([A-Za-z]{1,5})\b",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if context_match:
+        symbol = context_match.group(1).upper()
+        if symbol not in _SYMBOL_STOPWORDS:
+            try:
+                t = yf.Ticker(symbol)
+                p = t.fast_info.get("lastPrice") or t.fast_info.get("last_price")
+                if p and float(p) > 0:
+                    return symbol
+            except Exception:
+                pass
+
+    words = text.upper().split()
+    for w in words:
+        w_clean = w.strip("?.,!\"'()[]{}")
+        if not (2 <= len(w_clean) <= 5 and w_clean.isalpha()):
+            continue
+        if w_clean in _SYMBOL_STOPWORDS:
+            continue
+
+        try:
+            t = yf.Ticker(w_clean)
+            p = t.fast_info.get("lastPrice") or t.fast_info.get("last_price")
+            if p and float(p) > 0:
+                return w_clean
+        except Exception:
+            pass
+
+    return None
 
 
 class ChatMessage(BaseModel):
@@ -21,26 +83,16 @@ class ChatMessage(BaseModel):
 
 
 @router.post("/ai-chat")
-async def ai_chat(msg: ChatMessage, user: dict = Depends(get_current_user)):
+async def ai_chat(msg: ChatMessage, user_id: int = Depends(get_user_id_dep)):
     """AI-powered stock analysis chat. Uses real data and OpenAI for intelligent responses."""
-    uid = get_user_id(user)
-    question = msg.message.lower().strip()
+    uid = user_id
+    question_raw = msg.message.strip()
+    question = question_raw.lower()
     symbol = msg.symbol
 
     # Extract symbol from question if not provided
     if not symbol:
-        words = question.upper().split()
-        for w in words:
-            w_clean = w.strip("?.,!\"'")
-            if 2 <= len(w_clean) <= 5 and w_clean.isalpha():
-                try:
-                    t = yf.Ticker(w_clean)
-                    p = t.fast_info.get("lastPrice") or t.fast_info.get("last_price")
-                    if p and float(p) > 0:
-                        symbol = w_clean
-                        break
-                except Exception:
-                    pass
+        symbol = _extract_symbol_from_text(question_raw)
 
     # Portfolio context
     conn = db._get_conn()

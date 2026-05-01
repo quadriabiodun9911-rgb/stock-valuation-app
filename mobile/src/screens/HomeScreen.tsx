@@ -51,6 +51,7 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
     const [personaProfile, setPersonaProfile] = useState<PersonaProfile | null>(null);
     const [recommendations, setRecommendations] = useState<ProfileRecommendation[]>([]);
     const [recommendationsLoading, setRecommendationsLoading] = useState(false);
+    const [showStartHereCard, setShowStartHereCard] = useState(false);
 
     const fadeAnim = useRef(new Animated.Value(0)).current;
 
@@ -64,6 +65,10 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
                 const raw = await AsyncStorage.getItem('onboarding_persona_profile');
                 if (raw) {
                     setPersonaProfile(JSON.parse(raw));
+                }
+                const dismissed = await AsyncStorage.getItem('start_here_card_dismissed');
+                if (!dismissed) {
+                    setShowStartHereCard(true);
                 }
             } catch (e) {
                 console.error('Failed to load persona profile:', e);
@@ -308,6 +313,43 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
                     </View>
                     <Text style={styles.searchHint}>Start with any investment idea and get clearer guidance, useful context, and the risks that matter.</Text>
                 </LinearGradient>
+
+                {/* Start Here Card — shown once to new users */}
+                {showStartHereCard && (
+                    <View style={styles.startHereCard}>
+                        <View style={styles.startHereLeft}>
+                            <Ionicons name="rocket" size={22} color="#2563eb" />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                            <Text style={styles.startHereTitle}>Start here</Text>
+                            <Text style={styles.startHereBody}>
+                                Search a stock above, then tap the{' '}
+                                <Text style={{ fontWeight: '700', color: '#2563eb' }}>AI Brief</Text>
+                                {' '}to get your first personalised guidance in seconds.
+                            </Text>
+                            <TouchableOpacity
+                                style={styles.startHereCta}
+                                onPress={() => {
+                                    setSearchQuery('');
+                                    // Scroll focus hint — just highlight the search hint text
+                                    navigation.navigate('Search');
+                                }}
+                            >
+                                <Ionicons name="search" size={14} color="#fff" />
+                                <Text style={styles.startHereCtaText}>Search a stock now</Text>
+                            </TouchableOpacity>
+                        </View>
+                        <TouchableOpacity
+                            style={styles.startHereDismiss}
+                            onPress={async () => {
+                                setShowStartHereCard(false);
+                                await AsyncStorage.setItem('start_here_card_dismissed', 'true');
+                            }}
+                        >
+                            <Ionicons name="close" size={18} color="#94a3b8" />
+                        </TouchableOpacity>
+                    </View>
+                )}
 
                 {/* Search Results */}
                 {companyResults.length > 0 && (
@@ -598,6 +640,59 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
         backgroundColor: '#f1f5f9',
+    },
+    /* ── Start Here Card ── */
+    startHereCard: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        backgroundColor: '#eff6ff',
+        borderWidth: 1,
+        borderColor: '#bfdbfe',
+        borderRadius: 16,
+        marginHorizontal: 16,
+        marginTop: 14,
+        padding: 14,
+        gap: 12,
+    },
+    startHereLeft: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        backgroundColor: '#dbeafe',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginTop: 2,
+    },
+    startHereTitle: {
+        fontSize: 14,
+        fontWeight: '800',
+        color: '#1e3a5f',
+        marginBottom: 4,
+    },
+    startHereBody: {
+        fontSize: 13,
+        color: '#475569',
+        lineHeight: 19,
+    },
+    startHereCta: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        backgroundColor: '#2563eb',
+        borderRadius: 10,
+        paddingHorizontal: 14,
+        paddingVertical: 8,
+        alignSelf: 'flex-start',
+        marginTop: 10,
+    },
+    startHereCtaText: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: '#fff',
+    },
+    startHereDismiss: {
+        padding: 4,
+        marginTop: -2,
     },
     /* ── Header ── */
     header: {

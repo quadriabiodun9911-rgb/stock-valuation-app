@@ -192,8 +192,8 @@ def marketstack_check(symbol: str, api_key: str = "demo") -> Dict[str, Any]:
         return {"provider": "Marketstack", "supported": False, "symbol": symbol, "error": str(e)}
 
 
-def test_ngx_direct() -> Dict[str, Any]:
-    """Test direct NGX website scraping"""
+def ngx_direct_check() -> Dict[str, Any]:
+    """Check direct NGX website scraping support."""
     print(f"\n🔍 Testing NGX Direct Website...")
     
     try:
@@ -221,6 +221,12 @@ def test_ngx_direct() -> Dict[str, Any]:
     except Exception as e:
         print(f"   ❌ Error: {str(e)}")
         return {"provider": "NGX Direct", "supported": False, "error": str(e)}
+
+
+def test_ngx_direct() -> None:
+    """Pytest wrapper around direct NGX support check."""
+    result = ngx_direct_check()
+    assert "supported" in result
 
 
 def main():
@@ -260,7 +266,7 @@ def main():
             ngx_results[provider_name].append(result)
     
     # Test direct NGX
-    ngx_direct = test_ngx_direct()
+    ngx_direct = ngx_direct_check()
     
     # Summary
     print("\n" + "="*70)

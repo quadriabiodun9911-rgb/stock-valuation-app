@@ -298,6 +298,34 @@ const SocialFeedScreen: React.FC<{ navigation?: any }> = ({ navigation }) => {
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#f1f5f9' },
     center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f1f5f9' },
+    topBar: {
+        backgroundColor: '#ffffff',
+        paddingHorizontal: 16,
+        paddingTop: 14,
+        paddingBottom: 10,
+        borderBottomWidth: 1,
+        borderBottomColor: '#e2e8f0',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    backBtn: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#f8fafc',
+    },
+    topBarTitle: {
+        fontSize: 18,
+        fontWeight: '800',
+        color: '#0f172a',
+    },
+    headerSpacer: {
+        width: 36,
+        height: 36,
+    },
     communityBanner: {
         backgroundColor: '#eef2ff',
         paddingHorizontal: 16,
