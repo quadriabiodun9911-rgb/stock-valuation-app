@@ -26,7 +26,7 @@ const resolveApiBaseUrl = () => {
     }
 
     // Last-resort fallback for standalone tester builds.
-    return 'https://stock-valuation-app-rtll.onrender.com';
+    return 'https://stock-valuation-app-2.onrender.com';
 };
 
 const API_BASE_URL = resolveApiBaseUrl();
