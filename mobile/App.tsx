@@ -11,6 +11,19 @@ import ErrorBoundary from './src/components/ErrorBoundary';
 import { AuthProvider, useAuth } from './src/contexts/AuthContext';
 import { ThemeProvider, useTheme } from './src/contexts/ThemeContext';
 
+// Error tracking and analytics
+import * as Sentry from '@sentry/react-native';
+import app from '@react-native-firebase/app';
+import analytics from '@react-native-firebase/analytics';
+import crashlytics from '@react-native-firebase/crashlytics';
+
+// Initialize Sentry with a placeholder DSN (replace with your real DSN later)
+Sentry.init({
+    dsn: process.env.EXPO_PUBLIC_SENTRY_DSN || 'https://examplePublicKey@o0.ingest.sentry.io/0',
+    debug: __DEV__, // If `true`, Sentry will try to print out useful debugging information if something goes wrong with sending the event. Set it to `false` in production
+    tracesSampleRate: 1.0, // Set tracesSampleRate to 1.0 to capture 100% of transactions for performance monitoring.
+});
+
 // Auth screens
 import LoginScreen from './src/screens/LoginScreen';
 import RegisterScreen from './src/screens/RegisterScreen';
@@ -227,7 +240,22 @@ function RootNavigator() {
     );
 }
 
-export default function App() {
+function AppContent() {
+    useEffect(() => {
+        const initAnalytics = async () => {
+            try {
+                if (!__DEV__) {
+                    await analytics().logAppOpen();
+                    crashlytics().log('App mounted and rendering.');
+                    console.log('Analytics & Crashlytics setup complete.');
+                }
+            } catch (e) {
+                console.error('Failed to init analytics: ', e);
+            }
+        };
+        initAnalytics();
+    }, []);
+
     return (
         <ErrorBoundary>
             <ThemeProvider>
@@ -243,3 +271,5 @@ export default function App() {
         </ErrorBoundary>
     );
 }
+
+export default Sentry.wrap(AppContent);
