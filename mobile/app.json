@@ -36,7 +36,13 @@
     },
     "plugins": [
       "expo-font",
-      "@sentry/react-native",
+      [
+        "@sentry/react-native/expo",
+        {
+          "organization": "demo-org",
+          "project": "demo-project"
+        }
+      ],
       "@react-native-firebase/app",
       "@react-native-firebase/crashlytics"
     ],
