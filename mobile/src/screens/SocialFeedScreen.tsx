@@ -1,20 +1,44 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     View, Text, StyleSheet, FlatList, TouchableOpacity,
-    TextInput, Alert, ActivityIndicator, RefreshControl, KeyboardAvoidingView, Platform, Modal,
+    TextInput, Alert, ActivityIndicator, RefreshControl, KeyboardAvoidingView,
+    Platform, Modal, ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { stockAPI } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 
-const SocialFeedScreen: React.FC<{ navigation?: any }> = ({ navigation }) => {
+// Parse $TICKER mentions in post text and return mixed Text/TouchableOpacity nodes
+const renderMentions = (content: string, onPress: (sym: string) => void) => {
+    const parts = content.split(/(\$[A-Z]{1,5})/g);
+    return parts.map((part, i) => {
+        const match = /^\$([A-Z]{1,5})$/.exec(part);
+        if (match) {
+            return (
+                <Text
+                    key={i}
+                    style={styles.mentionTag}
+                    onPress={() => onPress(match[1])}
+                >
+                    {part}
+                </Text>
+            );
+        }
+        return <Text key={i} style={styles.postContentInline}>{part}</Text>;
+    });
+};
+
+const SocialFeedScreen: React.FC<{ navigation?: any; filterSymbol?: string }> = ({ navigation, filterSymbol }) => {
     const { user } = useAuth();
     const [posts, setPosts] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [composerText, setComposerText] = useState('');
-    const [composerSymbol, setComposerSymbol] = useState('');
+    const [composerSymbol, setComposerSymbol] = useState(filterSymbol || '');
     const [posting, setPosting] = useState(false);
+    const [activeFilter, setActiveFilter] = useState<string | null>(filterSymbol || null);
+    const [followingMap, setFollowingMap] = useState<Record<number, boolean>>({});
+    const [followLoading, setFollowLoading] = useState<Record<number, boolean>>({});
 
     // Comment modal
     const [commentModal, setCommentModal] = useState<number | null>(null);
@@ -22,9 +46,28 @@ const SocialFeedScreen: React.FC<{ navigation?: any }> = ({ navigation }) => {
     const [commentText, setCommentText] = useState('');
     const [commentsLoading, setCommentsLoading] = useState(false);
 
+    // Derive unique symbols from posts for filter chips
+    const symbolChips = useMemo(() => {
+        const seen = new Set<string>();
+        const chips: string[] = [];
+        for (const p of posts) {
+            if (p.symbol && !seen.has(p.symbol)) {
+                seen.add(p.symbol);
+                chips.push(p.symbol);
+            }
+        }
+        return chips.slice(0, 12);
+    }, [posts]);
+
+    // Filtered posts
+    const displayedPosts = useMemo(() => {
+        if (!activeFilter) return posts;
+        return posts.filter(p => p.symbol === activeFilter);
+    }, [posts, activeFilter]);
+
     const loadFeed = useCallback(async () => {
         try {
-            const data = await stockAPI.getSocialFeed(50);
+            const data = await stockAPI.getSocialFeed(50, 0, filterSymbol);
             setPosts(data.posts || []);
         } catch (e) {
             console.error('Feed load error:', e);
@@ -32,21 +75,46 @@ const SocialFeedScreen: React.FC<{ navigation?: any }> = ({ navigation }) => {
             setLoading(false);
             setRefreshing(false);
         }
-    }, []);
+    }, [filterSymbol]);
 
     useEffect(() => { loadFeed(); }, [loadFeed]);
 
     const handlePost = async () => {
         const trimmed = composerText.trim();
         if (!trimmed) return;
+        // Auto-detect $TICKER in the text if no explicit symbol was entered
+        let sym = composerSymbol.trim().toUpperCase() || undefined;
+        if (!sym) {
+            const m = /\$([A-Z]{1,5})/.exec(trimmed.toUpperCase());
+            if (m) sym = m[1];
+        }
         setPosting(true);
         try {
-            await stockAPI.createPost(trimmed, composerSymbol.trim().toUpperCase() || undefined);
+            await stockAPI.createPost(trimmed, sym);
             setComposerText('');
             setComposerSymbol('');
             loadFeed();
         } catch { Alert.alert('Error', 'Failed to post.'); }
         finally { setPosting(false); }
+    };
+
+    const handleFollow = async (postUserId: number) => {
+        if (!postUserId || postUserId === (user as any)?.id) return;
+        const isNowFollowing = !followingMap[postUserId];
+        setFollowLoading(prev => ({ ...prev, [postUserId]: true }));
+        setFollowingMap(prev => ({ ...prev, [postUserId]: isNowFollowing }));
+        try {
+            if (isNowFollowing) {
+                await stockAPI.followUser(postUserId);
+            } else {
+                await stockAPI.unfollowUser(postUserId);
+            }
+        } catch {
+            // Revert on error
+            setFollowingMap(prev => ({ ...prev, [postUserId]: !isNowFollowing }));
+        } finally {
+            setFollowLoading(prev => ({ ...prev, [postUserId]: false }));
+        }
     };
 
     const handleLike = async (postId: number) => {
@@ -106,53 +174,76 @@ const SocialFeedScreen: React.FC<{ navigation?: any }> = ({ navigation }) => {
         return `${days}d`;
     };
 
-    const renderPost = ({ item }: { item: any }) => (
-        <View style={styles.postCard}>
-            <View style={styles.postHeader}>
-                <View style={styles.avatar}>
-                    <Text style={styles.avatarText}>{(item.username || '?')[0].toUpperCase()}</Text>
-                </View>
-                <View style={{ flex: 1 }}>
-                    <View style={styles.nameRow}>
-                        <Text style={styles.username}>@{item.username}</Text>
-                        <Text style={styles.dot}>·</Text>
-                        <Text style={styles.timestamp}>{timeAgo(item.created_at)}</Text>
+    const renderPost = ({ item }: { item: any }) => {
+        const isOwnPost = item.user_id === (user as any)?.id;
+        const isFollowing = followingMap[item.user_id];
+        return (
+            <View style={styles.postCard}>
+                <View style={styles.postHeader}>
+                    <View style={styles.avatar}>
+                        <Text style={styles.avatarText}>{(item.username || '?')[0].toUpperCase()}</Text>
                     </View>
+                    <View style={{ flex: 1 }}>
+                        <View style={styles.nameRow}>
+                            <Text style={styles.username}>@{item.username}</Text>
+                            <Text style={styles.dot}>·</Text>
+                            <Text style={styles.timestamp}>{timeAgo(item.created_at)}</Text>
+                        </View>
+                    </View>
+                    {!isOwnPost && (
+                        <TouchableOpacity
+                            style={[styles.followBtn, isFollowing && styles.followBtnActive]}
+                            onPress={() => handleFollow(item.user_id)}
+                            disabled={followLoading[item.user_id]}
+                        >
+                            {followLoading[item.user_id] ? (
+                                <ActivityIndicator size="small" color={isFollowing ? '#2563eb' : '#fff'} />
+                            ) : (
+                                <Text style={[styles.followBtnText, isFollowing && styles.followBtnTextActive]}>
+                                    {isFollowing ? 'Following' : 'Follow'}
+                                </Text>
+                            )}
+                        </TouchableOpacity>
+                    )}
+                    {item.symbol && (
+                        <TouchableOpacity style={styles.symbolBadge}
+                            onPress={() => navigation?.navigate('StockDetail', { symbol: item.symbol })}>
+                            <Ionicons name="trending-up" size={12} color="#2563eb" />
+                            <Text style={styles.symbolBadgeText}>${item.symbol}</Text>
+                        </TouchableOpacity>
+                    )}
                 </View>
-                {item.symbol && (
-                    <TouchableOpacity style={styles.symbolBadge}
-                        onPress={() => navigation?.navigate('StockDetail', { symbol: item.symbol })}>
-                        <Ionicons name="trending-up" size={12} color="#2563eb" />
-                        <Text style={styles.symbolBadgeText}>${item.symbol}</Text>
+
+                <Text style={styles.postContent}>
+                    {renderMentions(item.content, (sym) => navigation?.navigate('StockDetail', { symbol: sym }))}
+                </Text>
+
+                <View style={styles.postActions}>
+                    <TouchableOpacity style={styles.actionBtn} onPress={() => openComments(item.id)} activeOpacity={0.6}>
+                        <Ionicons name="chatbubble-outline" size={18} color="#64748b" />
+                        <Text style={styles.actionCount}>{item.comment_count || 0}</Text>
                     </TouchableOpacity>
-                )}
+
+                    <TouchableOpacity style={styles.actionBtn} onPress={() => handleLike(item.id)} activeOpacity={0.6}>
+                        <Ionicons
+                            name={item.liked_by_me ? 'heart' : 'heart-outline'}
+                            size={18}
+                            color={item.liked_by_me ? '#ef4444' : '#64748b'}
+                        />
+                        <Text style={[styles.actionCount, item.liked_by_me && { color: '#ef4444' }]}>
+                            {item.like_count || 0}
+                        </Text>
+                    </TouchableOpacity>
+
+                    {isOwnPost && (
+                        <TouchableOpacity style={styles.actionBtn} onPress={() => handleDelete(item.id)} activeOpacity={0.6}>
+                            <Ionicons name="trash-outline" size={16} color="#94a3b8" />
+                        </TouchableOpacity>
+                    )}
+                </View>
             </View>
-
-            <Text style={styles.postContent}>{item.content}</Text>
-
-            <View style={styles.postActions}>
-                <TouchableOpacity style={styles.actionBtn} onPress={() => openComments(item.id)} activeOpacity={0.6}>
-                    <Ionicons name="chatbubble-outline" size={18} color="#64748b" />
-                    <Text style={styles.actionCount}>{item.comment_count || 0}</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity style={styles.actionBtn} onPress={() => handleLike(item.id)} activeOpacity={0.6}>
-                    <Ionicons
-                        name={item.liked_by_me ? 'heart' : 'heart-outline'}
-                        size={18}
-                        color={item.liked_by_me ? '#ef4444' : '#64748b'}
-                    />
-                    <Text style={[styles.actionCount, item.liked_by_me && { color: '#ef4444' }]}>
-                        {item.like_count || 0}
-                    </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity style={styles.actionBtn} onPress={() => handleDelete(item.id)} activeOpacity={0.6}>
-                    <Ionicons name="trash-outline" size={16} color="#94a3b8" />
-                </TouchableOpacity>
-            </View>
-        </View>
-    );
+        );
+    };
 
     const handleBack = () => {
         if (navigation?.canGoBack?.()) {
@@ -172,17 +263,21 @@ const SocialFeedScreen: React.FC<{ navigation?: any }> = ({ navigation }) => {
 
     return (
         <View style={styles.container}>
-            <View style={styles.topBar}>
-                <TouchableOpacity onPress={handleBack} style={styles.backBtn}>
-                    <Ionicons name="arrow-back" size={24} color="#0f172a" />
-                </TouchableOpacity>
-                <Text style={styles.topBarTitle}>Community Feed</Text>
-                <View style={styles.headerSpacer} />
-            </View>
-            <View style={styles.communityBanner}>
-                <Text style={styles.communityTitle}>Grow together</Text>
-                <Text style={styles.communityText}>Share ideas, ask questions, and help each other build better money habits and long-term financial freedom.</Text>
-            </View>
+            {!filterSymbol && (
+                <View style={styles.topBar}>
+                    <TouchableOpacity onPress={handleBack} style={styles.backBtn}>
+                        <Ionicons name="arrow-back" size={24} color="#0f172a" />
+                    </TouchableOpacity>
+                    <Text style={styles.topBarTitle}>Community Feed</Text>
+                    <View style={styles.headerSpacer} />
+                </View>
+            )}
+            {!filterSymbol && (
+                <View style={styles.communityBanner}>
+                    <Text style={styles.communityTitle}>Grow together</Text>
+                    <Text style={styles.communityText}>Share ideas, ask questions, and help each other build better money habits and long-term financial freedom. Type <Text style={{ fontWeight: '800', color: '#2563eb' }}>$AAPL</Text> in your post to link a stock.</Text>
+                </View>
+            )}
 
             {/* Composer */}
             <View style={styles.composer}>
@@ -196,7 +291,7 @@ const SocialFeedScreen: React.FC<{ navigation?: any }> = ({ navigation }) => {
                     </View>
                     <TextInput
                         style={styles.composerInput}
-                        placeholder="Share a lesson, question, or investment idea"
+                        placeholder={filterSymbol ? `Share your take on $${filterSymbol}…` : 'Share a lesson, question, or idea — use $AAPL to tag a stock'}
                         placeholderTextColor="#94a3b8"
                         value={composerText}
                         onChangeText={setComposerText}
@@ -228,19 +323,49 @@ const SocialFeedScreen: React.FC<{ navigation?: any }> = ({ navigation }) => {
                 </View>
             </View>
 
+            {/* Symbol filter chips */}
+            {symbolChips.length > 0 && !filterSymbol && (
+                <View style={styles.filterBar}>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
+                        <TouchableOpacity
+                            style={[styles.filterChip, !activeFilter && styles.filterChipActive]}
+                            onPress={() => setActiveFilter(null)}
+                        >
+                            <Text style={[styles.filterChipText, !activeFilter && styles.filterChipTextActive]}>All</Text>
+                        </TouchableOpacity>
+                        {symbolChips.map(sym => (
+                            <TouchableOpacity
+                                key={sym}
+                                style={[styles.filterChip, activeFilter === sym && styles.filterChipActive]}
+                                onPress={() => setActiveFilter(activeFilter === sym ? null : sym)}
+                            >
+                                <Text style={[styles.filterChipText, activeFilter === sym && styles.filterChipTextActive]}>${sym}</Text>
+                            </TouchableOpacity>
+                        ))}
+                    </ScrollView>
+                </View>
+            )}
+
             {/* Feed */}
             <FlatList
-                data={posts}
+                data={displayedPosts}
                 keyExtractor={(item) => String(item.id)}
                 renderItem={renderPost}
                 refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadFeed(); }} />}
                 ListEmptyComponent={
                     <View style={styles.empty}>
-                        <Ionicons name="chatbubbles-outline" size={48} color="#cbd5e1" />
-                        <Text style={styles.emptyText}>No posts yet. Start the conversation and help others grow.</Text>
+                        <Ionicons name="chatbubbles-outline" size={52} color="#cbd5e1" />
+                        <Text style={styles.emptyTitle}>
+                            {activeFilter ? `No posts about $${activeFilter} yet` : 'Be the first to share'}
+                        </Text>
+                        <Text style={styles.emptyText}>
+                            {activeFilter
+                                ? `Share your take on $${activeFilter} — tag it in your post above.`
+                                : 'Share a lesson, ask a question, or post an investment idea.\nType $AAPL in your post to link a stock.'}
+                        </Text>
                     </View>
                 }
-                contentContainerStyle={posts.length === 0 ? { flex: 1 } : undefined}
+                contentContainerStyle={displayedPosts.length === 0 ? { flex: 1 } : undefined}
             />
 
             {/* Comments Modal */}
@@ -386,7 +511,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderColor: '#dbeafe',
     },
     symbolBadgeText: { color: '#2563eb', fontWeight: '800', fontSize: 13 },
-    postContent: { fontSize: 15, color: '#1e293b', lineHeight: 23, marginBottom: 12, marginLeft: 54 },
+    postContent: { fontSize: 15, color: '#1e293b', lineHeight: 23, marginBottom: 12, marginLeft: 54, flexDirection: 'row', flexWrap: 'wrap' },
 
     // Actions
     postActions: { flexDirection: 'row', gap: 28, paddingTop: 6, marginLeft: 54 },
@@ -394,8 +519,76 @@ const styles = StyleSheet.create({
     actionCount: { fontSize: 13, color: '#64748b', fontWeight: '700' },
 
     // Empty
-    empty: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 80 },
-    emptyText: { fontSize: 15, color: '#94a3b8', marginTop: 14, textAlign: 'center', fontWeight: '500' },
+    empty: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 60, paddingHorizontal: 32 },
+    emptyTitle: { fontSize: 17, fontWeight: '800', color: '#475569', marginTop: 16, textAlign: 'center' },
+    emptyText: { fontSize: 14, color: '#94a3b8', marginTop: 8, textAlign: 'center', lineHeight: 21, fontWeight: '500' },
+
+    // Filter bar
+    filterBar: {
+        backgroundColor: '#fff',
+        borderBottomWidth: 1,
+        borderBottomColor: '#e2e8f0',
+    },
+    filterScroll: {
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        gap: 8,
+        flexDirection: 'row',
+    },
+    filterChip: {
+        paddingHorizontal: 14,
+        paddingVertical: 6,
+        borderRadius: 20,
+        backgroundColor: '#f1f5f9',
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+    },
+    filterChipActive: {
+        backgroundColor: '#2563eb',
+        borderColor: '#2563eb',
+    },
+    filterChipText: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: '#475569',
+    },
+    filterChipTextActive: {
+        color: '#fff',
+    },
+
+    // Follow button
+    followBtn: {
+        paddingHorizontal: 12,
+        paddingVertical: 5,
+        borderRadius: 14,
+        backgroundColor: '#2563eb',
+        marginRight: 6,
+    },
+    followBtnActive: {
+        backgroundColor: '#eff6ff',
+        borderWidth: 1,
+        borderColor: '#2563eb',
+    },
+    followBtnText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#fff',
+    },
+    followBtnTextActive: {
+        color: '#2563eb',
+    },
+
+    // Mention tag
+    mentionTag: {
+        color: '#2563eb',
+        fontWeight: '700',
+        fontSize: 15,
+    },
+    postContentInline: {
+        fontSize: 15,
+        color: '#1e293b',
+        lineHeight: 23,
+    },
 
     // Comment modal
     modalOverlay: { flex: 1, backgroundColor: 'rgba(15,23,42,0.5)', justifyContent: 'flex-end' },

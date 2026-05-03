@@ -216,6 +216,16 @@ def _get_schema_sql() -> str:
             UNIQUE(post_id, user_id)
         );
 
+        CREATE TABLE IF NOT EXISTS social_follows (
+            id           {pk_type},
+            follower_id  INTEGER NOT NULL,
+            following_id INTEGER NOT NULL,
+            created_at   {dt_type} NOT NULL DEFAULT {dt_default},
+            FOREIGN KEY (follower_id)  REFERENCES users(id),
+            FOREIGN KEY (following_id) REFERENCES users(id),
+            UNIQUE(follower_id, following_id)
+        );
+
         CREATE TABLE IF NOT EXISTS friendships (
             id           {pk_type},
             requester_id INTEGER NOT NULL,
@@ -661,17 +671,30 @@ def get_post(post_id: int, viewer_id: Optional[int] = None) -> Optional[Dict[str
     return d
 
 
-def get_social_feed(user_id: int, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+def get_social_feed(user_id: int, limit: int = 50, offset: int = 0,
+                    symbol: Optional[str] = None) -> List[Dict[str, Any]]:
     conn = _get_conn()
-    rows = conn.execute("""
-        SELECT p.*, u.username,
-               (SELECT COUNT(*) FROM social_likes WHERE post_id = p.id) as like_count,
-               (SELECT COUNT(*) FROM social_comments WHERE post_id = p.id) as comment_count
-        FROM social_posts p
-        JOIN users u ON p.user_id = u.id
-        ORDER BY p.created_at DESC
-        LIMIT ? OFFSET ?
-    """, (limit, offset)).fetchall()
+    if symbol:
+        rows = conn.execute("""
+            SELECT p.*, u.username,
+                   (SELECT COUNT(*) FROM social_likes WHERE post_id = p.id) as like_count,
+                   (SELECT COUNT(*) FROM social_comments WHERE post_id = p.id) as comment_count
+            FROM social_posts p
+            JOIN users u ON p.user_id = u.id
+            WHERE p.symbol = ?
+            ORDER BY p.created_at DESC
+            LIMIT ? OFFSET ?
+        """, (symbol.upper(), limit, offset)).fetchall()
+    else:
+        rows = conn.execute("""
+            SELECT p.*, u.username,
+                   (SELECT COUNT(*) FROM social_likes WHERE post_id = p.id) as like_count,
+                   (SELECT COUNT(*) FROM social_comments WHERE post_id = p.id) as comment_count
+            FROM social_posts p
+            JOIN users u ON p.user_id = u.id
+            ORDER BY p.created_at DESC
+            LIMIT ? OFFSET ?
+        """, (limit, offset)).fetchall()
     result = []
     for r in rows:
         d = dict(r)
@@ -681,6 +704,79 @@ def get_social_feed(user_id: int, limit: int = 50, offset: int = 0) -> List[Dict
         d["liked_by_me"] = liked is not None
         result.append(d)
     return result
+
+
+# ── Follow System CRUD ────────────────────────────────────────────
+
+def follow_user(follower_id: int, following_id: int) -> Dict[str, Any]:
+    conn = _get_conn()
+    try:
+        conn.execute(
+            "INSERT INTO social_follows (follower_id, following_id) VALUES (?, ?)",
+            (follower_id, following_id),
+        )
+        conn.commit()
+        return {"following": True}
+    except Exception:
+        return {"following": True, "already": True}
+
+
+def unfollow_user(follower_id: int, following_id: int) -> Dict[str, Any]:
+    conn = _get_conn()
+    conn.execute(
+        "DELETE FROM social_follows WHERE follower_id = ? AND following_id = ?",
+        (follower_id, following_id),
+    )
+    conn.commit()
+    return {"following": False}
+
+
+def is_following(follower_id: int, following_id: int) -> bool:
+    conn = _get_conn()
+    return conn.execute(
+        "SELECT 1 FROM social_follows WHERE follower_id = ? AND following_id = ?",
+        (follower_id, following_id),
+    ).fetchone() is not None
+
+
+def get_follower_count(user_id: int) -> int:
+    conn = _get_conn()
+    return conn.execute(
+        "SELECT COUNT(*) as c FROM social_follows WHERE following_id = ?", (user_id,)
+    ).fetchone()["c"]
+
+
+def get_following_count(user_id: int) -> int:
+    conn = _get_conn()
+    return conn.execute(
+        "SELECT COUNT(*) as c FROM social_follows WHERE follower_id = ?", (user_id,)
+    ).fetchone()["c"]
+
+
+def get_user_stats(user_id: int) -> Dict[str, Any]:
+    """Returns follower/following counts + post count for a user."""
+    conn = _get_conn()
+    followers = get_follower_count(user_id)
+    following = get_following_count(user_id)
+    post_count = conn.execute(
+        "SELECT COUNT(*) as c FROM social_posts WHERE user_id = ?", (user_id,)
+    ).fetchone()["c"]
+    # Accuracy: count trade reason submissions and average confidence
+    tr_rows = conn.execute(
+        "SELECT confidence FROM trade_reasons WHERE user_id = ? AND confidence IS NOT NULL",
+        (user_id,),
+    ).fetchall()
+    avg_confidence = round(
+        sum(r["confidence"] for r in tr_rows) / max(len(tr_rows), 1), 1
+    ) if tr_rows else None
+    return {
+        "user_id": user_id,
+        "followers": followers,
+        "following": following,
+        "post_count": post_count,
+        "trade_submissions": len(tr_rows),
+        "avg_confidence": avg_confidence,
+    }
 
 
 def toggle_like(post_id: int, user_id: int) -> Dict[str, Any]:

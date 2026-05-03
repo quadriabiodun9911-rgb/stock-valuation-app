@@ -1266,8 +1266,8 @@ export class StockValuationAPI {
         });
     }
 
-    async getSocialFeed(limit: number = 50, offset: number = 0): Promise<{ posts: any[] }> {
-        return this.request<{ posts: any[] }>('/api/social/feed', { params: { limit, offset } });
+    async getSocialFeed(limit: number = 50, offset: number = 0, symbol?: string): Promise<{ posts: any[] }> {
+        return this.request<{ posts: any[] }>('/api/social/feed', { params: { limit, offset, ...(symbol ? { symbol } : {}) } });
     }
 
     async getPost(postId: number): Promise<any> {
@@ -1328,6 +1328,23 @@ export class StockValuationAPI {
         return this.request<any>(`/api/social/chat/${receiverId}`, {
             method: 'POST', body: { content },
         });
+    }
+
+    // ── Follow System ────────────────────────────────────────────
+    async followUser(targetUserId: number): Promise<{ following: boolean }> {
+        return this.request<{ following: boolean }>(`/api/social/follow/${targetUserId}`, { method: 'POST' });
+    }
+
+    async unfollowUser(targetUserId: number): Promise<{ following: boolean }> {
+        return this.request<{ following: boolean }>(`/api/social/follow/${targetUserId}`, { method: 'DELETE' });
+    }
+
+    async getFollowStatus(targetUserId: number): Promise<{ following: boolean }> {
+        return this.request<{ following: boolean }>(`/api/social/follow/status/${targetUserId}`);
+    }
+
+    async getUserStats(targetUserId: number): Promise<any> {
+        return this.request<any>(`/api/social/stats/${targetUserId}`);
     }
 
     // ── Financial Statement Upload & Analysis ─────────────────────

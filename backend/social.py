@@ -1,5 +1,5 @@
 """
-Social Module — X-like social feed, friendships & chat.
+Social Module — X-like social feed, friendships, follows & chat.
 """
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
@@ -41,8 +41,9 @@ async def create_post(body: CreatePost, user_id: int = Depends(get_user_id_dep))
 
 
 @router.get("/feed")
-async def get_feed(limit: int = 50, offset: int = 0, user_id: int = Depends(get_user_id_dep)):
-    return {"posts": db.get_social_feed(user_id, limit, offset)}
+async def get_feed(limit: int = 50, offset: int = 0, symbol: Optional[str] = None,
+                   user_id: int = Depends(get_user_id_dep)):
+    return {"posts": db.get_social_feed(user_id, limit, offset, symbol=symbol)}
 
 
 @router.get("/posts/{post_id}")
@@ -107,6 +108,32 @@ async def search_users(q: str, user_id: int = Depends(get_user_id_dep)):
     if len(q) < 2:
         raise HTTPException(status_code=400, detail="Query too short")
     return {"users": db.search_users(q, user_id)}
+
+
+# ── Follow System ─────────────────────────────────────────────────
+
+@router.post("/follow/{target_user_id}")
+async def follow_user(target_user_id: int, user_id: int = Depends(get_user_id_dep)):
+    if target_user_id == user_id:
+        raise HTTPException(status_code=400, detail="Cannot follow yourself")
+    return db.follow_user(user_id, target_user_id)
+
+
+@router.delete("/follow/{target_user_id}")
+async def unfollow_user(target_user_id: int, user_id: int = Depends(get_user_id_dep)):
+    return db.unfollow_user(user_id, target_user_id)
+
+
+@router.get("/follow/status/{target_user_id}")
+async def follow_status(target_user_id: int, user_id: int = Depends(get_user_id_dep)):
+    return {"following": db.is_following(user_id, target_user_id)}
+
+
+@router.get("/stats/{target_user_id}")
+async def user_stats(target_user_id: int, user_id: int = Depends(get_user_id_dep)):
+    stats = db.get_user_stats(target_user_id)
+    stats["is_following_them"] = db.is_following(user_id, target_user_id)
+    return stats
 
 
 # ── Chat ──────────────────────────────────────────────────────────

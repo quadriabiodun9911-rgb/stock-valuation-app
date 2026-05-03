@@ -24,6 +24,7 @@ import {
     AssistiveValuationBriefResponse,
     AssistiveNewsImpactResponse,
 } from '../services/api';
+import SocialFeedScreen from './SocialFeedScreen';
 
 interface Props {
     route: any;
@@ -36,7 +37,7 @@ const StockDetailScreen: React.FC<Props> = ({ route, navigation }) => {
     const [analysis, setAnalysis] = useState<ComprehensiveResult | null>(null);
     const [loading, setLoading] = useState(true);
     const [analysisLoading, setAnalysisLoading] = useState(false);
-    const [activeTab, setActiveTab] = useState<'overview' | 'analysis'>('overview');
+    const [activeTab, setActiveTab] = useState<'overview' | 'analysis' | 'discussion'>('overview');
     const [priceEpsSeries, setPriceEpsSeries] = useState<PriceEpsSeries | null>(null);
     const [priceEpsLoading, setPriceEpsLoading] = useState(false);
     const [growthMetrics, setGrowthMetrics] = useState<FinancialGrowthMetrics | null>(null);
@@ -501,6 +502,14 @@ const StockDetailScreen: React.FC<Props> = ({ route, navigation }) => {
                 >
                     <Text style={[styles.tabText, activeTab === 'analysis' && styles.activeTabText]}>
                         Analysis
+                    </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                    style={[styles.tab, activeTab === 'discussion' && styles.activeTab]}
+                    onPress={() => setActiveTab('discussion')}
+                >
+                    <Text style={[styles.tabText, activeTab === 'discussion' && styles.activeTabText]}>
+                        Discussion
                     </Text>
                 </TouchableOpacity>
             </View>
@@ -1159,6 +1168,11 @@ const StockDetailScreen: React.FC<Props> = ({ route, navigation }) => {
                             </View>
                         </View>
                     ) : null}
+                </View>
+            )}
+            {activeTab === 'discussion' && (
+                <View style={{ flex: 1, minHeight: 500 }}>
+                    <SocialFeedScreen navigation={navigation} filterSymbol={symbol} />
                 </View>
             )}
         </ScrollView>
