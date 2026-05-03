@@ -1622,6 +1622,32 @@ async def get_stock_info(symbol: str):
                 }
             )
         
+        # ── 1. Try FCS API first (avoids Render yfinance rate-limits) ──────────
+        if fcs_data.enabled:
+            try:
+                logger.info("Trying FCS API first for %s", symbol_upper)
+                fcs_info = fcs_data.get_stock_info(symbol_upper)
+                if fcs_info.get('current_price'):
+                    return {
+                        "symbol": fcs_info['symbol'],
+                        "company_name": fcs_info['company_name'],
+                        "current_price": fcs_info['current_price'],
+                        "market_cap": fcs_info.get('market_cap') or 0,
+                        "pe_ratio": fcs_info.get('pe_ratio') or 0,
+                        "sector": fcs_info.get('sector') or 'N/A',
+                        "industry": fcs_info.get('industry') or 'N/A',
+                        "dividend_yield": fcs_info.get('dividend_yield') or 0,
+                        "52_week_high": fcs_info.get('52_week_high') or 0,
+                        "52_week_low": fcs_info.get('52_week_low') or 0,
+                        "beta": fcs_info.get('beta') or 0,
+                        "volume": fcs_info.get('volume', 0),
+                        "avg_volume": fcs_info.get('volume', 0),
+                        "data_source": "FCS API"
+                    }
+            except Exception as fcs_err:
+                logger.warning("FCS API failed for %s, falling back to yfinance: %s", symbol_upper, fcs_err)
+
+        # ── 2. Fall back to yfinance ─────────────────────────────────────────
         try:
             data = valuation_service.get_stock_data(symbol_upper)
             info = data['info']
@@ -1653,34 +1679,7 @@ async def get_stock_info(symbol: str):
                 "volume": info.get('volume', 0),
                 "avg_volume": info.get('averageVolume', 0)
             }
-        except HTTPException as http_exc:
-            # On 429 (yfinance rate-limit), try FCS API as fallback
-            if http_exc.status_code == 429 and fcs_data.enabled:
-                try:
-                    logger.warning(
-                        "yfinance rate-limited for %s — falling back to FCS API", symbol_upper
-                    )
-                    fcs_info = fcs_data.get_stock_info(symbol_upper)
-                    return {
-                        "symbol": fcs_info['symbol'],
-                        "company_name": fcs_info['company_name'],
-                        "current_price": fcs_info['current_price'],
-                        "market_cap": fcs_info.get('market_cap') or 0,
-                        "pe_ratio": fcs_info.get('pe_ratio') or 0,
-                        "sector": fcs_info.get('sector') or 'N/A',
-                        "industry": fcs_info.get('industry') or 'N/A',
-                        "dividend_yield": fcs_info.get('dividend_yield') or 0,
-                        "52_week_high": fcs_info.get('52_week_high') or 0,
-                        "52_week_low": fcs_info.get('52_week_low') or 0,
-                        "beta": fcs_info.get('beta') or 0,
-                        "volume": fcs_info.get('volume', 0),
-                        "avg_volume": fcs_info.get('volume', 0),
-                        "data_source": "FCS API"
-                    }
-                except Exception as fcs_fallback_err:
-                    logger.error(
-                        "FCS API fallback also failed for %s: %s", symbol_upper, fcs_fallback_err
-                    )
+        except HTTPException:
             raise
     except HTTPException:
         raise
