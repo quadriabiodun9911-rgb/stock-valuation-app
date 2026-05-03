@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
     View,
     Text,
@@ -9,9 +9,12 @@ import {
     ActivityIndicator,
     Dimensions,
     TextInput,
+    Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LineChart } from 'react-native-chart-kit';
+import ViewShot from 'react-native-view-shot';
+import * as Sharing from 'expo-sharing';
 import {
     stockAPI,
     StockInfo,
@@ -47,6 +50,7 @@ const StockDetailScreen: React.FC<Props> = ({ route, navigation }) => {
     const [newsImpactBrief, setNewsImpactBrief] = useState<AssistiveNewsImpactResponse | null>(null);
     const [newsImpactLoading, setNewsImpactLoading] = useState(false);
     const [showConfidenceTip, setShowConfidenceTip] = useState(false);
+    const briefRef = useRef<ViewShot>(null);
 
     useEffect(() => {
         loadStockData();
@@ -293,6 +297,27 @@ const StockDetailScreen: React.FC<Props> = ({ route, navigation }) => {
             // no-op
         }
         navigation.navigate('AIChat', { symbol });
+    };
+
+    const shareBrief = async () => {
+        if (!briefRef.current?.capture) return;
+
+        try {
+            const uri = await briefRef.current.capture();
+            if (await Sharing.isAvailableAsync()) {
+                await Sharing.shareAsync(uri, {
+                    mimeType: 'image/png',
+                    dialogTitle: `Share AI brief for ${symbol}`,
+                });
+                stockAPI.trackAssistiveEvent({
+                    event_name: 'assistive_valuation_brief_shared',
+                    symbol,
+                }).catch(() => undefined);
+            }
+        } catch (error) {
+            console.error('Error sharing brief:', error);
+            Alert.alert('Error', 'Unable to share the brief at this time.');
+        }
     };
 
     const handleAnalysisTab = () => {
@@ -1728,9 +1753,27 @@ const styles = StyleSheet.create({
         gap: 6,
     },
     assistiveChatButtonText: {
-        color: 'white',
-        fontSize: 13,
-        fontWeight: '700',
+        color: '#fff',
+        marginLeft: 8,
+        fontWeight: '600',
+    },
+    shareFooter: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: 16,
+        paddingTop: 12,
+        borderTopWidth: 1,
+        borderTopColor: '#e5e7eb',
+    },
+    shareLogo: {
+        width: 20,
+        height: 20,
+        marginRight: 8,
+    },
+    shareText: {
+        fontSize: 12,
+        color: '#6b7280',
+        fontStyle: 'italic',
     },
     assistiveRetryButton: {
         borderWidth: 1,
