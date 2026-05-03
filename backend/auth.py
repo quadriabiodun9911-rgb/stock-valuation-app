@@ -117,6 +117,15 @@ class PushTokenRequest(BaseModel):
     token: str
 
 
+class UpdateProfileRequest(BaseModel):
+    username: str = Field(..., min_length=3, max_length=50)
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(..., min_length=6, max_length=128)
+
+
 # ── Endpoints ─────────────────────────────────────────────────────
 
 @router.post("/register")
@@ -173,3 +182,32 @@ async def register_push_token(req: PushTokenRequest, user: dict = Depends(requir
     """Register an Expo push notification token."""
     db.update_push_token(user["id"], req.token)
     return {"status": "success", "message": "Push token registered"}
+
+
+@router.put("/me")
+async def update_profile(req: UpdateProfileRequest, user: dict = Depends(require_auth)):
+    """Update the current user's username."""
+    try:
+        updated = db.update_user_profile(user["id"], req.username)
+    except Exception as e:
+        if "UNIQUE" in str(e):
+            raise HTTPException(status_code=400, detail="Username already taken")
+        raise HTTPException(status_code=500, detail="Update failed")
+    return {
+        "status": "success",
+        "user": {
+            "id": updated["id"],
+            "email": updated["email"],
+            "username": updated["username"],
+        },
+    }
+
+
+@router.post("/change-password")
+async def change_password(req: ChangePasswordRequest, user: dict = Depends(require_auth)):
+    """Change the current user's password after verifying their existing one."""
+    if not _verify_password(req.current_password, user["password_hash"]):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    new_hash = _hash_password(req.new_password)
+    db.update_user_password(user["id"], new_hash)
+    return {"status": "success", "message": "Password updated successfully"}

@@ -15,6 +15,7 @@ router = APIRouter(prefix="/api/assistive", tags=["assistive-ai"])
 
 class AssistiveBriefRequest(BaseModel):
     symbol: str = Field(..., min_length=1, max_length=10)
+    company_name: Optional[str] = Field(None, max_length=100)
     analysis: Optional[Dict[str, Any]] = None
     risk_profile: Optional[str] = None
     time_horizon: Optional[str] = None
@@ -33,6 +34,7 @@ class AssistiveBriefResponse(BaseModel):
 
 class AssistiveNewsImpactRequest(BaseModel):
     symbol: str = Field(..., min_length=1, max_length=10)
+    company_name: Optional[str] = Field(None, max_length=100)
     limit: int = Field(6, ge=3, le=12)
 
 
@@ -63,6 +65,11 @@ class AssistiveEventRequest(BaseModel):
 
 def build_assistive_brief(payload: AssistiveBriefRequest) -> Dict[str, Any]:
     """Create a deterministic valuation brief from known analysis fields."""
+    display_name = (
+        f"{payload.company_name} ({payload.symbol.upper()})"
+        if payload.company_name
+        else payload.symbol.upper()
+    )
     analysis = payload.analysis or {}
     recommendation = analysis.get("recommendation", {})
     valuations = analysis.get("valuations", {})
@@ -153,7 +160,7 @@ def build_assistive_brief(payload: AssistiveBriefRequest) -> Dict[str, Any]:
         )
 
     summary = (
-        f"{payload.symbol.upper()} currently reads as a "
+        f"{display_name} currently reads as a "
         f"{action} setup{persona_line}. "
         f"Confidence is {confidence}. "
         "Focus on valuation signals and risk controls together, "
@@ -162,6 +169,7 @@ def build_assistive_brief(payload: AssistiveBriefRequest) -> Dict[str, Any]:
 
     return {
         "symbol": payload.symbol.upper(),
+        "company_name": payload.company_name,
         "summary": summary,
         "evidence": evidence or [
             "No structured analysis payload provided; "
@@ -178,6 +186,7 @@ def build_assistive_brief(payload: AssistiveBriefRequest) -> Dict[str, Any]:
 def build_news_impact_brief(
     symbol: str,
     articles: List[dict],
+    company_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     sentiment_count = {"positive": 0, "negative": 0, "neutral": 0}
     headlines: List[str] = []
@@ -202,6 +211,12 @@ def build_news_impact_brief(
     else:
         overall = "neutral"
 
+    display_name = (
+        f"{company_name} ({symbol.upper()})"
+        if company_name
+        else symbol.upper()
+    )
+
     evidence = [
         f"Analyzed {len(articles)} recent headlines for {symbol.upper()}.",
         f"Positive headlines: {sentiment_count['positive']} ({pos_pct}%).",
@@ -216,7 +231,7 @@ def build_news_impact_brief(
 
     if overall == "positive":
         summary = (
-            f"Recent news flow for {symbol.upper()} is skewing positive. "
+            f"Recent news flow for {display_name} is skewing positive. "
             "Treat this as supportive context, not a standalone buy signal."
         )
         next_actions = [
@@ -226,7 +241,7 @@ def build_news_impact_brief(
         ]
     elif overall == "negative":
         summary = (
-            f"Recent news flow for {symbol.upper()} is skewing negative. "
+            f"Recent news flow for {display_name} is skewing negative. "
             "Prioritize downside control and thesis re-validation."
         )
         next_actions = [
@@ -236,7 +251,7 @@ def build_news_impact_brief(
         ]
     else:
         summary = (
-            f"Recent news flow for {symbol.upper()} is balanced. "
+            f"Recent news flow for {display_name} is balanced. "
             "Wait for a stronger signal from fundamentals and price action."
         )
         next_actions = [
@@ -294,7 +309,7 @@ async def news_impact_brief(payload: AssistiveNewsImpactRequest):
         payload.limit,
         symbol=payload.symbol,
     )
-    brief = build_news_impact_brief(payload.symbol, articles)
+    brief = build_news_impact_brief(payload.symbol, articles, company_name=payload.company_name)
 
     if advisor.enabled:
         enhanced, _metrics = await advisor.enhance_response(

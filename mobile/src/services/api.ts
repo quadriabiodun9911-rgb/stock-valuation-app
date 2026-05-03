@@ -243,6 +243,7 @@ export interface AIRecommendationResult {
 
 export interface AssistiveValuationBriefRequest {
     symbol: string;
+    company_name?: string;
     analysis?: {
         recommendation?: {
             action?: string;
@@ -1462,10 +1463,10 @@ export class StockValuationAPI {
         });
     }
 
-    async getAssistiveNewsImpact(symbol: string, limit: number = 6): Promise<AssistiveNewsImpactResponse> {
+    async getAssistiveNewsImpact(symbol: string, limit: number = 6, company_name?: string): Promise<AssistiveNewsImpactResponse> {
         return this.request<AssistiveNewsImpactResponse>('/api/assistive/news-impact', {
             method: 'POST',
-            body: { symbol, limit },
+            body: { symbol, limit, company_name },
         });
     }
 
@@ -1478,6 +1479,21 @@ export class StockValuationAPI {
         return this.request<any>('/api/assistive/feedback', {
             method: 'POST',
             body: payload,
+        });
+    }
+
+    // ── Profile management ──
+    async updateProfile(username: string): Promise<any> {
+        return this.request<any>('/auth/me', {
+            method: 'PUT',
+            body: { username },
+        });
+    }
+
+    async changePassword(current_password: string, new_password: string): Promise<any> {
+        return this.request<any>('/auth/change-password', {
+            method: 'POST',
+            body: { current_password, new_password },
         });
     }
 

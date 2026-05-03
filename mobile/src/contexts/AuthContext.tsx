@@ -15,6 +15,7 @@ interface AuthState {
     login: (email: string, password: string) => Promise<void>;
     register: (email: string, username: string, password: string) => Promise<void>;
     logout: () => Promise<void>;
+    updateUser: (updated: User) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthState>({
@@ -24,6 +25,7 @@ const AuthContext = createContext<AuthState>({
     login: async () => { },
     register: async () => { },
     logout: async () => { },
+    updateUser: async () => { },
 });
 
 const API_BASE_URL = API_URL;
@@ -91,8 +93,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(null);
     };
 
+    const updateUser = async (updated: User) => {
+        setUser(updated);
+        await AsyncStorage.setItem('auth_user', JSON.stringify(updated));
+    };
+
     return (
-        <AuthContext.Provider value={{ user, token, loading, login, register, logout }}>
+        <AuthContext.Provider value={{ user, token, loading, login, register, logout, updateUser }}>
             {children}
         </AuthContext.Provider>
     );

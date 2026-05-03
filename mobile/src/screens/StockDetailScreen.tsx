@@ -218,6 +218,7 @@ const StockDetailScreen: React.FC<Props> = ({ route, navigation }) => {
             setAssistiveLoading(true);
             const brief = await stockAPI.getAssistiveValuationBrief({
                 symbol,
+                company_name: stockInfo?.company_name,
                 analysis: {
                     recommendation: {
                         action: source.recommendation?.action,
@@ -296,7 +297,7 @@ const StockDetailScreen: React.FC<Props> = ({ route, navigation }) => {
     const loadNewsImpactBrief = async () => {
         try {
             setNewsImpactLoading(true);
-            const brief = await stockAPI.getAssistiveNewsImpact(symbol, 6);
+            const brief = await stockAPI.getAssistiveNewsImpact(symbol, 6, stockInfo?.company_name);
             setNewsImpactBrief(brief);
             await stockAPI.trackAssistiveEvent({
                 event_name: 'assistive_news_impact_generated',

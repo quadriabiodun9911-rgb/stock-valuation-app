@@ -440,6 +440,27 @@ def get_user_by_id(user_id: int) -> Optional[Dict[str, Any]]:
     return dict(row) if row else None
 
 
+def update_user_profile(user_id: int, username: str) -> Dict[str, Any]:
+    conn = _get_conn()
+    conn.execute(
+        "UPDATE users SET username = ? WHERE id = ?",
+        (username, user_id),
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    return dict(row) if row else {}
+
+
+def update_user_password(user_id: int, new_password_hash: str) -> bool:
+    conn = _get_conn()
+    conn.execute(
+        "UPDATE users SET password_hash = ? WHERE id = ?",
+        (new_password_hash, user_id),
+    )
+    conn.commit()
+    return True
+
+
 def update_push_token(user_id: int, token: str):
     conn = _get_conn()
     conn.execute("UPDATE users SET push_token = ? WHERE id = ?", (token, user_id))
