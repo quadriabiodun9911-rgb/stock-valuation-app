@@ -77,6 +77,7 @@ import AssistiveMetricsScreen from './src/screens/AssistiveMetricsScreen';
 import EarningsCalendarScreen from './src/screens/EarningsCalendarScreen';
 import OptionsCalculatorScreen from './src/screens/OptionsCalculatorScreen';
 import ReferralScreen from './src/screens/ReferralScreen';
+import ProfileScreen from './src/screens/ProfileScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -97,6 +98,7 @@ function MainTabs() {
                     else if (route.name === 'Charts') iconName = focused ? 'grid' : 'grid-outline';
                     else if (route.name === 'Crowd') iconName = focused ? 'people' : 'people-outline';
                     else if (route.name === 'Watchlist') iconName = focused ? 'bookmark' : 'bookmark-outline';
+                    else if (route.name === 'Profile') iconName = focused ? 'person-circle' : 'person-circle-outline';
                     return (
                         <View style={{ alignItems: 'center' }}>
                             <Ionicons name={iconName} size={22} color={color} />
@@ -132,6 +134,7 @@ function MainTabs() {
             <Tab.Screen name="Charts" component={MarketsHubScreen} options={{ tabBarLabel: 'Tools' }} />
             <Tab.Screen name="Crowd" component={IntelligenceScreen} options={{ tabBarLabel: 'Community' }} />
             <Tab.Screen name="Watchlist" component={WatchlistScreen} options={{ tabBarLabel: 'Watchlist' }} />
+            <Tab.Screen name="Profile" component={ProfileScreen} options={{ tabBarLabel: 'Profile' }} />
         </Tab.Navigator>
     );
 }
