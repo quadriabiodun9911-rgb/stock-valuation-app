@@ -681,7 +681,13 @@ class StockValuationService:
                     return cached_data
 
             logger.error(f"Error fetching data for {symbol}: {e}")
-            raise HTTPException(status_code=400, detail=f"Error fetching stock data: {str(e)}")
+            err_str = str(e).lower()
+            is_rate_limit = any(
+                kw in err_str
+                for kw in ("too many requests", "rate limit", "rate-limit", "429", "throttle")
+            )
+            status_code = 429 if is_rate_limit else 400
+            raise HTTPException(status_code=status_code, detail=f"Error fetching stock data: {str(e)}")
     
     def calculate_dcf_valuation(self, symbol: str, growth_rate: float = 0.05, 
                                discount_rate: float = 0.10, terminal_growth_rate: float = 0.03):

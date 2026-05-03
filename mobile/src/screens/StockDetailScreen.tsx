@@ -89,32 +89,55 @@ const StockDetailScreen: React.FC<Props> = ({ route, navigation }) => {
             loadGrowthMetrics();
         } catch (error: any) {
             console.error('Error loading stock data:', error);
+            const msg: string = error?.message || '';
 
-            // Handle specific error types
-            if (error.response?.status === 503) {
-                const errorData = error.response?.data?.detail;
-                if (errorData?.error === 'NGX_NOT_SUPPORTED') {
-                    Alert.alert(
-                        'Nigerian Stocks Not Available',
-                        errorData.message + '\n\n' + errorData.suggestion,
-                        [{ text: 'OK' }]
-                    );
-                    navigation.goBack();
-                    return;
-                }
-            }
-
-            if (error.response?.status === 404) {
-                const errorData = error.response?.data?.detail;
+            if (msg.includes('NGX_NOT_SUPPORTED') || msg.toLowerCase().includes('nigerian')) {
                 Alert.alert(
-                    'Stock Not Found',
-                    errorData?.message || 'Unable to find data for this stock symbol.',
+                    'Nigerian Stocks Not Available',
+                    'NGX stocks are not yet supported. Please try a US-listed symbol.',
                     [{ text: 'OK' }]
                 );
                 navigation.goBack();
-            } else {
-                Alert.alert('Error', 'Failed to load stock data. Please check your internet connection and try again.');
+                return;
             }
+
+            if (
+                msg.toLowerCase().includes('rate') ||
+                msg.toLowerCase().includes('too many') ||
+                msg.toLowerCase().includes('busy') ||
+                msg.toLowerCase().includes('throttle')
+            ) {
+                Alert.alert(
+                    'Data Temporarily Unavailable',
+                    'Stock data is rate-limited right now. Please wait a few minutes and try again.',
+                    [{ text: 'OK' }]
+                );
+                return;
+            }
+
+            if (
+                msg.toLowerCase().includes('not found') ||
+                msg.toLowerCase().includes('no available data') ||
+                msg.toLowerCase().includes('symbol')
+            ) {
+                Alert.alert(
+                    'Stock Not Found',
+                    `Unable to find data for "${symbol}". Please verify the symbol and try again.`,
+                    [{ text: 'OK' }]
+                );
+                navigation.goBack();
+                return;
+            }
+
+            // Generic fallback — show the actual server message so user knows what happened
+            Alert.alert(
+                'Unable to Load Stock',
+                msg || 'Something went wrong. Please try again.',
+                [
+                    { text: 'Go Back', style: 'cancel', onPress: () => navigation.goBack() },
+                    { text: 'Retry', onPress: () => loadStockData() },
+                ]
+            );
         } finally {
             setLoading(false);
         }
