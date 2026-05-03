@@ -105,30 +105,3 @@ const ProfileScreen = () => {
 };
 
 export default ProfileScreen;
-
-paddingVertical: 15,
-    paddingHorizontal: 20,
-        backgroundColor: '#FFFFFF',
-            borderBottomWidth: 1,
-                borderBottomColor: '#E0E0E0',
-    },
-menuItemText: {
-    fontSize: 16,
-        marginLeft: 20,
-            color: '#333',
-    },
-logoutButton: {
-    margin: 20,
-        padding: 15,
-            backgroundColor: '#FF3B30',
-                borderRadius: 15,
-                    alignItems: 'center',
-    },
-logoutButtonText: {
-    color: '#FFFFFF',
-        fontSize: 16,
-            fontWeight: 'bold',
-    },
-});
-
-export default ProfileScreen;
