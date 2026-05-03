@@ -28,6 +28,7 @@ from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from alpha_vantage_provider import AlphaVantageProvider
 from twelve_data_provider import TwelveDataProvider
+from fcs_provider import FCSProvider
 from ai_endpoints import router as ai_router
 from realtime_endpoints import router as realtime_router
 from news_integration import router as news_router
@@ -76,6 +77,7 @@ _rate_limit_lock = threading.Lock()
 # Initialize data providers
 alpha_vantage = AlphaVantageProvider()
 twelve_data = TwelveDataProvider()
+fcs_data = FCSProvider()
 
 # ── API Key Authentication ────────────────────────────────────────
 # Set API_KEY env var to enable authentication. When unset, auth is disabled.
@@ -1581,7 +1583,33 @@ async def get_stock_info(symbol: str):
                     errors.append(f"Twelve Data: {str(td_error)[:50]}")
             else:
                 errors.append("Twelve Data: No API key configured")
-            
+
+            # 3. Try FCS API
+            if fcs_data.enabled:
+                try:
+                    logger.info(f"Trying FCS API for {symbol_upper}")
+                    fcs_info = fcs_data.get_stock_info(symbol_upper)
+                    return {
+                        "symbol": fcs_info['symbol'],
+                        "company_name": fcs_info['company_name'],
+                        "current_price": fcs_info['current_price'],
+                        "market_cap": fcs_info.get('market_cap') or 0,
+                        "pe_ratio": fcs_info.get('pe_ratio') or 0,
+                        "sector": fcs_info.get('sector') or 'N/A',
+                        "industry": fcs_info.get('industry') or 'N/A',
+                        "dividend_yield": fcs_info.get('dividend_yield') or 0,
+                        "52_week_high": fcs_info.get('52_week_high') or 0,
+                        "52_week_low": fcs_info.get('52_week_low') or 0,
+                        "beta": fcs_info.get('beta') or 0,
+                        "volume": fcs_info.get('volume', 0),
+                        "avg_volume": fcs_info.get('volume', 0),
+                        "data_source": "FCS API"
+                    }
+                except Exception as fcs_error:
+                    errors.append(f"FCS API: {str(fcs_error)[:50]}")
+            else:
+                errors.append("FCS API: No API key configured")
+
             # All providers failed
             raise HTTPException(
                 status_code=503,
@@ -1594,36 +1622,66 @@ async def get_stock_info(symbol: str):
                 }
             )
         
-        data = valuation_service.get_stock_data(symbol_upper)
-        info = data['info']
-        
-        # Check if we got valid data
-        if not info.get('longName') and not info.get('shortName'):
-            raise HTTPException(
-                status_code=404,
-                detail={
-                    "error": "STOCK_NOT_FOUND",
-                    "message": f"Stock symbol '{symbol_upper}' not found or has no available data.",
-                    "suggestion": "Please verify the stock symbol and try again.",
-                    "symbol": symbol_upper
-                }
-            )
-        
-        return {
-            "symbol": symbol_upper,
-            "company_name": info.get('longName', info.get('shortName', 'N/A')),
-            "current_price": info.get('currentPrice', info.get('regularMarketPrice', 0)),
-            "market_cap": info.get('marketCap', 0),
-            "pe_ratio": info.get('trailingPE', 0),
-            "sector": info.get('sector', 'N/A'),
-            "industry": info.get('industry', 'N/A'),
-            "dividend_yield": info.get('dividendYield', 0),
-            "52_week_high": info.get('fiftyTwoWeekHigh', 0),
-            "52_week_low": info.get('fiftyTwoWeekLow', 0),
-            "beta": info.get('beta', 0),
-            "volume": info.get('volume', 0),
-            "avg_volume": info.get('averageVolume', 0)
-        }
+        try:
+            data = valuation_service.get_stock_data(symbol_upper)
+            info = data['info']
+
+            # Check if we got valid data
+            if not info.get('longName') and not info.get('shortName'):
+                raise HTTPException(
+                    status_code=404,
+                    detail={
+                        "error": "STOCK_NOT_FOUND",
+                        "message": f"Stock symbol '{symbol_upper}' not found or has no available data.",
+                        "suggestion": "Please verify the stock symbol and try again.",
+                        "symbol": symbol_upper
+                    }
+                )
+
+            return {
+                "symbol": symbol_upper,
+                "company_name": info.get('longName', info.get('shortName', 'N/A')),
+                "current_price": info.get('currentPrice', info.get('regularMarketPrice', 0)),
+                "market_cap": info.get('marketCap', 0),
+                "pe_ratio": info.get('trailingPE', 0),
+                "sector": info.get('sector', 'N/A'),
+                "industry": info.get('industry', 'N/A'),
+                "dividend_yield": info.get('dividendYield', 0),
+                "52_week_high": info.get('fiftyTwoWeekHigh', 0),
+                "52_week_low": info.get('fiftyTwoWeekLow', 0),
+                "beta": info.get('beta', 0),
+                "volume": info.get('volume', 0),
+                "avg_volume": info.get('averageVolume', 0)
+            }
+        except HTTPException as http_exc:
+            # On 429 (yfinance rate-limit), try FCS API as fallback
+            if http_exc.status_code == 429 and fcs_data.enabled:
+                try:
+                    logger.warning(
+                        "yfinance rate-limited for %s — falling back to FCS API", symbol_upper
+                    )
+                    fcs_info = fcs_data.get_stock_info(symbol_upper)
+                    return {
+                        "symbol": fcs_info['symbol'],
+                        "company_name": fcs_info['company_name'],
+                        "current_price": fcs_info['current_price'],
+                        "market_cap": fcs_info.get('market_cap') or 0,
+                        "pe_ratio": fcs_info.get('pe_ratio') or 0,
+                        "sector": fcs_info.get('sector') or 'N/A',
+                        "industry": fcs_info.get('industry') or 'N/A',
+                        "dividend_yield": fcs_info.get('dividend_yield') or 0,
+                        "52_week_high": fcs_info.get('52_week_high') or 0,
+                        "52_week_low": fcs_info.get('52_week_low') or 0,
+                        "beta": fcs_info.get('beta') or 0,
+                        "volume": fcs_info.get('volume', 0),
+                        "avg_volume": fcs_info.get('volume', 0),
+                        "data_source": "FCS API"
+                    }
+                except Exception as fcs_fallback_err:
+                    logger.error(
+                        "FCS API fallback also failed for %s: %s", symbol_upper, fcs_fallback_err
+                    )
+            raise
     except HTTPException:
         raise
     except Exception as e:
