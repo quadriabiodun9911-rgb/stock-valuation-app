@@ -32,57 +32,39 @@ const SearchScreen: React.FC<Props> = ({ navigation }) => {
             setSearchResults([]);
             setCompanyResults([]);
 
+            // Refine query by removing common suffixes
             const rawQuery = searchQuery.trim();
-            const symbolCandidate = rawQuery.toUpperCase();
-            const isSymbolLike = /^[A-Z0-9.^-]{1,10}$/.test(symbolCandidate) && !rawQuery.includes(' ');
+            const refinedQuery = rawQuery.replace(/\s+(stock|inc|corp|ltd)\.?$/i, '').trim();
+
+            const symbolCandidate = refinedQuery.toUpperCase();
+            const isSymbolLike = /^[A-Z0-9.^-]{1,10}$/.test(symbolCandidate) && !refinedQuery.includes(' ');
 
             if (isSymbolLike) {
                 try {
                     const stockInfo = await stockAPI.getStockInfo(symbolCandidate);
                     setSearchResults([stockInfo]);
-                    return;
+                    return; // Exit after direct symbol match
                 } catch (error: any) {
-                    // Handle NGX not supported error
-                    if (error.response?.status === 503) {
-                        const errorData = error.response?.data?.detail;
-                        if (errorData?.error === 'NGX_NOT_SUPPORTED') {
-                            Alert.alert(
-                                'Nigerian Stocks Not Available',
-                                errorData.message + '\n\n' + errorData.suggestion
-                            );
-                            return;
-                        }
-                    }
-                    // Fall back to company search for other errors
+                    // Fallback to company search for symbol-not-found or other errors
+                    console.log(`Symbol search for ${symbolCandidate} failed, falling back to company search.`);
                 }
             }
 
-            const searchResponse = await stockAPI.searchStocks(rawQuery, 10);
+            const searchResponse = await stockAPI.searchStocks(refinedQuery, 10);
             const results = searchResponse.results || [];
             setCompanyResults(results);
 
-            if (results.length === 0) {
+            if (results.length === 0 && searchResults.length === 0) {
                 Alert.alert(
                     'No Results',
-                    'No matching companies found. Check your internet connection and make sure the backend is running.'
+                    `No companies found for "${refinedQuery}". Please check the spelling or try a different name.`
                 );
             }
         } catch (error: any) {
-            // Check if it's an NGX error
-            if (error.response?.status === 503) {
-                const errorData = error.response?.data?.detail;
-                if (errorData?.error === 'NGX_NOT_SUPPORTED') {
-                    Alert.alert(
-                        'Nigerian Stocks Not Available',
-                        errorData.message + '\n\n' + errorData.suggestion
-                    );
-                    return;
-                }
-            }
-
+            console.error("Search failed:", error);
             Alert.alert(
                 'Search Unavailable',
-                'Unable to fetch market data. Check your internet connection and make sure the backend is running.'
+                'Could not fetch market data. Please check your internet connection and try again.'
             );
             setSearchResults([]);
             setCompanyResults([]);

@@ -15,6 +15,13 @@ interface Props {
 
 const sections = [
     {
+        title: '🤖 AI Features',
+        items: [
+            { label: 'AI Chat', icon: 'chatbubbles', screen: 'AIChat', color: '#7c3aed' },
+            { label: 'AI Insights', icon: 'sparkles', screen: 'AssistiveMetrics', color: '#db2777' },
+        ],
+    },
+    {
         title: 'Research & Valuation',
         items: [
             { label: 'Quick Valuation', icon: 'calculator', screen: 'Valuation', color: '#2563eb', params: { symbol: 'AAPL' } },
@@ -44,6 +51,7 @@ const sections = [
 ];
 
 const featuredActions = [
+    { label: 'AI Chat', icon: 'chatbubbles', screen: 'AIChat' },
     { label: 'Search', icon: 'search', screen: 'Search' },
     { label: 'Portfolio', icon: 'wallet', screen: 'Dashboard' },
     { label: 'Alerts', icon: 'notifications', screen: 'PriceAlerts' },
