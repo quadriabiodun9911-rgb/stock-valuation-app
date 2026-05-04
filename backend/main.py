@@ -1514,7 +1514,24 @@ async def search_stocks(
 
         return {"query": query, "results": results}
     except Exception as e:
-        logger.error(f"Search error for query '{query}': {e}")
+        logger.warning(f"Yahoo Finance search failed for '{query}': {e}. Trying FCS fallback.")
+        # FCS fallback: try to fetch the query as a direct symbol
+        if fcs_data.enabled:
+            try:
+                q = fcs_data.get_quote(query.upper().strip())
+                if q.get('price'):
+                    return {
+                        "query": query,
+                        "results": [{
+                            "symbol": q.get('symbol', query.upper()),
+                            "shortname": q.get('symbol', query.upper()),
+                            "longname": q.get('symbol', query.upper()),
+                            "exchange": q.get('exchange', 'N/A'),
+                            "quote_type": "EQUITY",
+                        }]
+                    }
+            except Exception as fcs_err:
+                logger.error(f"FCS search fallback failed: {fcs_err}")
         return {"query": query, "results": [], "error": "Search unavailable"}
 
 @app.get("/stock/{symbol}")
@@ -1628,6 +1645,17 @@ async def get_stock_info(symbol: str):
                 logger.info("Trying FCS API first for %s", symbol_upper)
                 fcs_info = fcs_data.get_stock_info(symbol_upper)
                 if fcs_info.get('current_price'):
+                    # Try to supplement 52W data from yfinance quick_info (non-blocking)
+                    week52_high = fcs_info.get('52_week_high') or 0
+                    week52_low = fcs_info.get('52_week_low') or 0
+                    if not week52_high:
+                        try:
+                            ticker = yf.Ticker(symbol_upper)
+                            fast = ticker.fast_info
+                            week52_high = getattr(fast, 'year_high', 0) or 0
+                            week52_low = getattr(fast, 'year_low', 0) or 0
+                        except Exception:
+                            pass
                     return {
                         "symbol": fcs_info['symbol'],
                         "company_name": fcs_info['company_name'],
@@ -1637,8 +1665,8 @@ async def get_stock_info(symbol: str):
                         "sector": fcs_info.get('sector') or 'N/A',
                         "industry": fcs_info.get('industry') or 'N/A',
                         "dividend_yield": fcs_info.get('dividend_yield') or 0,
-                        "52_week_high": fcs_info.get('52_week_high') or 0,
-                        "52_week_low": fcs_info.get('52_week_low') or 0,
+                        "52_week_high": week52_high,
+                        "52_week_low": week52_low,
                         "beta": fcs_info.get('beta') or 0,
                         "volume": fcs_info.get('volume', 0),
                         "avg_volume": fcs_info.get('volume', 0),
