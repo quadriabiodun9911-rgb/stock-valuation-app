@@ -41,7 +41,7 @@ const NewsIntegrationScreen: React.FC<{ navigation: any }> = ({ navigation }) =>
             setLoading(true);
             const res = await fetch(`${API_URL}/api/news/market-news`);
             const data = await res.json();
-            setNews(data.articles || data.news || []);
+            setNews(data.news || []);
         } catch (error) {
             console.error('Failed to load news:', error);
         } finally {
@@ -56,7 +56,7 @@ const NewsIntegrationScreen: React.FC<{ navigation: any }> = ({ navigation }) =>
             setLoading(true);
             const res = await fetch(`${API_URL}/api/news/stock/${trimmed}`);
             const data = await res.json();
-            setNews(data.articles || data.news || []);
+            setNews(data.news || []);
         } catch (error) {
             console.error('Failed to load stock news:', error);
         } finally {

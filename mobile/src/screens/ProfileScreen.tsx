@@ -281,7 +281,7 @@ const ProfileScreen = () => {
     // ── Shared modal shell ─────────────────────────────────────────
     const renderModalShell = (title: string, children: React.ReactNode) => (
         <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={closeModal}>
-            <SafeAreaView style={[s.modalSafe, { backgroundColor: theme.background }]}>
+            <SafeAreaView style={[s.modalSafe, { backgroundColor: theme.bg }]}>
                 <View style={[s.modalHeader, { borderBottomColor: theme.border, backgroundColor: theme.card }]}>
                     <TouchableOpacity onPress={closeModal} style={s.modalBackBtn}>
                         <Ionicons name="chevron-down" size={22} color={theme.text} />
@@ -314,34 +314,34 @@ const ProfileScreen = () => {
             </View>
 
             {/* Fields */}
-            <Text style={[s.sectionLabel, { color: theme.subtext }]}>Profile Info</Text>
+            <Text style={[s.sectionLabel, { color: theme.textSecondary }]}>Profile Info</Text>
             <View style={[s.menuGroup, { backgroundColor: theme.card, marginHorizontal: 16 }]}>
                 <View style={[s.fieldRow, { borderBottomColor: theme.border }]}>
-                    <Text style={[s.fieldLabel, { color: theme.subtext }]}>Email</Text>
+                    <Text style={[s.fieldLabel, { color: theme.textSecondary }]}>Email</Text>
                     <Text style={[s.fieldValue, { color: theme.text }]}>{user?.email}</Text>
                 </View>
                 <View style={[s.fieldRow, { borderBottomColor: theme.border }]}>
-                    <Text style={[s.fieldLabel, { color: theme.subtext }]}>Member Since</Text>
+                    <Text style={[s.fieldLabel, { color: theme.textSecondary }]}>Member Since</Text>
                     <Text style={[s.fieldValue, { color: theme.text }]}>{formatDate((user as any)?.created_at)}</Text>
                 </View>
                 <View style={[s.fieldRow, { borderBottomColor: theme.border, borderBottomWidth: 0 }]}>
-                    <Text style={[s.fieldLabel, { color: theme.subtext }]}>Tier</Text>
+                    <Text style={[s.fieldLabel, { color: theme.textSecondary }]}>Tier</Text>
                     <Text style={[s.fieldValue, { color: tier.color, fontWeight: '600' }]}>{tier.label}</Text>
                 </View>
             </View>
 
             {/* Edit Username */}
-            <Text style={[s.sectionLabel, { color: theme.subtext }]}>Edit Username</Text>
+            <Text style={[s.sectionLabel, { color: theme.textSecondary }]}>Edit Username</Text>
             <View style={[s.menuGroup, { backgroundColor: theme.card, marginHorizontal: 16, padding: 16 }]}>
-                <Text style={[s.fieldLabel, { color: theme.subtext, marginBottom: 8 }]}>Current: @{user?.username}</Text>
+                <Text style={[s.fieldLabel, { color: theme.textSecondary, marginBottom: 8 }]}>Current: @{user?.username}</Text>
                 {editingUsername ? (
                     <View>
                         <TextInput
-                            style={[s.textInput, { backgroundColor: theme.background, color: theme.text, borderColor: theme.border }]}
+                            style={[s.textInput, { backgroundColor: theme.bg, color: theme.text, borderColor: theme.border }]}
                             value={newUsername}
                             onChangeText={setNewUsername}
                             placeholder="New username"
-                            placeholderTextColor={theme.subtext}
+                            placeholderTextColor={theme.textSecondary}
                             autoCapitalize="none"
                             autoCorrect={false}
                             maxLength={50}
@@ -380,7 +380,7 @@ const ProfileScreen = () => {
     // ── App Settings modal ─────────────────────────────────────────
     const renderSettingsModal = () => renderModalShell('App Settings', (
         <View>
-            <Text style={[s.sectionLabel, { color: theme.subtext }]}>Display Currency</Text>
+            <Text style={[s.sectionLabel, { color: theme.textSecondary }]}>Display Currency</Text>
             <View style={[s.menuGroup, { backgroundColor: theme.card, marginHorizontal: 16 }]}>
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, padding: 14 }}>
                     {CURRENCIES.map((c) => (
@@ -399,7 +399,7 @@ const ProfileScreen = () => {
                 </View>
             </View>
 
-            <Text style={[s.sectionLabel, { color: theme.subtext }]}>Default Chart Period</Text>
+            <Text style={[s.sectionLabel, { color: theme.textSecondary }]}>Default Chart Period</Text>
             <View style={[s.menuGroup, { backgroundColor: theme.card, marginHorizontal: 16 }]}>
                 <View style={{ flexDirection: 'row', gap: 8, padding: 14 }}>
                     {CHART_PERIODS.map((p) => (
@@ -418,7 +418,7 @@ const ProfileScreen = () => {
                 </View>
             </View>
 
-            <Text style={[s.sectionLabel, { color: theme.subtext }]}>Appearance</Text>
+            <Text style={[s.sectionLabel, { color: theme.textSecondary }]}>Appearance</Text>
             <View style={[s.menuGroup, { backgroundColor: theme.card, marginHorizontal: 16 }]}>
                 <View style={[s.menuItem, { borderBottomWidth: 0 }]}>
                     <View style={[s.menuIconWrap, { backgroundColor: '#6366f120' }]}>
@@ -439,7 +439,7 @@ const ProfileScreen = () => {
     // ── Notifications modal ────────────────────────────────────────
     const renderNotificationsModal = () => renderModalShell('Notifications', (
         <View>
-            <Text style={[s.sectionLabel, { color: theme.subtext }]}>Push Notifications</Text>
+            <Text style={[s.sectionLabel, { color: theme.textSecondary }]}>Push Notifications</Text>
             <View style={[s.menuGroup, { backgroundColor: theme.card, marginHorizontal: 16 }]}>
                 {([
                     { key: 'priceAlerts', label: 'Price Alerts', sub: 'Get notified when a price target is hit', icon: 'trending-up-outline', color: '#10b981' },
@@ -452,7 +452,7 @@ const ProfileScreen = () => {
                         </View>
                         <View style={{ flex: 1 }}>
                             <Text style={[s.menuItemText, { color: theme.text }]}>{item.label}</Text>
-                            <Text style={{ fontSize: 12, color: theme.subtext, marginTop: 2 }}>{item.sub}</Text>
+                            <Text style={{ fontSize: 12, color: theme.textSecondary, marginTop: 2 }}>{item.sub}</Text>
                         </View>
                         <Switch
                             value={notifPrefs[item.key]}
@@ -464,7 +464,7 @@ const ProfileScreen = () => {
                 ))}
             </View>
 
-            <Text style={[s.sectionLabel, { color: theme.subtext }]}>Email</Text>
+            <Text style={[s.sectionLabel, { color: theme.textSecondary }]}>Email</Text>
             <View style={[s.menuGroup, { backgroundColor: theme.card, marginHorizontal: 16 }]}>
                 <View style={[s.menuItem, { borderBottomWidth: 0 }]}>
                     <View style={[s.menuIconWrap, { backgroundColor: '#f59e0b20' }]}>
@@ -472,7 +472,7 @@ const ProfileScreen = () => {
                     </View>
                     <View style={{ flex: 1 }}>
                         <Text style={[s.menuItemText, { color: theme.text }]}>Weekly Digest</Text>
-                        <Text style={{ fontSize: 12, color: theme.subtext, marginTop: 2 }}>Weekly portfolio performance summary</Text>
+                        <Text style={{ fontSize: 12, color: theme.textSecondary, marginTop: 2 }}>Weekly portfolio performance summary</Text>
                     </View>
                     <Switch
                         value={notifPrefs.emailDigest}
@@ -488,51 +488,51 @@ const ProfileScreen = () => {
     // ── Privacy & Security modal ───────────────────────────────────
     const renderPrivacyModal = () => renderModalShell('Privacy & Security', (
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-            <Text style={[s.sectionLabel, { color: theme.subtext }]}>Change Password</Text>
+            <Text style={[s.sectionLabel, { color: theme.textSecondary }]}>Change Password</Text>
             <View style={[s.menuGroup, { backgroundColor: theme.card, marginHorizontal: 16, padding: 16 }]}>
                 {/* Current password */}
-                <Text style={[s.fieldLabel, { color: theme.subtext, marginBottom: 6 }]}>Current Password</Text>
-                <View style={[s.pwRow, { borderColor: theme.border, backgroundColor: theme.background }]}>
+                <Text style={[s.fieldLabel, { color: theme.textSecondary, marginBottom: 6 }]}>Current Password</Text>
+                <View style={[s.pwRow, { borderColor: theme.border, backgroundColor: theme.bg }]}>
                     <TextInput
                         style={[s.pwInput, { color: theme.text }]}
                         value={currentPassword}
                         onChangeText={setCurrentPassword}
                         secureTextEntry={!showCurrentPw}
                         placeholder="Enter current password"
-                        placeholderTextColor={theme.subtext}
+                        placeholderTextColor={theme.textSecondary}
                         autoCapitalize="none"
                     />
                     <TouchableOpacity onPress={() => setShowCurrentPw(!showCurrentPw)}>
-                        <Ionicons name={showCurrentPw ? 'eye-off-outline' : 'eye-outline'} size={20} color={theme.subtext} />
+                        <Ionicons name={showCurrentPw ? 'eye-off-outline' : 'eye-outline'} size={20} color={theme.textSecondary} />
                     </TouchableOpacity>
                 </View>
 
                 {/* New password */}
-                <Text style={[s.fieldLabel, { color: theme.subtext, marginBottom: 6, marginTop: 14 }]}>New Password</Text>
-                <View style={[s.pwRow, { borderColor: theme.border, backgroundColor: theme.background }]}>
+                <Text style={[s.fieldLabel, { color: theme.textSecondary, marginBottom: 6, marginTop: 14 }]}>New Password</Text>
+                <View style={[s.pwRow, { borderColor: theme.border, backgroundColor: theme.bg }]}>
                     <TextInput
                         style={[s.pwInput, { color: theme.text }]}
                         value={newPassword}
                         onChangeText={setNewPassword}
                         secureTextEntry={!showNewPw}
                         placeholder="At least 6 characters"
-                        placeholderTextColor={theme.subtext}
+                        placeholderTextColor={theme.textSecondary}
                         autoCapitalize="none"
                     />
                     <TouchableOpacity onPress={() => setShowNewPw(!showNewPw)}>
-                        <Ionicons name={showNewPw ? 'eye-off-outline' : 'eye-outline'} size={20} color={theme.subtext} />
+                        <Ionicons name={showNewPw ? 'eye-off-outline' : 'eye-outline'} size={20} color={theme.textSecondary} />
                     </TouchableOpacity>
                 </View>
 
                 {/* Confirm password */}
-                <Text style={[s.fieldLabel, { color: theme.subtext, marginBottom: 6, marginTop: 14 }]}>Confirm New Password</Text>
+                <Text style={[s.fieldLabel, { color: theme.textSecondary, marginBottom: 6, marginTop: 14 }]}>Confirm New Password</Text>
                 <TextInput
-                    style={[s.textInput, { backgroundColor: theme.background, color: theme.text, borderColor: theme.border }]}
+                    style={[s.textInput, { backgroundColor: theme.bg, color: theme.text, borderColor: theme.border }]}
                     value={confirmPassword}
                     onChangeText={setConfirmPassword}
                     secureTextEntry
                     placeholder="Repeat new password"
-                    placeholderTextColor={theme.subtext}
+                    placeholderTextColor={theme.textSecondary}
                     autoCapitalize="none"
                 />
 
@@ -547,7 +547,7 @@ const ProfileScreen = () => {
                 </TouchableOpacity>
             </View>
 
-            <Text style={[s.sectionLabel, { color: theme.subtext }]}>Data & Privacy</Text>
+            <Text style={[s.sectionLabel, { color: theme.textSecondary }]}>Data & Privacy</Text>
             <View style={[s.menuGroup, { backgroundColor: theme.card, marginHorizontal: 16 }]}>
                 <TouchableOpacity
                     style={[s.menuItem, { borderBottomColor: theme.border }]}
@@ -557,7 +557,7 @@ const ProfileScreen = () => {
                         <Ionicons name="download-outline" size={18} color="#10b981" />
                     </View>
                     <Text style={[s.menuItemText, { color: theme.text }]}>Export My Data</Text>
-                    <Ionicons name="chevron-forward" size={16} color={theme.subtext} />
+                    <Ionicons name="chevron-forward" size={16} color={theme.textSecondary} />
                 </TouchableOpacity>
                 <TouchableOpacity
                     style={[s.menuItem, { borderBottomWidth: 0 }]}
@@ -567,11 +567,11 @@ const ProfileScreen = () => {
                         <Ionicons name="document-text-outline" size={18} color="#3b82f6" />
                     </View>
                     <Text style={[s.menuItemText, { color: theme.text }]}>Privacy Policy</Text>
-                    <Ionicons name="chevron-forward" size={16} color={theme.subtext} />
+                    <Ionicons name="chevron-forward" size={16} color={theme.textSecondary} />
                 </TouchableOpacity>
             </View>
 
-            <Text style={[s.sectionLabel, { color: theme.subtext }]}>Danger Zone</Text>
+            <Text style={[s.sectionLabel, { color: theme.textSecondary }]}>Danger Zone</Text>
             <View style={[s.menuGroup, { backgroundColor: theme.card, marginHorizontal: 16 }]}>
                 <TouchableOpacity
                     style={[s.menuItem, { borderBottomWidth: 0 }]}
@@ -590,7 +590,7 @@ const ProfileScreen = () => {
     // ── Help & Support modal ───────────────────────────────────────
     const renderHelpModal = () => renderModalShell('Help & Support', (
         <View>
-            <Text style={[s.sectionLabel, { color: theme.subtext }]}>Frequently Asked Questions</Text>
+            <Text style={[s.sectionLabel, { color: theme.textSecondary }]}>Frequently Asked Questions</Text>
             <View style={[s.menuGroup, { backgroundColor: theme.card, marginHorizontal: 16 }]}>
                 {FAQ_ITEMS.map((item, i) => (
                     <View key={i}>
@@ -602,19 +602,19 @@ const ProfileScreen = () => {
                             <Ionicons
                                 name={expandedFaq === i ? 'chevron-up' : 'chevron-down'}
                                 size={16}
-                                color={theme.subtext}
+                                color={theme.textSecondary}
                             />
                         </TouchableOpacity>
                         {expandedFaq === i && (
                             <View style={{ paddingHorizontal: 16, paddingBottom: 14, paddingTop: 0 }}>
-                                <Text style={{ color: theme.subtext, fontSize: 14, lineHeight: 20 }}>{item.a}</Text>
+                                <Text style={{ color: theme.textSecondary, fontSize: 14, lineHeight: 20 }}>{item.a}</Text>
                             </View>
                         )}
                     </View>
                 ))}
             </View>
 
-            <Text style={[s.sectionLabel, { color: theme.subtext }]}>Contact</Text>
+            <Text style={[s.sectionLabel, { color: theme.textSecondary }]}>Contact</Text>
             <View style={[s.menuGroup, { backgroundColor: theme.card, marginHorizontal: 16 }]}>
                 <TouchableOpacity
                     style={[s.menuItem, { borderBottomColor: theme.border }]}
@@ -624,7 +624,7 @@ const ProfileScreen = () => {
                         <Ionicons name="mail-outline" size={18} color="#3b82f6" />
                     </View>
                     <Text style={[s.menuItemText, { color: theme.text }]}>Email Support</Text>
-                    <Ionicons name="chevron-forward" size={16} color={theme.subtext} />
+                    <Ionicons name="chevron-forward" size={16} color={theme.textSecondary} />
                 </TouchableOpacity>
                 <TouchableOpacity
                     style={[s.menuItem, { borderBottomColor: theme.border }]}
@@ -634,7 +634,7 @@ const ProfileScreen = () => {
                         <Ionicons name="bug-outline" size={18} color="#ef4444" />
                     </View>
                     <Text style={[s.menuItemText, { color: theme.text }]}>Report a Bug</Text>
-                    <Ionicons name="chevron-forward" size={16} color={theme.subtext} />
+                    <Ionicons name="chevron-forward" size={16} color={theme.textSecondary} />
                 </TouchableOpacity>
                 <TouchableOpacity
                     style={[s.menuItem, { borderBottomWidth: 0 }]}
@@ -644,11 +644,11 @@ const ProfileScreen = () => {
                         <Ionicons name="book-outline" size={18} color="#8b5cf6" />
                     </View>
                     <Text style={[s.menuItemText, { color: theme.text }]}>API Documentation</Text>
-                    <Ionicons name="chevron-forward" size={16} color={theme.subtext} />
+                    <Ionicons name="chevron-forward" size={16} color={theme.textSecondary} />
                 </TouchableOpacity>
             </View>
 
-            <Text style={[s.sectionLabel, { color: theme.subtext }]}>Legal</Text>
+            <Text style={[s.sectionLabel, { color: theme.textSecondary }]}>Legal</Text>
             <View style={[s.menuGroup, { backgroundColor: theme.card, marginHorizontal: 16 }]}>
                 <TouchableOpacity
                     style={[s.menuItem, { borderBottomColor: theme.border }]}
@@ -658,7 +658,7 @@ const ProfileScreen = () => {
                         <Ionicons name="document-text-outline" size={18} color="#6366f1" />
                     </View>
                     <Text style={[s.menuItemText, { color: theme.text }]}>Terms of Service</Text>
-                    <Ionicons name="chevron-forward" size={16} color={theme.subtext} />
+                    <Ionicons name="chevron-forward" size={16} color={theme.textSecondary} />
                 </TouchableOpacity>
                 <TouchableOpacity
                     style={[s.menuItem, { borderBottomWidth: 0 }]}
@@ -668,7 +668,7 @@ const ProfileScreen = () => {
                         <Ionicons name="warning-outline" size={18} color="#f59e0b" />
                     </View>
                     <Text style={[s.menuItemText, { color: theme.text }]}>Risk Disclaimer</Text>
-                    <Ionicons name="chevron-forward" size={16} color={theme.subtext} />
+                    <Ionicons name="chevron-forward" size={16} color={theme.textSecondary} />
                 </TouchableOpacity>
             </View>
         </View>
@@ -688,8 +688,8 @@ const ProfileScreen = () => {
     ];
 
     return (
-        <SafeAreaView style={[s.safeArea, { backgroundColor: theme.background }]}>
-            <ScrollView style={[s.container, { backgroundColor: theme.background }]} showsVerticalScrollIndicator={false}>
+        <SafeAreaView style={[s.safeArea, { backgroundColor: theme.bg }]}>
+            <ScrollView style={[s.container, { backgroundColor: theme.bg }]} showsVerticalScrollIndicator={false}>
                 <View style={[s.header, { backgroundColor: theme.card, borderBottomColor: theme.border }]}>
                     <Text style={[s.headerTitle, { color: theme.text }]}>Profile</Text>
                 </View>
@@ -702,7 +702,7 @@ const ProfileScreen = () => {
                     <Text style={[s.userName, { color: theme.text }]}>
                         {user?.username || user?.email?.split('@')[0] || 'Investor'}
                     </Text>
-                    <Text style={[s.userEmail, { color: theme.subtext }]}>{user?.email}</Text>
+                    <Text style={[s.userEmail, { color: theme.textSecondary }]}>{user?.email}</Text>
                     <View style={[s.tierBadge, { backgroundColor: tier.color }]}>
                         <Text style={s.tierText}>{tier.label}</Text>
                     </View>
@@ -718,9 +718,9 @@ const ProfileScreen = () => {
                                 {i > 0 && <View style={[s.statDivider, { backgroundColor: theme.border }]} />}
                                 <View style={s.statItem}>
                                     {statsLoading
-                                        ? <ActivityIndicator size="small" color={theme.subtext} />
+                                        ? <ActivityIndicator size="small" color={theme.textSecondary} />
                                         : <Text style={[s.statValue, { color: theme.text }]}>{stat.val ?? '—'}</Text>}
-                                    <Text style={[s.statLabel, { color: theme.subtext }]}>{stat.label}</Text>
+                                    <Text style={[s.statLabel, { color: theme.textSecondary }]}>{stat.label}</Text>
                                 </View>
                             </React.Fragment>
                         ))}
@@ -728,7 +728,7 @@ const ProfileScreen = () => {
                 </View>
 
                 {/* Account section */}
-                <Text style={[s.sectionLabel, { color: theme.subtext }]}>Account</Text>
+                <Text style={[s.sectionLabel, { color: theme.textSecondary }]}>Account</Text>
                 <View style={s.menuContainer}>
                     <View style={[s.menuGroup, { backgroundColor: theme.card }]}>
                         {accountItems.map((item, i) => (
@@ -741,14 +741,14 @@ const ProfileScreen = () => {
                                     <Ionicons name={item.icon as any} size={18} color={item.iconColor} />
                                 </View>
                                 <Text style={[s.menuItemText, { color: theme.text }]}>{item.label}</Text>
-                                <Ionicons name="chevron-forward" size={16} color={theme.subtext} />
+                                <Ionicons name="chevron-forward" size={16} color={theme.textSecondary} />
                             </TouchableOpacity>
                         ))}
                     </View>
                 </View>
 
                 {/* Support section */}
-                <Text style={[s.sectionLabel, { color: theme.subtext }]}>Support</Text>
+                <Text style={[s.sectionLabel, { color: theme.textSecondary }]}>Support</Text>
                 <View style={s.menuContainer}>
                     <View style={[s.menuGroup, { backgroundColor: theme.card }]}>
                         {supportItems.map((item, i) => (
@@ -761,7 +761,7 @@ const ProfileScreen = () => {
                                     <Ionicons name={item.icon as any} size={18} color={item.iconColor} />
                                 </View>
                                 <Text style={[s.menuItemText, { color: theme.text }]}>{item.label}</Text>
-                                <Ionicons name="chevron-forward" size={16} color={theme.subtext} />
+                                <Ionicons name="chevron-forward" size={16} color={theme.textSecondary} />
                             </TouchableOpacity>
                         ))}
                     </View>
@@ -773,7 +773,7 @@ const ProfileScreen = () => {
                     <Text style={s.logoutButtonText}>Log Out</Text>
                 </TouchableOpacity>
 
-                <Text style={[s.versionText, { color: theme.subtext }]}>Stock Valuation App v1.0.0</Text>
+                <Text style={[s.versionText, { color: theme.textSecondary }]}>Stock Valuation App v1.0.0</Text>
             </ScrollView>
 
             {/* Modals */}
@@ -940,329 +940,5 @@ const s = StyleSheet.create({
     },
 });
 
-export default ProfileScreen;
-
-
-interface UserStats {
-    followers: number;
-    following: number;
-    post_count: number;
-}
-
-const AVATAR_COLORS = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#ef4444'];
-
-function getAvatarColor(seed: string): string {
-    let n = 0;
-    for (let i = 0; i < seed.length; i++) n += seed.charCodeAt(i);
-    return AVATAR_COLORS[n % AVATAR_COLORS.length];
-}
-
-function getInitials(username?: string, email?: string): string {
-    const name = username || email || '?';
-    const parts = name.split(/[@.\s_-]/).filter(Boolean);
-    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
-    return name.slice(0, 2).toUpperCase();
-}
-
-const ProfileScreen = () => {
-    const { user, logout } = useAuth();
-    const { theme, isDark, toggleTheme } = useTheme();
-    const [stats, setStats] = useState<UserStats | null>(null);
-    const [statsLoading, setStatsLoading] = useState(false);
-
-    useEffect(() => {
-        if (user?.id) loadStats();
-    }, [user?.id]);
-
-    const loadStats = async () => {
-        try {
-            setStatsLoading(true);
-            const data = await stockAPI.getUserStats(user!.id);
-            setStats({
-                followers: data.followers ?? 0,
-                following: data.following ?? 0,
-                post_count: data.post_count ?? 0,
-            });
-        } catch {
-            // stats are non-critical, fail silently
-        } finally {
-            setStatsLoading(false);
-        }
-    };
-
-    const handleLogout = () => {
-        Alert.alert(
-            'Log Out',
-            'Are you sure you want to log out?',
-            [
-                { text: 'Cancel', style: 'cancel' },
-                { text: 'Log Out', onPress: () => logout(), style: 'destructive' },
-            ]
-        );
-    };
-
-    const initials = getInitials(user?.username, user?.email);
-    const avatarColor = getAvatarColor(user?.email || 'user');
-
-    const memberTier = (): { label: string; color: string } => {
-        const posts = stats?.post_count ?? 0;
-        if (posts >= 50) return { label: 'Elite Trader', color: '#f59e0b' };
-        if (posts >= 20) return { label: 'Active Member', color: '#8b5cf6' };
-        if (posts >= 5) return { label: 'Rising Star', color: '#10b981' };
-        return { label: 'New Member', color: '#3b82f6' };
-    };
-    const tier = memberTier();
-
-    const styles = StyleSheet.create({
-        container: { flex: 1, backgroundColor: theme.background },
-        safeArea: { flex: 1, backgroundColor: theme.background },
-        header: {
-            paddingTop: 20,
-            paddingBottom: 16,
-            paddingHorizontal: 20,
-            backgroundColor: theme.card,
-            borderBottomWidth: 1,
-            borderBottomColor: theme.border,
-        },
-        headerTitle: { fontSize: 28, fontWeight: 'bold', color: theme.text },
-        profileCard: {
-            alignItems: 'center',
-            margin: 16,
-            padding: 24,
-            backgroundColor: theme.card,
-            borderRadius: 20,
-            shadowColor: '#000',
-            shadowOffset: { width: 0, height: 3 },
-            shadowOpacity: isDark ? 0.15 : 0.08,
-            shadowRadius: 10,
-            elevation: 6,
-        },
-        avatarCircle: {
-            width: 84,
-            height: 84,
-            borderRadius: 42,
-            alignItems: 'center',
-            justifyContent: 'center',
-        },
-        avatarText: { fontSize: 32, fontWeight: 'bold', color: '#fff' },
-        userName: { fontSize: 20, fontWeight: '700', marginTop: 14, color: theme.text },
-        userEmail: { fontSize: 14, color: theme.subtext, marginTop: 4 },
-        tierBadge: {
-            marginTop: 10,
-            paddingHorizontal: 14,
-            paddingVertical: 5,
-            borderRadius: 20,
-        },
-        tierText: { fontSize: 13, fontWeight: '600', color: '#fff' },
-        statsRow: {
-            flexDirection: 'row',
-            justifyContent: 'space-around',
-            width: '100%',
-            marginTop: 20,
-            paddingTop: 18,
-            borderTopWidth: 1,
-            borderTopColor: theme.border,
-        },
-        statItem: { alignItems: 'center', flex: 1 },
-        statValue: { fontSize: 20, fontWeight: '700', color: theme.text },
-        statLabel: { fontSize: 12, color: theme.subtext, marginTop: 3 },
-        statDivider: { width: 1, backgroundColor: theme.border },
-        sectionLabel: {
-            fontSize: 12,
-            fontWeight: '600',
-            color: theme.subtext,
-            textTransform: 'uppercase',
-            letterSpacing: 0.8,
-            marginHorizontal: 20,
-            marginTop: 20,
-            marginBottom: 8,
-        },
-        menuContainer: { marginHorizontal: 16 },
-        menuGroup: {
-            backgroundColor: theme.card,
-            borderRadius: 16,
-            overflow: 'hidden',
-            marginBottom: 12,
-        },
-        menuItem: {
-            flexDirection: 'row',
-            alignItems: 'center',
-            paddingVertical: 15,
-            paddingHorizontal: 18,
-            borderBottomWidth: 1,
-            borderBottomColor: theme.border,
-        },
-        menuItemLast: {
-            borderBottomWidth: 0,
-        },
-        menuIconWrap: {
-            width: 34,
-            height: 34,
-            borderRadius: 8,
-            alignItems: 'center',
-            justifyContent: 'center',
-            marginRight: 14,
-        },
-        menuItemText: { flex: 1, fontSize: 16, color: theme.text, fontWeight: '500' },
-        menuItemRight: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-        menuItemRightText: { fontSize: 13, color: theme.subtext },
-        logoutButton: {
-            margin: 16,
-            marginTop: 8,
-            backgroundColor: '#ef4444',
-            padding: 17,
-            borderRadius: 14,
-            alignItems: 'center',
-            flexDirection: 'row',
-            justifyContent: 'center',
-            gap: 8,
-        },
-        logoutButtonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
-        versionText: {
-            textAlign: 'center',
-            color: theme.subtext,
-            fontSize: 12,
-            marginBottom: 24,
-            marginTop: 4,
-        },
-    });
-
-    const accountItems = [
-        { icon: 'person-outline', iconBg: '#3b82f620', label: 'Account Details' },
-        { icon: 'notifications-outline', iconBg: '#f59e0b20', label: 'Notifications' },
-        { icon: 'shield-checkmark-outline', iconBg: '#10b98120', label: 'Privacy & Security' },
-    ];
-
-    const supportItems = [
-        { icon: 'help-circle-outline', iconBg: '#8b5cf620', label: 'Help & Support' },
-        { icon: 'star-outline', iconBg: '#ec489920', label: 'Rate the App' },
-    ];
-
-    return (
-        <SafeAreaView style={styles.safeArea}>
-            <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-                <View style={styles.header}>
-                    <Text style={styles.headerTitle}>Profile</Text>
-                </View>
-
-                {/* Profile card */}
-                <View style={styles.profileCard}>
-                    <View style={[styles.avatarCircle, { backgroundColor: avatarColor }]}>
-                        <Text style={styles.avatarText}>{initials}</Text>
-                    </View>
-                    <Text style={styles.userName}>
-                        {user?.username || user?.email?.split('@')[0] || 'Investor'}
-                    </Text>
-                    <Text style={styles.userEmail}>{user?.email}</Text>
-                    <View style={[styles.tierBadge, { backgroundColor: tier.color }]}>
-                        <Text style={styles.tierText}>{tier.label}</Text>
-                    </View>
-
-                    {/* Social stats */}
-                    <View style={styles.statsRow}>
-                        <View style={styles.statItem}>
-                            {statsLoading ? (
-                                <ActivityIndicator size="small" color={theme.subtext} />
-                            ) : (
-                                <Text style={styles.statValue}>{stats?.followers ?? '—'}</Text>
-                            )}
-                            <Text style={styles.statLabel}>Followers</Text>
-                        </View>
-                        <View style={styles.statDivider} />
-                        <View style={styles.statItem}>
-                            {statsLoading ? (
-                                <ActivityIndicator size="small" color={theme.subtext} />
-                            ) : (
-                                <Text style={styles.statValue}>{stats?.following ?? '—'}</Text>
-                            )}
-                            <Text style={styles.statLabel}>Following</Text>
-                        </View>
-                        <View style={styles.statDivider} />
-                        <View style={styles.statItem}>
-                            {statsLoading ? (
-                                <ActivityIndicator size="small" color={theme.subtext} />
-                            ) : (
-                                <Text style={styles.statValue}>{stats?.post_count ?? '—'}</Text>
-                            )}
-                            <Text style={styles.statLabel}>Posts</Text>
-                        </View>
-                    </View>
-                </View>
-
-                {/* Appearance */}
-                <Text style={styles.sectionLabel}>Appearance</Text>
-                <View style={styles.menuContainer}>
-                    <View style={styles.menuGroup}>
-                        <View style={[styles.menuItem, styles.menuItemLast]}>
-                            <View style={[styles.menuIconWrap, { backgroundColor: '#6366f120' }]}>
-                                <Ionicons
-                                    name={isDark ? 'moon-outline' : 'sunny-outline'}
-                                    size={18}
-                                    color="#6366f1"
-                                />
-                            </View>
-                            <Text style={styles.menuItemText}>
-                                {isDark ? 'Dark Mode' : 'Light Mode'}
-                            </Text>
-                            <Switch
-                                value={isDark}
-                                onValueChange={toggleTheme}
-                                trackColor={{ false: '#d1d5db', true: '#6366f1' }}
-                                thumbColor="#fff"
-                            />
-                        </View>
-                    </View>
-                </View>
-
-                {/* Account */}
-                <Text style={styles.sectionLabel}>Account</Text>
-                <View style={styles.menuContainer}>
-                    <View style={styles.menuGroup}>
-                        {accountItems.map((item, i) => (
-                            <TouchableOpacity
-                                key={item.label}
-                                style={[styles.menuItem, i === accountItems.length - 1 && styles.menuItemLast]}
-                            >
-                                <View style={[styles.menuIconWrap, { backgroundColor: item.iconBg }]}>
-                                    <Ionicons name={item.icon as any} size={18} color={theme.subtext} />
-                                </View>
-                                <Text style={styles.menuItemText}>{item.label}</Text>
-                                <Ionicons name="chevron-forward" size={16} color={theme.subtext} />
-                            </TouchableOpacity>
-                        ))}
-                    </View>
-                </View>
-
-                {/* Support */}
-                <Text style={styles.sectionLabel}>Support</Text>
-                <View style={styles.menuContainer}>
-                    <View style={styles.menuGroup}>
-                        {supportItems.map((item, i) => (
-                            <TouchableOpacity
-                                key={item.label}
-                                style={[styles.menuItem, i === supportItems.length - 1 && styles.menuItemLast]}
-                            >
-                                <View style={[styles.menuIconWrap, { backgroundColor: item.iconBg }]}>
-                                    <Ionicons name={item.icon as any} size={18} color={theme.subtext} />
-                                </View>
-                                <Text style={styles.menuItemText}>{item.label}</Text>
-                                <Ionicons name="chevron-forward" size={16} color={theme.subtext} />
-                            </TouchableOpacity>
-                        ))}
-                    </View>
-                </View>
-
-                <View style={{ height: 16 }} />
-                <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-                    <Ionicons name="log-out-outline" size={20} color="#fff" />
-                    <Text style={styles.logoutButtonText}>Log Out</Text>
-                </TouchableOpacity>
-
-                <Text style={styles.versionText}>Stock Valuation App v1.0.0</Text>
-            </ScrollView>
-        </SafeAreaView>
-    );
-};
 
 export default ProfileScreen;
-

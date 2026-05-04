@@ -3,6 +3,7 @@ News Integration Module
 Fetches real stock news from yfinance and Google News RSS feeds.
 Falls back to generated summaries only when live sources are unavailable.
 """
+import asyncio
 from datetime import datetime
 from html import unescape
 from typing import List, Optional
@@ -300,22 +301,23 @@ async def get_trending_stocks(limit: int = 10):
         "JNJ",
         "V",
     ]
-    trending_data = []
-    for symbol in trending_symbols[:limit]:
-        news = _get_news(f"{symbol} stock", 3, symbol=symbol)
-        trending_data.append({
-            "symbol": symbol,
-            "recent_news": news,
-            "news_count": len(news),
-        })
+    symbols = trending_symbols[:limit]
+
+    async def fetch_one(symbol: str) -> dict:
+        news = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: _get_news(f"{symbol} stock", 3, symbol=symbol)
+        )
+        return {"symbol": symbol, "recent_news": news, "news_count": len(news)}
+
+    trending_data = await asyncio.gather(*[fetch_one(s) for s in symbols])
     return {
         "trending_count": len(trending_data),
-        "trending": trending_data,
+        "trending": list(trending_data),
         "last_updated": datetime.now(),
     }
 
 
-@router.post("/search")
+@router.get("/search")
 async def search_news(query: str, limit: int = 20):
     """Search news by keyword"""
     results = _get_news(query, limit)
