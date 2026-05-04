@@ -91,8 +91,9 @@ const StrategyExplainerScreen: React.FC<Props> = ({ navigation }) => {
                     <Text style={styles.introText}>
                         Our Smart Strategy combines{' '}
                         <Text style={styles.bold}>Value Investing</Text>,{' '}
-                        <Text style={styles.bold}>Quality Screening</Text>, and{' '}
-                        <Text style={styles.bold}>Momentum Timing</Text> to identify
+                        <Text style={styles.bold}>Quality Screening</Text>,{' '}
+                        <Text style={styles.bold}>Momentum Timing</Text>, and{' '}
+                        <Text style={styles.bold}>Risk Assessment</Text> to identify
                         stocks with the highest probability of success.
                     </Text>
                     <Text style={styles.introText}>
@@ -103,9 +104,9 @@ const StrategyExplainerScreen: React.FC<Props> = ({ navigation }) => {
 
                 {/* The 5-Layer System */}
                 <View style={styles.systemCard}>
-                    <Text style={styles.systemTitle}>The 5-Layer System</Text>
+                    <Text style={styles.systemTitle}>The 6-Layer System</Text>
                     <Text style={styles.systemSubtitle}>
-                        Only stocks that pass all layers make it to BUY recommendation
+                        Only stocks that score well across all 4 scoring layers earn a BUY
                     </Text>
                 </View>
 
@@ -123,8 +124,8 @@ const StrategyExplainerScreen: React.FC<Props> = ({ navigation }) => {
                         'Protects against downside risk',
                     ],
                     {
-                        label: 'Stock trading at ₦10, worth ₦15',
-                        value: '33% discount → PASS ✓',
+                        label: 'Stock trading at $150, worth $220',
+                        value: '32% discount → PASS ✓',
                     }
                 )}
 
@@ -142,7 +143,7 @@ const StrategyExplainerScreen: React.FC<Props> = ({ navigation }) => {
                         'Positive profit margins',
                     ],
                     {
-                        label: 'Company with ₦5B FCF, 15% growth, 30% debt',
+                        label: 'Company with $5B FCF, 20% ROE, 30% debt',
                         value: 'Quality score 85/100 → PASS ✓',
                     }
                 )}
@@ -166,9 +167,28 @@ const StrategyExplainerScreen: React.FC<Props> = ({ navigation }) => {
                     }
                 )}
 
-                {/* Layer 4 */}
+                {/* Layer 4: Risk */}
                 {renderLayerExplanation(
                     '4',
+                    'Risk Assessment',
+                    'warning',
+                    '#8B5CF6',
+                    'Fourth, we measure how risky the stock is. Even undervalued, high-quality stocks can destroy capital if they are too volatile or correlated with market swings.',
+                    [
+                        'Beta below 1.5 (not too volatile vs market)',
+                        'Annualized volatility below 40%',
+                        'Max drawdown smaller than 30%',
+                        'Positive Sharpe ratio (reward vs risk)',
+                    ],
+                    {
+                        label: 'Stock with beta 1.1, 25% vol, Sharpe 0.8',
+                        value: 'Risk score 75/100 → PASS ✓',
+                    }
+                )}
+
+                {/* Layer 5 */}
+                {renderLayerExplanation(
+                    '5',
                     'Capital Allocation',
                     'pie-chart',
                     '#FF3B30',
@@ -185,9 +205,9 @@ const StrategyExplainerScreen: React.FC<Props> = ({ navigation }) => {
                     }
                 )}
 
-                {/* Layer 5 */}
+                {/* Layer 6 */}
                 {renderLayerExplanation(
-                    '5',
+                    '6',
                     'Exit Rules',
                     'exit',
                     '#8E8E93',
@@ -199,7 +219,7 @@ const StrategyExplainerScreen: React.FC<Props> = ({ navigation }) => {
                         'No second-guessing the system',
                     ],
                     {
-                        label: 'Stock reaches ₦15 fair value target',
+                        label: 'Stock reaches $220 fair value target',
                         value: 'Automatic sell signal → EXIT',
                     }
                 )}
@@ -219,9 +239,9 @@ const StrategyExplainerScreen: React.FC<Props> = ({ navigation }) => {
                     <View style={styles.whyItem}>
                         <Ionicons name="checkmark-circle" size={20} color="#34C759" />
                         <View style={styles.whyText}>
-                            <Text style={styles.whyHeading}>Triple Confirmation</Text>
+                            <Text style={styles.whyHeading}>Quad Confirmation</Text>
                             <Text style={styles.whyDesc}>
-                                Value + Quality + Momentum = Higher win rate
+                                Value + Quality + Momentum + Risk = Higher win rate
                             </Text>
                         </View>
                     </View>
@@ -253,7 +273,7 @@ const StrategyExplainerScreen: React.FC<Props> = ({ navigation }) => {
                             <Text style={styles.recBadgeText}>BUY</Text>
                         </View>
                         <Text style={styles.recDesc}>
-                            All 3 layers pass. Strong conviction. Add to portfolio.
+                            All 4 layers strong. High conviction. Add to portfolio.
                         </Text>
                     </View>
                     <View style={styles.recItem}>
@@ -261,7 +281,7 @@ const StrategyExplainerScreen: React.FC<Props> = ({ navigation }) => {
                             <Text style={styles.recBadgeText}>HOLD</Text>
                         </View>
                         <Text style={styles.recDesc}>
-                            2 layers pass. Watch closely. May upgrade to BUY.
+                            2-3 layers strong. Watch closely. May upgrade to BUY.
                         </Text>
                     </View>
                     <View style={styles.recItem}>
@@ -269,7 +289,7 @@ const StrategyExplainerScreen: React.FC<Props> = ({ navigation }) => {
                             <Text style={styles.recBadgeText}>SELL</Text>
                         </View>
                         <Text style={styles.recDesc}>
-                            0-1 layers pass. Exit position or avoid entry.
+                            Weak across layers. Exit position or avoid entry.
                         </Text>
                     </View>
                 </View>

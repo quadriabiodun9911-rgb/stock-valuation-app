@@ -20,25 +20,35 @@ interface StrategyScore {
     symbol: string;
     companyName: string;
     currentPrice: number;
-    
+
     // Value Layer
     intrinsicValue: number;
     discountToFairValue: number;
     valueScore: number;
-    
+
     // Quality Layer
     fcfPositive: boolean;
     revenueGrowth: number;
     debtRatio: number;
     profitMargin: number;
+    roe: number;
+    currentRatio: number;
     qualityScore: number;
-    
+
     // Momentum Layer
     ma50: number;
     ma200: number;
     relativeStrength: number;
+    rsi: number;
     momentumScore: number;
-    
+
+    // Risk Layer
+    riskScore: number;
+    beta: number;
+    volatility: number;
+    maxDrawdown: number;
+    sharpeEstimate: number;
+
     // Overall
     overallScore: number;
     recommendation: 'BUY' | 'HOLD' | 'SELL' | 'AVOID';
@@ -82,6 +92,14 @@ const SmartStrategyScreen: React.FC<Props> = ({ navigation }) => {
         return stock.recommendation === activeFilter.toUpperCase();
     });
 
+    const handleBack = () => {
+        if (navigation?.canGoBack?.()) {
+            navigation.goBack();
+            return;
+        }
+        navigation?.navigate?.('MainTabs');
+    };
+
     return (
         <View style={styles.container}>
             {/* Header */}
@@ -91,6 +109,9 @@ const SmartStrategyScreen: React.FC<Props> = ({ navigation }) => {
                 end={{ x: 1, y: 1 }}
                 style={styles.header}
             >
+                <TouchableOpacity style={styles.backBtn} onPress={handleBack}>
+                    <Ionicons name="arrow-back" size={22} color="white" />
+                </TouchableOpacity>
                 <Text style={styles.headerTitle}>Smart Strategy</Text>
                 <Text style={styles.headerSubtitle}>
                     Professional 3-Layer System
@@ -108,9 +129,9 @@ const SmartStrategyScreen: React.FC<Props> = ({ navigation }) => {
                 <View style={styles.overviewCard}>
                     <Ionicons name="shield-checkmark" size={24} color="#667eea" />
                     <View style={styles.overviewText}>
-                        <Text style={styles.overviewLabel}>Analyzing</Text>
+                        <Text style={styles.overviewLabel}>4-Layer Analysis</Text>
                         <Text style={styles.overviewValue}>
-                            Value × Quality × Momentum
+                            Value × Quality × Momentum × Risk
                         </Text>
                     </View>
                 </View>
@@ -252,6 +273,24 @@ const SmartStrategyScreen: React.FC<Props> = ({ navigation }) => {
                                             {stock.momentumScore}
                                         </Text>
                                     </View>
+
+                                    <View style={styles.scoreRow}>
+                                        <Text style={styles.scoreLabel}>Risk</Text>
+                                        <View style={styles.scoreBarContainer}>
+                                            <View
+                                                style={[
+                                                    styles.scoreBar,
+                                                    {
+                                                        width: `${stock.riskScore ?? 0}%`,
+                                                        backgroundColor: '#8B5CF6',
+                                                    },
+                                                ]}
+                                            />
+                                        </View>
+                                        <Text style={styles.scoreValue}>
+                                            {stock.riskScore ?? 0}
+                                        </Text>
+                                    </View>
                                 </View>
 
                                 {/* Footer */}
@@ -259,7 +298,7 @@ const SmartStrategyScreen: React.FC<Props> = ({ navigation }) => {
                                     <View style={styles.footerItem}>
                                         <Text style={styles.footerLabel}>Price</Text>
                                         <Text style={styles.footerValue}>
-                                            ₦{stock.currentPrice.toFixed(2)}
+                                            ${stock.currentPrice.toFixed(2)}
                                         </Text>
                                     </View>
                                     <View style={styles.footerItem}>
@@ -280,7 +319,25 @@ const SmartStrategyScreen: React.FC<Props> = ({ navigation }) => {
                                         </Text>
                                     </View>
                                     <View style={styles.footerItem}>
-                                        <Text style={styles.footerLabel}>Allocation</Text>
+                                        <Text style={styles.footerLabel}>RSI</Text>
+                                        <Text
+                                            style={[
+                                                styles.footerValue,
+                                                {
+                                                    color:
+                                                        (stock.rsi ?? 50) > 70
+                                                            ? '#FF3B30'
+                                                            : (stock.rsi ?? 50) < 30
+                                                                ? '#34C759'
+                                                                : '#333',
+                                                },
+                                            ]}
+                                        >
+                                            {(stock.rsi ?? 50).toFixed(0)}
+                                        </Text>
+                                    </View>
+                                    <View style={styles.footerItem}>
+                                        <Text style={styles.footerLabel}>Alloc</Text>
                                         <Text style={styles.footerValue}>
                                             {stock.allocation}%
                                         </Text>
@@ -324,6 +381,13 @@ const styles = StyleSheet.create({
     headerSubtitle: {
         fontSize: 14,
         color: 'rgba(255, 255, 255, 0.9)',
+    },
+    backBtn: {
+        position: 'absolute',
+        top: 50,
+        left: 16,
+        padding: 8,
+        zIndex: 2,
     },
     refreshButton: {
         position: 'absolute',

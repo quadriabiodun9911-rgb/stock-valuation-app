@@ -1,6 +1,12 @@
-# Stock Valuation App
+# StockVal
 
-A comprehensive stock valuation platform with professional-grade analysis tools, built with FastAPI backend and React Native/Expo mobile app.
+A clarity-first investing app for every stage of life, helping people make better money decisions, grow with community support, and move toward financial freedom.
+
+## Product Positioning
+
+Built for younger and older investors who feel overwhelmed by noisy feeds and fragmented research. The app is designed to make investing easier to understand, easier to discuss, and easier to act on with confidence.
+
+For marketing-ready messaging, see [APP_STORE_AND_LANDING_COPY.md](APP_STORE_AND_LANDING_COPY.md).
 
 ## Features
 
@@ -23,7 +29,7 @@ A comprehensive stock valuation platform with professional-grade analysis tools,
 
 ## Architecture
 
-```
+```text
 stock-valuation-app/
 ├── backend/              # FastAPI backend
 │   ├── main.py          # Main application with all analysis logic
@@ -228,4 +234,6 @@ For support, email <support@stockvaluation.com> or open an issue on GitHub.
 
 ---
 
-**Built with ❤️ for investors and financial professionals**
+## Closing Note
+
+Built with ❤️ for investors and financial professionals.

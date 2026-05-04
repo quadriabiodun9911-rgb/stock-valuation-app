@@ -1,25 +1,40 @@
 // API Configuration
 import Constants from 'expo-constants';
+import { getCached, setCache } from '../utils/cache';
 
 const resolveApiBaseUrl = () => {
-    const envUrl = process.env.EXPO_PUBLIC_API_URL;
+    const normalize = (value?: string | null) => {
+        if (!value) return null;
+        return value.replace(/\/$/, '');
+    };
+
+    const envUrl = normalize(process.env.EXPO_PUBLIC_API_URL);
     if (envUrl) return envUrl;
+
+    const configuredUrl = normalize((Constants.expoConfig as any)?.extra?.apiUrl);
+    if (configuredUrl) return configuredUrl;
 
     const hostUri =
         Constants.expoConfig?.hostUri ||
-        Constants.expoConfig?.debuggerHost ||
-        Constants.manifest?.hostUri ||
-        Constants.manifest?.debuggerHost ||
-        Constants.manifest2?.extra?.expoClient?.hostUri;
+        (Constants.expoConfig as any)?.debuggerHost ||
+        (Constants as any).manifest?.hostUri ||
+        (Constants as any).manifest?.debuggerHost ||
+        (Constants as any).manifest2?.extra?.expoClient?.hostUri;
     if (hostUri) {
         const host = hostUri.split(':')[0];
         return `http://${host}:8000`;
     }
 
-    return 'http://localhost:8000';
+    // Last-resort fallback for standalone tester builds.
+    return 'https://stock-valuation-app-2.onrender.com';
 };
 
 const API_BASE_URL = resolveApiBaseUrl();
+const REQUEST_TIMEOUT_MS = 10000;
+const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1000;
+
+// Export for screens that need the raw URL (e.g. axios calls)
+export const API_URL = API_BASE_URL;
 
 export interface StockInfo {
     symbol: string;
@@ -172,6 +187,10 @@ export interface TechnicalResult {
         indicator: string;
         description: string;
     }>;
+    trend: {
+        direction: string;
+        strength: string;
+    };
 }
 
 export interface ComprehensiveResult {
@@ -205,6 +224,108 @@ export interface ComprehensiveResult {
         confidence: string;
         reasoning: string;
     };
+    data_quality?: {
+        partial: boolean;
+        errors: string[];
+    };
+}
+
+export interface AIRecommendationResult {
+    symbol: string;
+    action: string;
+    confidence: number;
+    target_price: number;
+    stop_loss: number;
+    risk_reward_ratio: number;
+    catalysts: string[];
+    risks: string[];
+}
+
+export interface AssistiveValuationBriefRequest {
+    symbol: string;
+    company_name?: string;
+    analysis?: {
+        recommendation?: {
+            action?: string;
+            confidence?: string;
+        };
+        valuations?: {
+            dcf?: {
+                upside?: number;
+            };
+            comparable?: {
+                upside?: number;
+            };
+        };
+        technical_analysis?: {
+            rsi?: number;
+            support?: number;
+            resistance?: number;
+        };
+    };
+    risk_profile?: string;
+    time_horizon?: string;
+}
+
+export interface AssistiveValuationBriefResponse {
+    symbol: string;
+    summary: string;
+    evidence: string[];
+    risks: string[];
+    next_actions: string[];
+    confidence: string;
+    used_ai: boolean;
+    disclaimer: string;
+}
+
+export interface AssistiveNewsImpactResponse {
+    symbol: string;
+    summary: string;
+    overall_sentiment: 'positive' | 'negative' | 'neutral';
+    evidence: string[];
+    risks: string[];
+    next_actions: string[];
+    headlines: string[];
+    used_ai: boolean;
+    disclaimer: string;
+}
+
+export interface AssistiveMetricsResponse {
+    total_feedback: number;
+    helpful_feedback: number;
+    helpfulness_rate: number;
+    total_events: number;
+    feedback_breakdown: Array<{
+        brief_type: string;
+        total: number;
+        helpful: number;
+    }>;
+    event_breakdown: Array<{
+        event_name: string;
+        total: number;
+    }>;
+}
+
+export interface AssistiveDashboardMetricsResponse {
+    window_days: number;
+    feedback_by_symbol: Array<{
+        symbol: string;
+        total: number;
+        helpful: number;
+    }>;
+    feedback_by_day: Array<{
+        day: string;
+        total: number;
+        helpful: number;
+    }>;
+    events_by_symbol: Array<{
+        symbol: string;
+        total: number;
+    }>;
+    events_by_day: Array<{
+        day: string;
+        total: number;
+    }>;
 }
 
 export interface PriceEpsPoint {
@@ -254,6 +375,19 @@ export interface PortfolioPosition {
     profit: number;
     profit_pct: number;
     sector: string;
+    quantity: number;
+    purchase_price: number;
+    current_value: number;
+    return_pct: number;
+    capital_gain?: number;
+    dividend_income?: number;
+    transaction_costs?: number;
+    total_return?: number;
+    total_return_pct?: number;
+    inflation_impact?: number;
+    real_return?: number;
+    real_return_pct?: number;
+    holding_period_years?: number;
 }
 
 export interface PortfolioSummary {
@@ -261,6 +395,13 @@ export interface PortfolioSummary {
     total_cost: number;
     total_profit: number;
     total_profit_pct: number;
+    total_dividends?: number;
+    total_transaction_costs?: number;
+    total_return?: number;
+    total_return_pct?: number;
+    total_inflation_impact?: number;
+    total_real_profit?: number;
+    total_real_profit_pct?: number;
     total_equity: number;
     best_performer?: PortfolioPosition | null;
     worst_performer?: PortfolioPosition | null;
@@ -286,6 +427,8 @@ export interface PortfolioAllocationEntry {
 export interface PortfolioResponse {
     positions: PortfolioPosition[];
     cash: number;
+    portfolio_value: number;
+    total_invested: number;
     summary: PortfolioSummary;
     performance: {
         monthly: PortfolioPerformance;
@@ -394,6 +537,55 @@ export interface ScreenerResponse {
 
 export type Market = 'US' | 'NGX' | 'UK' | 'EU' | 'ASIA' | 'EMERGING';
 
+// ── Trade Reasons types ──────────────────────────────────────────
+export interface TradeReasonTagsResponse {
+    buy_reasons: string[];
+    sell_reasons: string[];
+    buy?: string[];
+    sell?: string[];
+}
+
+export interface TradeReasonSubmit {
+    symbol: string;
+    action: 'buy' | 'sell';
+    reasons: string[];
+    note?: string;
+    confidence?: number;
+}
+
+export interface TradeReasonEntry {
+    symbol: string;
+    action: 'buy' | 'sell';
+    reasons: string[];
+    note?: string;
+    confidence?: number;
+    timestamp: string;
+}
+
+export interface TradeReasonSummary {
+    symbol: string;
+    total_submissions: number;
+    buy: {
+        count: number;
+        avg_confidence: number;
+        top_reasons: { reason: string; count: number; pct: number }[];
+    };
+    sell: {
+        count: number;
+        avg_confidence: number;
+        top_reasons: { reason: string; count: number; pct: number }[];
+    };
+    recent: TradeReasonEntry[];
+}
+
+export interface TrendingTradeReason {
+    symbol: string;
+    buy: number;
+    sell: number;
+    total: number;
+    latest: string;
+}
+
 export interface MarketInfo {
     code: Market;
     name: string;
@@ -403,6 +595,25 @@ export interface MarketInfo {
     tradingHours: string;
     timezone: string;
     featured_stocks: string[];
+}
+
+export interface ProfileRecommendation {
+    symbol: string;
+    name: string;
+    assetType: 'ETF' | 'Stock';
+    riskLevel: 'low' | 'medium' | 'high';
+    horizon: 'short' | 'medium' | 'long';
+    style: string;
+    fitScore: number;
+    reasons: string[];
+    market: Market | string;
+}
+
+export interface ProfileRecommendationsResponse {
+    persona: string;
+    market: string;
+    generatedAt: string;
+    recommendations: ProfileRecommendation[];
 }
 
 export const AVAILABLE_MARKETS: Record<Market, MarketInfo> = {
@@ -469,14 +680,132 @@ export const AVAILABLE_MARKETS: Record<Market, MarketInfo> = {
 };
 
 type RequestOptions = {
-    method?: 'GET' | 'POST';
+    method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
     params?: Record<string, string | number | boolean | undefined>;
     body?: unknown;
+    cacheTtlMs?: number;
+    disableCache?: boolean;
+    retryCount?: number;
 };
 
+// ── Financial Upload Types ──────────────────────────────────────
+
+export interface GrowthMetric {
+    values: (number | null)[];
+    yoy_growth_pct: number[];
+    cagr_pct: number | null;
+    latest: number | null;
+}
+
+export interface DCFUploadResult {
+    current_fcf: number;
+    implied_growth_rate: number;
+    projected_fcf: number[];
+    pv_fcf: number[];
+    terminal_value: number;
+    pv_terminal: number;
+    enterprise_value: number;
+    equity_value: number;
+    intrinsic_value_per_share: number | null;
+    shares_outstanding: number;
+    total_cash: number;
+    total_debt: number;
+    assumptions: {
+        discount_rate: number;
+        terminal_growth_rate: number;
+        years_projected: number;
+    };
+    error?: string;
+}
+
+export interface FinancialUploadResult {
+    id: number;
+    company_name: string;
+    symbol: string;
+    dcf: DCFUploadResult;
+    growth: Record<string, GrowthMetric>;
+    periods: string[];
+}
+
+export interface FinancialUploadSummary {
+    id: number;
+    company_name: string;
+    symbol: string | null;
+    statement_type: string;
+    created_at: string;
+    has_dcf: boolean;
+    has_growth: boolean;
+}
+
+export interface FinancialUploadDetail {
+    id: number;
+    company_name: string;
+    symbol: string | null;
+    statement_type: string;
+    created_at: string;
+    data: any;
+    dcf: DCFUploadResult | null;
+    growth: Record<string, GrowthMetric> | null;
+}
+
 export class StockValuationAPI {
+    private authToken: string | null = null;
+
+    setAuthToken(token: string | null) {
+        this.authToken = token;
+    }
+
+    private buildFriendlyErrorMessage(status?: number, path?: string): string {
+        if ((status === 401 || status === 403) && path?.includes('/ai-chat')) {
+            return 'Please sign in to use AI chat.';
+        }
+
+        if (status === 401 || status === 403) {
+            return 'Your session expired. Please sign in again.';
+        }
+
+        if (status === 429) {
+            return 'Service is busy right now. Please try again in a moment.';
+        }
+
+        if (status !== undefined && status >= 500) {
+            return 'Service is temporarily unavailable. Please try again shortly.';
+        }
+
+        if (path?.includes('/ai') || path?.includes('/ai-chat')) {
+            return 'AI is temporarily unavailable. You can keep using the rest of the analysis tools.';
+        }
+
+        return 'Unable to load fresh data right now. Please try again.';
+    }
+
+    private shouldCache(method: string, path: string, disableCache?: boolean): boolean {
+        if (disableCache || method !== 'GET') {
+            return false;
+        }
+
+        return !(
+            path.startsWith('/auth') ||
+            path.startsWith('/portfolio') ||
+            path.startsWith('/referrals') ||
+            path.startsWith('/achievements') ||
+            path.startsWith('/api/social')
+        );
+    }
+
+    private buildCacheKey(path: string, url: URL): string {
+        return `api:${path}:${url.searchParams.toString() || 'no-params'}`;
+    }
+
     private async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-        const { method = 'GET', params, body } = options;
+        const {
+            method = 'GET',
+            params,
+            body,
+            cacheTtlMs = DEFAULT_CACHE_TTL_MS,
+            disableCache = false,
+            retryCount = 1,
+        } = options;
         const url = new URL(`${API_BASE_URL}${path}`);
 
         if (params) {
@@ -487,26 +816,88 @@ export class StockValuationAPI {
             });
         }
 
-        try {
-            const response = await fetch(url.toString(), {
-                method,
-                headers: {
+        const cacheKey = this.buildCacheKey(path, url);
+        const allowCache = this.shouldCache(method, path, disableCache);
+
+        const executeRequest = async (attempt: number): Promise<T> => {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+            const startTime = Date.now();
+
+            try {
+                const headers: Record<string, string> = {
                     'Content-Type': 'application/json',
-                },
-                body: body ? JSON.stringify(body) : undefined,
-            });
+                };
+                if (this.authToken) {
+                    headers['Authorization'] = `Bearer ${this.authToken}`;
+                }
 
-            if (!response.ok) {
-                const errorText = await response.text();
-                console.error('API Error:', response.status, errorText);
-                throw new Error(errorText || `Request failed with status ${response.status}`);
+                const response = await fetch(url.toString(), {
+                    method,
+                    headers,
+                    body: body ? JSON.stringify(body) : undefined,
+                    signal: controller.signal,
+                });
+
+                const durationMs = Date.now() - startTime;
+                console.info(`[API] ${method} ${path} -> ${response.status} in ${durationMs}ms`);
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    const transient = method === 'GET' && attempt < retryCount && (response.status === 429 || response.status >= 500);
+
+                    if (transient) {
+                        console.warn(`[API] retrying ${method} ${path} after status ${response.status}`);
+                        return executeRequest(attempt + 1);
+                    }
+
+                    console.error('API Error:', response.status, errorText);
+                    throw new Error(this.buildFriendlyErrorMessage(response.status, path));
+                }
+
+                const data = await response.json() as T;
+                if (allowCache) {
+                    await setCache(cacheKey, data, cacheTtlMs);
+                }
+                return data;
+            } catch (error: any) {
+                if (error.name === 'AbortError') {
+                    if (method === 'GET' && attempt < retryCount) {
+                        console.warn(`[API] retrying ${method} ${path} after timeout`);
+                        return executeRequest(attempt + 1);
+                    }
+                    throw new Error('Request timed out. Service may be busy. Please try again.');
+                }
+
+                const message = String(error?.message || 'Unknown error');
+                const isTransientNetworkError = method === 'GET' && attempt < retryCount && (
+                    message.includes('Network request failed') ||
+                    message.includes('Load failed') ||
+                    message.includes('ERR_ABORTED')
+                );
+
+                if (isTransientNetworkError) {
+                    console.warn(`[API] retrying ${method} ${path} after network error`);
+                    return executeRequest(attempt + 1);
+                }
+
+                console.error('API Error:', error);
+
+                if (allowCache) {
+                    const cached = await getCached<T>(cacheKey);
+                    if (cached !== null) {
+                        console.warn(`[API] using cached fallback for ${path}`);
+                        return cached;
+                    }
+                }
+
+                throw error instanceof Error ? error : new Error(this.buildFriendlyErrorMessage(undefined, path));
+            } finally {
+                clearTimeout(timeoutId);
             }
+        };
 
-            return response.json() as Promise<T>;
-        } catch (error) {
-            console.error('API Error:', error);
-            throw error;
-        }
+        return executeRequest(0);
     }
 
     async getStockInfo(symbol: string): Promise<StockInfo> {
@@ -604,8 +995,32 @@ export class StockValuationAPI {
         });
     }
 
-    async getPortfolio(): Promise<PortfolioResponse> {
-        return this.request<PortfolioResponse>('/portfolio');
+    async getPortfolio(params?: { inflationRate?: number; transactionCostRate?: number }): Promise<PortfolioResponse> {
+        return this.request<PortfolioResponse>('/portfolio', {
+            params: {
+                inflation_rate: params?.inflationRate,
+                transaction_cost_rate: params?.transactionCostRate,
+            },
+        });
+    }
+
+    async calculateInvestorReturns(params: {
+        symbol?: string;
+        shares: number;
+        purchase_price: number;
+        current_price?: number;
+        purchase_date?: string;
+        total_dividends?: number;
+        annual_dividend_per_share?: number;
+        inflation_rate_pct?: number;
+        transaction_cost_rate_pct?: number;
+        fixed_transaction_cost?: number;
+        capital_gains_tax_rate_pct?: number;
+    }): Promise<any> {
+        return this.request<any>('/analysis/investor-returns', {
+            method: 'POST',
+            body: params,
+        });
     }
 
     async updatePortfolio(payload: { positions: Array<{ symbol: string; shares: number; cost_basis: number }>; cash: number }): Promise<{ status: string; last_updated: string }> {
@@ -709,6 +1124,422 @@ export class StockValuationAPI {
         return this.request<{ stocks: any[]; total: number; last_updated: string }>('/smart-strategy', {
             params: { symbols: symbols?.join(',') }
         });
+    }
+
+    // ── Trade Reasons (crowd intelligence) ───────────────────────
+    async getTradeReasonTags(): Promise<TradeReasonTagsResponse> {
+        return this.request<TradeReasonTagsResponse>('/api/trade-reasons/tags');
+    }
+
+    async submitTradeReason(body: TradeReasonSubmit): Promise<{ status: string; entry: any }> {
+        return this.request<{ status: string; entry: any }>('/api/trade-reasons/submit', {
+            method: 'POST',
+            body,
+        });
+    }
+
+    async getTradeReasonSummary(symbol: string): Promise<TradeReasonSummary> {
+        return this.request<TradeReasonSummary>(`/api/trade-reasons/summary/${symbol}`);
+    }
+
+    async getTradeReasonFeed(limit: number = 30): Promise<{ feed: TradeReasonEntry[] }> {
+        return this.request<{ feed: TradeReasonEntry[] }>('/api/trade-reasons/feed', {
+            params: { limit },
+        });
+    }
+
+    async getTrendingTradeReasons(limit: number = 10): Promise<{ trending: TrendingTradeReason[] }> {
+        return this.request<{ trending: TrendingTradeReason[] }>('/api/trade-reasons/trending', {
+            params: { limit },
+        });
+    }
+
+    // ── Financial Statements ────────────────────────────────────
+    async getFinancialStatements(symbol: string, period: string = 'annual'): Promise<any> {
+        return this.request<any>(`/financials/${symbol}`, {
+            params: { period },
+        });
+    }
+
+    // ── Earnings Analysis ───────────────────────────────────────
+    async getEarningsAnalysis(symbol: string): Promise<any> {
+        return this.request<any>(`/earnings/${symbol}`);
+    }
+
+    // ── Valuation History ───────────────────────────────────────
+    async getValuationHistory(symbol: string): Promise<any> {
+        return this.request<any>(`/valuation-history/${symbol}`);
+    }
+
+    // ── Peer Comparison ─────────────────────────────────────────
+    async getPeerComparison(symbol: string, peers?: string): Promise<any> {
+        return this.request<any>(`/peer-compare/${symbol}`, {
+            params: peers ? { peers } : {},
+        });
+    }
+
+    // ── Dividend Analysis ───────────────────────────────────────
+    async getDividendAnalysis(symbol: string): Promise<any> {
+        return this.request<any>(`/dividends/${symbol}`);
+    }
+
+    // ── Goal Planner ────────────────────────────────────────────
+    async calculateGoalPlan(params: {
+        targetAmount: number;
+        currentSavings: number;
+        monthlyContribution: number;
+        annualReturn: number;
+        years: number;
+        inflationRate?: number;
+        mode?: 'long_term' | '12_week';
+        weeks?: number;
+        weeklyContribution?: number;
+    }): Promise<any> {
+        return this.request<any>('/goal-planner', { method: 'POST', body: params });
+    }
+
+    // ── DCA Calculator ──────────────────────────────────────────
+    async getDCAAnalysis(symbol: string, monthlyAmount?: number, years?: number): Promise<any> {
+        const params: any = {};
+        if (monthlyAmount) params.monthly_amount = monthlyAmount;
+        if (years) params.years = years;
+        return this.request<any>(`/dca/${symbol}`, { params });
+    }
+
+    // ── Economic Dashboard ──────────────────────────────────────
+    async getEconomicDashboard(): Promise<any> {
+        return this.request<any>('/economic-dashboard');
+    }
+
+    // ── Economic Impact ─────────────────────────────────────────
+    async getEconomicImpact(symbol: string): Promise<any> {
+        return this.request<any>(`/economic-impact/${symbol}`);
+    }
+
+    // ── News Impact Analysis ────────────────────────────────────
+    async getNewsImpact(symbol: string): Promise<any> {
+        return this.request<any>(`/news-impact/${symbol}`);
+    }
+
+    // ── Transactions ────────────────────────────────────────────
+    async getTransactions(symbol?: string): Promise<any> {
+        const params: any = {};
+        if (symbol) params.symbol = symbol;
+        return this.request<any>('/transactions', { params });
+    }
+
+    async addTransaction(data: {
+        symbol: string;
+        action: string;
+        shares: number;
+        price: number;
+        date?: string;
+        notes?: string;
+    }): Promise<any> {
+        return this.request<any>('/transactions', { method: 'POST', body: data });
+    }
+
+    async deleteTransaction(id: number): Promise<any> {
+        return this.request<any>(`/transactions/${id}`, { method: 'DELETE' });
+    }
+
+    // ── Auth ────────────────────────────────────────────────────
+    async login(email: string, password: string): Promise<any> {
+        return this.request<any>('/auth/login', { method: 'POST', body: { email, password } });
+    }
+
+    async register(email: string, username: string, password: string): Promise<any> {
+        return this.request<any>('/auth/register', { method: 'POST', body: { email, username, password } });
+    }
+
+    async getMe(): Promise<any> {
+        return this.request<any>('/auth/me');
+    }
+
+    async registerPushToken(token: string): Promise<any> {
+        return this.request<any>('/auth/push-token', { method: 'POST', body: { token } });
+    }
+
+    // ── Social Feed ─────────────────────────────────────────────
+    async createPost(content: string, symbol?: string): Promise<any> {
+        return this.request<any>('/api/social/posts', {
+            method: 'POST', body: { content, symbol: symbol || undefined },
+        });
+    }
+
+    async getSocialFeed(limit: number = 50, offset: number = 0, symbol?: string): Promise<{ posts: any[] }> {
+        return this.request<{ posts: any[] }>('/api/social/feed', { params: { limit, offset, ...(symbol ? { symbol } : {}) } });
+    }
+
+    async getPost(postId: number): Promise<any> {
+        return this.request<any>(`/api/social/posts/${postId}`);
+    }
+
+    async deletePost(postId: number): Promise<any> {
+        return this.request<any>(`/api/social/posts/${postId}`, { method: 'DELETE' });
+    }
+
+    async toggleLike(postId: number): Promise<{ liked: boolean; like_count: number }> {
+        return this.request<{ liked: boolean; like_count: number }>(`/api/social/posts/${postId}/like`, { method: 'POST' });
+    }
+
+    async getComments(postId: number): Promise<{ comments: any[] }> {
+        return this.request<{ comments: any[] }>(`/api/social/posts/${postId}/comments`);
+    }
+
+    async addComment(postId: number, content: string): Promise<any> {
+        return this.request<any>(`/api/social/posts/${postId}/comments`, {
+            method: 'POST', body: { content },
+        });
+    }
+
+    // ── Friends ─────────────────────────────────────────────────
+    async getFriends(): Promise<{ friends: any[] }> {
+        return this.request<{ friends: any[] }>('/api/social/friends');
+    }
+
+    async getFriendRequests(): Promise<{ requests: any[] }> {
+        return this.request<{ requests: any[] }>('/api/social/friends/requests');
+    }
+
+    async sendFriendRequest(userId: number): Promise<any> {
+        return this.request<any>(`/api/social/friends/${userId}`, { method: 'POST' });
+    }
+
+    async respondFriendRequest(requestId: number, accept: boolean): Promise<any> {
+        return this.request<any>(`/api/social/friends/requests/${requestId}`, {
+            method: 'PUT', body: { accept },
+        });
+    }
+
+    async searchUsers(query: string): Promise<{ users: any[] }> {
+        return this.request<{ users: any[] }>('/api/social/users/search', { params: { q: query } });
+    }
+
+    // ── Chat ────────────────────────────────────────────────────
+    async getConversations(): Promise<{ conversations: any[] }> {
+        return this.request<{ conversations: any[] }>('/api/social/chat/conversations');
+    }
+
+    async getMessages(otherUserId: number, limit: number = 50, offset: number = 0): Promise<{ messages: any[] }> {
+        return this.request<{ messages: any[] }>(`/api/social/chat/${otherUserId}`, { params: { limit, offset } });
+    }
+
+    async sendChatMessage(receiverId: number, content: string): Promise<any> {
+        return this.request<any>(`/api/social/chat/${receiverId}`, {
+            method: 'POST', body: { content },
+        });
+    }
+
+    // ── Follow System ────────────────────────────────────────────
+    async followUser(targetUserId: number): Promise<{ following: boolean }> {
+        return this.request<{ following: boolean }>(`/api/social/follow/${targetUserId}`, { method: 'POST' });
+    }
+
+    async unfollowUser(targetUserId: number): Promise<{ following: boolean }> {
+        return this.request<{ following: boolean }>(`/api/social/follow/${targetUserId}`, { method: 'DELETE' });
+    }
+
+    async getFollowStatus(targetUserId: number): Promise<{ following: boolean }> {
+        return this.request<{ following: boolean }>(`/api/social/follow/status/${targetUserId}`);
+    }
+
+    async getUserStats(targetUserId: number): Promise<any> {
+        return this.request<any>(`/api/social/stats/${targetUserId}`);
+    }
+
+    // ── Financial Statement Upload & Analysis ─────────────────────
+
+    async uploadFinancialStatement(
+        fileUri: string,
+        fileName: string,
+        companyName: string,
+        symbol: string = '',
+        discountRate: number = 0.10,
+        terminalGrowthRate: number = 0.03,
+    ): Promise<FinancialUploadResult> {
+        const formData = new FormData();
+        formData.append('file', {
+            uri: fileUri,
+            name: fileName,
+            type: 'text/csv',
+        } as any);
+        formData.append('company_name', companyName);
+        formData.append('symbol', symbol);
+        formData.append('discount_rate', String(discountRate));
+        formData.append('terminal_growth_rate', String(terminalGrowthRate));
+
+        const url = `${API_BASE_URL}/financial-upload`;
+        const headers: Record<string, string> = {};
+        if (this.authToken) {
+            headers['Authorization'] = `Bearer ${this.authToken}`;
+        }
+        const response = await fetch(url, {
+            method: 'POST',
+            headers,
+            body: formData,
+        });
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(errText || `Upload failed with status ${response.status}`);
+        }
+        return response.json() as Promise<FinancialUploadResult>;
+    }
+
+    async getFinancialUploads(): Promise<{ uploads: FinancialUploadSummary[] }> {
+        return this.request<{ uploads: FinancialUploadSummary[] }>('/financial-uploads');
+    }
+
+    async getFinancialUploadDetail(uploadId: number): Promise<FinancialUploadDetail> {
+        return this.request<FinancialUploadDetail>(`/financial-uploads/${uploadId}`);
+    }
+
+    async deleteFinancialUpload(uploadId: number): Promise<{ message: string }> {
+        return this.request<{ message: string }>(`/financial-uploads/${uploadId}`, { method: 'DELETE' });
+    }
+
+    // ── Achievements ──
+    async getAchievements(): Promise<any> {
+        return this.request<any>('/achievements');
+    }
+
+    // ── Daily Briefing ──
+    async getDailyBriefing(): Promise<any> {
+        return this.request<any>('/daily-briefing');
+    }
+
+    // ── Earnings Calendar ──
+    async getEarningsCalendar(days: number = 14): Promise<any> {
+        return this.request<any>('/earnings-calendar', { params: { days: String(days) } });
+    }
+
+    // ── Stock Recommendations ──
+    async getRecommendations(): Promise<any> {
+        return this.request<any>('/recommendations');
+    }
+
+    async getProfileRecommendations(params: {
+        market: Market;
+        limit?: number;
+        persona?: string;
+        riskTolerance?: string;
+        primaryGoal?: string;
+        timeHorizon?: string;
+    }): Promise<ProfileRecommendationsResponse> {
+        return this.request<ProfileRecommendationsResponse>('/recommendations/profile', {
+            params: {
+                market: params.market,
+                limit: params.limit ?? 4,
+                persona: params.persona,
+                riskTolerance: params.riskTolerance,
+                primaryGoal: params.primaryGoal,
+                timeHorizon: params.timeHorizon,
+            },
+        });
+    }
+
+    // ── AI Chat ──
+    async sendAIChat(message: string, symbol?: string): Promise<any> {
+        return this.request<any>('/ai-chat', {
+            method: 'POST',
+            body: { message, symbol },
+        });
+    }
+
+    // ── AI Recommendation ──
+    async getAIRecommendation(symbol: string, period: string = '1y'): Promise<AIRecommendationResult> {
+        return this.request<AIRecommendationResult>('/api/ai/recommendation', {
+            method: 'POST',
+            body: { symbol, period },
+        });
+    }
+
+    async getAssistiveValuationBrief(
+        payload: AssistiveValuationBriefRequest,
+    ): Promise<AssistiveValuationBriefResponse> {
+        return this.request<AssistiveValuationBriefResponse>('/api/assistive/valuation-brief', {
+            method: 'POST',
+            body: payload,
+        });
+    }
+
+    async getAssistiveNewsImpact(symbol: string, limit: number = 6, company_name?: string): Promise<AssistiveNewsImpactResponse> {
+        return this.request<AssistiveNewsImpactResponse>('/api/assistive/news-impact', {
+            method: 'POST',
+            body: { symbol, limit, company_name },
+        });
+    }
+
+    async submitAssistiveFeedback(payload: {
+        symbol?: string;
+        brief_type: string;
+        helpful: boolean;
+        comment?: string;
+    }): Promise<any> {
+        return this.request<any>('/api/assistive/feedback', {
+            method: 'POST',
+            body: payload,
+        });
+    }
+
+    // ── Profile management ──
+    async updateProfile(username: string): Promise<any> {
+        return this.request<any>('/auth/me', {
+            method: 'PUT',
+            body: { username },
+        });
+    }
+
+    async changePassword(current_password: string, new_password: string): Promise<any> {
+        return this.request<any>('/auth/change-password', {
+            method: 'POST',
+            body: { current_password, new_password },
+        });
+    }
+
+    async trackAssistiveEvent(payload: {
+        event_name: string;
+        symbol?: string;
+        metadata?: Record<string, any>;
+    }): Promise<any> {
+        return this.request<any>('/api/assistive/event', {
+            method: 'POST',
+            body: payload,
+        });
+    }
+
+    async getAssistiveMetrics(): Promise<AssistiveMetricsResponse> {
+        return this.request<AssistiveMetricsResponse>('/api/assistive/metrics');
+    }
+
+    async getAssistiveDashboardMetrics(
+        days: number = 30,
+    ): Promise<AssistiveDashboardMetricsResponse> {
+        return this.request<AssistiveDashboardMetricsResponse>(
+            '/api/assistive/metrics/dashboard',
+            { params: { days } },
+        );
+    }
+
+    // ── Options Calculator ──
+    async calculateOptions(params: {
+        symbol: string;
+        option_type: string;
+        strike_price: number;
+        premium: number;
+        contracts: number;
+        expiry_days: number;
+    }): Promise<any> {
+        return this.request<any>('/options-calculator', { method: 'POST', body: params });
+    }
+
+    // ── Referral System ──
+    async getReferralCode(): Promise<any> {
+        return this.request<any>('/referrals/my-code');
+    }
+
+    async redeemReferral(code: string): Promise<any> {
+        return this.request<any>('/referrals/redeem', { method: 'POST', body: { code } });
     }
 }
 

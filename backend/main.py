@@ -3,10 +3,13 @@ Stock Valuation API Backend
 Comprehensive stock analysis and valuation platform
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
+import csv
+import io
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -17,22 +20,78 @@ import logging
 from dataclasses import dataclass
 import json
 import os
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
+from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from alpha_vantage_provider import AlphaVantageProvider
 from twelve_data_provider import TwelveDataProvider
+from fcs_provider import FCSProvider
 from ai_endpoints import router as ai_router
 from realtime_endpoints import router as realtime_router
-
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from news_integration import router as news_router
+from price_alerts import router as alerts_router
+from trade_reasons import router as trade_reasons_router
+from auth import router as auth_router, get_current_user, get_user_id
+from portfolio_tracker import router as portfolio_tracker_router
+from enhanced_charting import router as charting_router
+from backtesting_engine import router as backtest_router
+from social import router as social_router
+from achievements import router as achievements_router
+from briefing import router as briefing_router
+from ai_chat import router as ai_chat_router
+from assistive_ai import router as assistive_ai_router
+from referral import router as referral_router
+from ai_service import get_efficiency_report
+from returns_calculator import (
+    calculate_holding_period_years,
+    calculate_investor_returns,
+    estimate_dividend_income,
+)
+import database as db
 
 # Load environment variables
 load_dotenv()
 
+# Set up logging
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO))
+logger = logging.getLogger(__name__)
+
+APP_ENV = os.getenv("APP_ENV", "development").lower()
+API_KEY = os.getenv("API_KEY")
+ENABLE_HTTPS_REDIRECT = os.getenv(
+    "ENABLE_HTTPS_REDIRECT", "false"
+).lower() == "true"
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.getenv("ALLOWED_HOSTS", "*").split(",")
+    if host.strip()
+]
+RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "120"))
+_rate_limit_store: Dict[str, List[float]] = {}
+_rate_limit_lock = threading.Lock()
+
 # Initialize data providers
 alpha_vantage = AlphaVantageProvider()
 twelve_data = TwelveDataProvider()
+fcs_data = FCSProvider()
+
+# ── API Key Authentication ────────────────────────────────────────
+# Set API_KEY env var to enable authentication. When unset, auth is disabled.
+
+async def verify_api_key(request: Request):
+    """Verify API key if one is configured."""
+    if not API_KEY:
+        return  # Auth disabled when no key is set
+    auth_header = request.headers.get("Authorization", "")
+    key = request.query_params.get("api_key") or (
+        auth_header.removeprefix("Bearer ").strip() if auth_header.startswith("Bearer ") else ""
+    )
+    if key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 app = FastAPI(
     title="Stock Valuation API",
@@ -41,17 +100,131 @@ app = FastAPI(
 )
 
 # CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "ALLOWED_ORIGINS",
+        "http://localhost:3000,http://localhost:8081,http://localhost:19006,http://localhost:8123"
+    ).split(",")
+    if origin.strip()
+]
+ALLOWED_ORIGIN_REGEX = os.getenv(
+    "ALLOWED_ORIGIN_REGEX",
+    r"^https?://(localhost|127\.0\.0\.1)(:\\d+)?$",
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=ALLOWED_ORIGIN_REGEX,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
+    max_age=600,
+)
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=ALLOWED_HOSTS or ["*"],
+)
+
+if APP_ENV == "production" and ENABLE_HTTPS_REDIRECT:
+    app.add_middleware(HTTPSRedirectMiddleware)
+
+# Public or exempt endpoints
+_PUBLIC_PATHS = {"/", "/health", "/docs", "/openapi.json", "/redoc"}
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    if (
+        request.method == "OPTIONS"
+        or request.url.path in _PUBLIC_PATHS
+        or RATE_LIMIT_PER_MINUTE <= 0
+    ):
+        return await call_next(request)
+
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        client_ip = forwarded_for.split(",")[0].strip()
+    else:
+        client_ip = request.client.host if request.client else "unknown"
+
+    now = time.time()
+    window_start = now - 60
+
+    with _rate_limit_lock:
+        request_times = _rate_limit_store.setdefault(client_ip, [])
+        request_times[:] = [ts for ts in request_times if ts > window_start]
+
+        if len(request_times) >= RATE_LIMIT_PER_MINUTE:
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Rate limit exceeded. Try again later."},
+            )
+
+        request_times.append(now)
+
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def request_logging_middleware(request: Request, call_next):
+    start = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        duration_ms = (time.perf_counter() - start) * 1000
+        logger.exception(
+            "Request failed: %s %s in %.2fms",
+            request.method,
+            request.url.path,
+            duration_ms,
+        )
+        raise
+
+    duration_ms = (time.perf_counter() - start) * 1000
+    logger.info(
+        "%s %s -> %s in %.2fms",
+        request.method,
+        request.url.path,
+        response.status_code,
+        duration_ms,
+    )
+    return response
+
+
+@app.middleware("http")
+async def api_key_middleware(request: Request, call_next):
+    if request.method == "OPTIONS" or request.url.path in _PUBLIC_PATHS:
+        return await call_next(request)
+    try:
+        await verify_api_key(request)
+    except HTTPException as exc:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail},
+        )
+    return await call_next(request)
+
+# Initialize database
+db.init_db()
+
 # Include routers
+app.include_router(auth_router)
 app.include_router(ai_router)
 app.include_router(realtime_router)
+app.include_router(news_router)
+app.include_router(alerts_router)
+app.include_router(trade_reasons_router)
+app.include_router(portfolio_tracker_router)
+app.include_router(charting_router)
+app.include_router(backtest_router)
+app.include_router(social_router)
+app.include_router(achievements_router)
+app.include_router(briefing_router)
+app.include_router(ai_chat_router)
+app.include_router(assistive_ai_router)
+app.include_router(referral_router)
 
 # Pydantic models
 class StockSymbol(BaseModel):
@@ -100,22 +273,29 @@ class PortfolioData(BaseModel):
     cash: float = 0.0
     last_updated: Optional[str] = None
 
-PORTFOLIO_PATH = Path(__file__).parent / "data" / "portfolio.json"
 
-def _load_portfolio_data() -> PortfolioData:
-    if not PORTFOLIO_PATH.exists():
-        return PortfolioData(positions=[], cash=0.0, last_updated=datetime.now().isoformat())
+class InvestorReturnRequest(BaseModel):
+    symbol: Optional[str] = None
+    shares: float
+    purchase_price: float
+    current_price: Optional[float] = None
+    purchase_date: Optional[str] = None
+    total_dividends: Optional[float] = None
+    annual_dividend_per_share: Optional[float] = None
+    inflation_rate_pct: float = 3.0
+    transaction_cost_rate_pct: float = 0.25
+    fixed_transaction_cost: float = 0.0
+    capital_gains_tax_rate_pct: float = 15.0
 
-    with PORTFOLIO_PATH.open("r", encoding="utf-8") as handle:
-        payload = json.load(handle)
-    return PortfolioData(**payload)
 
-def _save_portfolio_data(data: PortfolioData) -> None:
-    PORTFOLIO_PATH.parent.mkdir(parents=True, exist_ok=True)
-    payload = data.dict()
-    payload["last_updated"] = datetime.now().isoformat()
-    with PORTFOLIO_PATH.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2)
+def _load_portfolio_data(user_id: int = 1) -> PortfolioData:
+    data = db.get_portfolio(user_id)
+    positions = [PortfolioPosition(**p) for p in data["positions"]]
+    return PortfolioData(positions=positions, cash=data["cash"], last_updated=data["last_updated"])
+
+def _save_portfolio_data(data: PortfolioData, user_id: int = 1) -> None:
+    positions = [p.dict() for p in data.positions]
+    db.save_portfolio(user_id, positions, data.cash)
 
 def _get_price_on_or_after(history: pd.DataFrame, target_date: datetime) -> Optional[float]:
     if history is None or history.empty:
@@ -137,7 +317,7 @@ def _get_price_on_or_after(history: pd.DataFrame, target_date: datetime) -> Opti
         return None
     return float(filtered["Close"].iloc[0])
 
-def _calculate_risk_score(volatility: Optional[float]) -> float:
+def _calculate_portfolio_risk_score(volatility: Optional[float]) -> float:
     if volatility is None:
         return 0.0
     score = min(10.0, max(0.0, (volatility / 0.4) * 10))
@@ -163,8 +343,7 @@ def _normalize_ngx_symbol(symbol: str) -> str:
     return f"{raw}.NG"
 
 def _get_market_snapshot(symbols: List[str]) -> List[Dict[str, Any]]:
-    snapshots = []
-    for symbol in symbols:
+    def _fetch_one(symbol: str) -> Dict[str, Any]:
         data = valuation_service.get_stock_data(symbol, period="1mo")
         info = data.get("info", {})
         history = data.get("history")
@@ -180,14 +359,31 @@ def _get_market_snapshot(symbols: List[str]) -> List[Dict[str, Any]]:
                 if prev_close > 0:
                     change_pct = (float(current_price) - prev_close) / prev_close * 100
 
-        snapshots.append({
+        return {
             "symbol": symbol,
             "name": info.get("shortName") or info.get("longName") or symbol,
             "price": float(current_price or 0),
             "change_pct": float(change_pct or 0),
             "volume": int(volume or 0),
             "sector": info.get("sector", "Unknown") or "Unknown",
-        })
+        }
+
+    snapshots = []
+    with ThreadPoolExecutor(max_workers=min(5, len(symbols))) as executor:
+        future_to_sym = {executor.submit(_fetch_one, sym): sym for sym in symbols}
+        for future in as_completed(future_to_sym):
+            try:
+                snapshots.append(future.result())
+            except Exception as exc:
+                sym = future_to_sym[future]
+                logger.warning(f"Snapshot fetch failed for {sym}: {exc}")
+                snapshots.append({
+                    "symbol": sym, "name": sym, "price": 0,
+                    "change_pct": 0, "volume": 0, "sector": "Unknown",
+                })
+    # Maintain original symbol order
+    order = {s: i for i, s in enumerate(symbols)}
+    snapshots.sort(key=lambda x: order.get(x["symbol"], 999))
     return snapshots
 
 def _get_ngx_index() -> Optional[Dict[str, Any]]:
@@ -403,18 +599,55 @@ class ValuationResult:
 class StockValuationService:
     def __init__(self):
         self.cache = {}
-        self.cache_duration = 300  # 5 minutes
-    
+        self.cache_duration = int(os.getenv("MARKET_CACHE_TTL_SECONDS", "300"))
+        self.stale_cache_duration = int(
+            os.getenv("MARKET_STALE_CACHE_TTL_SECONDS", "1800")
+        )
+        self.fetch_backoff_seconds = int(
+            os.getenv("MARKET_FETCH_BACKOFF_SECONDS", "30")
+        )
+        self.last_failure = {}
+        self.cache_lock = threading.Lock()
+
     def get_stock_data(self, symbol: str, period: str = "1y"):
         """Get stock data with caching"""
         cache_key = f"{symbol}_{period}"
         current_time = datetime.now()
-        
-        if cache_key in self.cache:
-            cached_data, cached_time = self.cache[cache_key]
-            if (current_time - cached_time).seconds < self.cache_duration:
+
+        with self.cache_lock:
+            cached_entry = self.cache.get(cache_key)
+            last_failure_time = self.last_failure.get(cache_key)
+
+        if cached_entry:
+            cached_data, cached_time = cached_entry
+            cache_age = (current_time - cached_time).total_seconds()
+            if cache_age < self.cache_duration:
                 return cached_data
-        
+
+            if (
+                last_failure_time
+                and (current_time - last_failure_time).total_seconds()
+                < self.fetch_backoff_seconds
+            ):
+                logger.warning(
+                    "Using stale cached market data for %s during fetch backoff",
+                    symbol,
+                )
+                return cached_data
+
+        if (
+            last_failure_time
+            and (current_time - last_failure_time).total_seconds()
+            < self.fetch_backoff_seconds
+        ):
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"Market data provider is busy for {symbol}. "
+                    "Please retry shortly."
+                ),
+            )
+
         try:
             stock = yf.Ticker(symbol)
             data = {
@@ -428,12 +661,35 @@ class StockValuationService:
                 'major_holders': stock.major_holders,
                 'institutional_holders': stock.institutional_holders
             }
-            
-            self.cache[cache_key] = (data, current_time)
+
+            with self.cache_lock:
+                self.cache[cache_key] = (data, current_time)
+                self.last_failure.pop(cache_key, None)
             return data
         except Exception as e:
+            with self.cache_lock:
+                self.last_failure[cache_key] = current_time
+                cached_entry = self.cache.get(cache_key)
+
+            if cached_entry:
+                cached_data, cached_time = cached_entry
+                cache_age = (current_time - cached_time).total_seconds()
+                if cache_age < self.stale_cache_duration:
+                    logger.warning(
+                        "Using stale cached market data for %s after fetch failure: %s",
+                        symbol,
+                        e,
+                    )
+                    return cached_data
+
             logger.error(f"Error fetching data for {symbol}: {e}")
-            raise HTTPException(status_code=400, detail=f"Error fetching stock data: {str(e)}")
+            err_str = str(e).lower()
+            is_rate_limit = any(
+                kw in err_str
+                for kw in ("too many requests", "rate limit", "rate-limit", "429", "throttle")
+            )
+            status_code = 429 if is_rate_limit else 400
+            raise HTTPException(status_code=status_code, detail=f"Error fetching stock data: {str(e)}")
     
     def calculate_dcf_valuation(self, symbol: str, growth_rate: float = 0.05, 
                                discount_rate: float = 0.10, terminal_growth_rate: float = 0.03):
@@ -458,8 +714,8 @@ class StockValuationService:
                 else:
                     # Fallback calculation
                     current_fcf = cashflow.iloc[0, 0]  # First row, first column
-            except:
-                current_fcf = 1000000000  # Default 1B if no data
+            except Exception:
+                raise HTTPException(status_code=400, detail="No free cash flow data available for DCF analysis")
             
             # Project cash flows for 5 years
             projected_fcf = []
@@ -893,8 +1149,8 @@ class StockValuationService:
                         current_fcf = operating_cf + capex  # CapEx is usually negative
                     else:
                         current_fcf = cashflow.iloc[0, 0]
-                except:
-                    current_fcf = 1000000000
+                except Exception:
+                    raise HTTPException(status_code=400, detail="No free cash flow data available for DCF analysis")
                 
                 shares_outstanding = info.get('sharesOutstanding', 0) or info.get('impliedSharesOutstanding', 1)
                 total_cash = info.get('totalCash', 0) or 0
@@ -1183,12 +1439,49 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "environment": APP_ENV,
+        "database": "postgresql" if getattr(db, "USE_POSTGRES", False) else "sqlite",
+    }
+
+
+@app.get("/readiness")
+async def readiness_check():
+    production_config_ok = True
+    production_issues: List[str] = []
+
+    if APP_ENV == "production":
+        if not API_KEY:
+            production_config_ok = False
+            production_issues.append("API_KEY is not configured")
+        if any("localhost" in origin for origin in ALLOWED_ORIGINS):
+            production_issues.append("ALLOWED_ORIGINS still includes localhost")
+
+    return {
+        "status": "ready" if production_config_ok else "degraded",
+        "timestamp": datetime.now().isoformat(),
+        "checks": {
+            "database": "ok",
+            "environment": APP_ENV,
+            "production_config_ok": production_config_ok,
+        },
+        "issues": production_issues,
+    }
+
+@app.get("/ai-metrics")
+async def ai_efficiency_metrics():
+    """Get AI efficiency metrics for testing and optimization."""
+    return get_efficiency_report()
 
 @app.get("/search")
-async def search_stocks(query: str, limit: int = 10):
+async def search_stocks(
+    query: str = Query(..., min_length=1, max_length=100),
+    limit: int = Query(10, ge=1, le=50)
+):
     """Search stocks by company name or keyword"""
-    if not query or not query.strip():
+    if not query.strip():
         raise HTTPException(status_code=400, detail="Query is required")
 
     try:
@@ -1290,7 +1583,33 @@ async def get_stock_info(symbol: str):
                     errors.append(f"Twelve Data: {str(td_error)[:50]}")
             else:
                 errors.append("Twelve Data: No API key configured")
-            
+
+            # 3. Try FCS API
+            if fcs_data.enabled:
+                try:
+                    logger.info(f"Trying FCS API for {symbol_upper}")
+                    fcs_info = fcs_data.get_stock_info(symbol_upper)
+                    return {
+                        "symbol": fcs_info['symbol'],
+                        "company_name": fcs_info['company_name'],
+                        "current_price": fcs_info['current_price'],
+                        "market_cap": fcs_info.get('market_cap') or 0,
+                        "pe_ratio": fcs_info.get('pe_ratio') or 0,
+                        "sector": fcs_info.get('sector') or 'N/A',
+                        "industry": fcs_info.get('industry') or 'N/A',
+                        "dividend_yield": fcs_info.get('dividend_yield') or 0,
+                        "52_week_high": fcs_info.get('52_week_high') or 0,
+                        "52_week_low": fcs_info.get('52_week_low') or 0,
+                        "beta": fcs_info.get('beta') or 0,
+                        "volume": fcs_info.get('volume', 0),
+                        "avg_volume": fcs_info.get('volume', 0),
+                        "data_source": "FCS API"
+                    }
+                except Exception as fcs_error:
+                    errors.append(f"FCS API: {str(fcs_error)[:50]}")
+            else:
+                errors.append("FCS API: No API key configured")
+
             # All providers failed
             raise HTTPException(
                 status_code=503,
@@ -1303,36 +1622,65 @@ async def get_stock_info(symbol: str):
                 }
             )
         
-        data = valuation_service.get_stock_data(symbol_upper)
-        info = data['info']
-        
-        # Check if we got valid data
-        if not info.get('longName') and not info.get('shortName'):
-            raise HTTPException(
-                status_code=404,
-                detail={
-                    "error": "STOCK_NOT_FOUND",
-                    "message": f"Stock symbol '{symbol_upper}' not found or has no available data.",
-                    "suggestion": "Please verify the stock symbol and try again.",
-                    "symbol": symbol_upper
-                }
-            )
-        
-        return {
-            "symbol": symbol_upper,
-            "company_name": info.get('longName', info.get('shortName', 'N/A')),
-            "current_price": info.get('currentPrice', info.get('regularMarketPrice', 0)),
-            "market_cap": info.get('marketCap', 0),
-            "pe_ratio": info.get('trailingPE', 0),
-            "sector": info.get('sector', 'N/A'),
-            "industry": info.get('industry', 'N/A'),
-            "dividend_yield": info.get('dividendYield', 0),
-            "52_week_high": info.get('fiftyTwoWeekHigh', 0),
-            "52_week_low": info.get('fiftyTwoWeekLow', 0),
-            "beta": info.get('beta', 0),
-            "volume": info.get('volume', 0),
-            "avg_volume": info.get('averageVolume', 0)
-        }
+        # ── 1. Try FCS API first (avoids Render yfinance rate-limits) ──────────
+        if fcs_data.enabled:
+            try:
+                logger.info("Trying FCS API first for %s", symbol_upper)
+                fcs_info = fcs_data.get_stock_info(symbol_upper)
+                if fcs_info.get('current_price'):
+                    return {
+                        "symbol": fcs_info['symbol'],
+                        "company_name": fcs_info['company_name'],
+                        "current_price": fcs_info['current_price'],
+                        "market_cap": fcs_info.get('market_cap') or 0,
+                        "pe_ratio": fcs_info.get('pe_ratio') or 0,
+                        "sector": fcs_info.get('sector') or 'N/A',
+                        "industry": fcs_info.get('industry') or 'N/A',
+                        "dividend_yield": fcs_info.get('dividend_yield') or 0,
+                        "52_week_high": fcs_info.get('52_week_high') or 0,
+                        "52_week_low": fcs_info.get('52_week_low') or 0,
+                        "beta": fcs_info.get('beta') or 0,
+                        "volume": fcs_info.get('volume', 0),
+                        "avg_volume": fcs_info.get('volume', 0),
+                        "data_source": "FCS API"
+                    }
+            except Exception as fcs_err:
+                logger.warning("FCS API failed for %s, falling back to yfinance: %s", symbol_upper, fcs_err)
+
+        # ── 2. Fall back to yfinance ─────────────────────────────────────────
+        try:
+            data = valuation_service.get_stock_data(symbol_upper)
+            info = data['info']
+
+            # Check if we got valid data
+            if not info.get('longName') and not info.get('shortName'):
+                raise HTTPException(
+                    status_code=404,
+                    detail={
+                        "error": "STOCK_NOT_FOUND",
+                        "message": f"Stock symbol '{symbol_upper}' not found or has no available data.",
+                        "suggestion": "Please verify the stock symbol and try again.",
+                        "symbol": symbol_upper
+                    }
+                )
+
+            return {
+                "symbol": symbol_upper,
+                "company_name": info.get('longName', info.get('shortName', 'N/A')),
+                "current_price": info.get('currentPrice', info.get('regularMarketPrice', 0)),
+                "market_cap": info.get('marketCap', 0),
+                "pe_ratio": info.get('trailingPE', 0),
+                "sector": info.get('sector', 'N/A'),
+                "industry": info.get('industry', 'N/A'),
+                "dividend_yield": info.get('dividendYield', 0),
+                "52_week_high": info.get('fiftyTwoWeekHigh', 0),
+                "52_week_low": info.get('fiftyTwoWeekLow', 0),
+                "beta": info.get('beta', 0),
+                "volume": info.get('volume', 0),
+                "avg_volume": info.get('averageVolume', 0)
+            }
+        except HTTPException:
+            raise
     except HTTPException:
         raise
     except Exception as e:
@@ -1385,39 +1733,109 @@ async def get_financial_growth(symbol: str, period: str = "1y"):
 @app.get("/analysis/comprehensive/{symbol}")
 async def get_comprehensive_analysis(symbol: str):
     """Get comprehensive valuation analysis (DCF + Comparable + Technical)"""
+    symbol = symbol.upper()
+    errors: List[str] = []
+    dcf_result: Optional[Dict[str, Any]] = None
+    comp_result: Optional[Dict[str, Any]] = None
+    tech_result: Optional[Dict[str, Any]] = None
+
     try:
-        # Get all three analyses
-        dcf_result = valuation_service.calculate_dcf_valuation(symbol.upper())
-        comp_result = valuation_service.calculate_comparable_analysis(symbol.upper())
-        tech_result = valuation_service.calculate_technical_indicators(symbol.upper())
-        
-        # Combine results
-        return {
-            "symbol": symbol.upper(),
-            "timestamp": datetime.now().isoformat(),
-            "current_price": dcf_result['current_price'],
-            "valuations": {
-                "dcf": {
-                    "intrinsic_value": dcf_result['intrinsic_value'],
-                    "upside": dcf_result['upside_percentage'],
-                    "confidence": dcf_result['confidence_level']
-                },
-                "comparable": {
-                    "average_valuation": comp_result['average_valuation'],
-                    "upside": comp_result['upside_percentage'],
-                    "confidence": comp_result['confidence_level']
-                }
-            },
-            "technical_analysis": {
-                "signals": tech_result['signals'],
-                "rsi": tech_result['momentum_indicators']['rsi'],
-                "support": tech_result['support_resistance']['support'],
-                "resistance": tech_result['support_resistance']['resistance']
-            },
-            "recommendation": get_overall_recommendation(dcf_result, comp_result, tech_result)
+        dcf_result = valuation_service.calculate_dcf_valuation(symbol)
+    except Exception as exc:
+        logger.warning("Comprehensive DCF unavailable for %s: %s", symbol, exc)
+        errors.append(f"DCF unavailable: {str(exc)}")
+
+    try:
+        comp_result = valuation_service.calculate_comparable_analysis(symbol)
+    except Exception as exc:
+        logger.warning("Comprehensive comparable unavailable for %s: %s", symbol, exc)
+        errors.append(f"Comparable unavailable: {str(exc)}")
+
+    try:
+        tech_result = valuation_service.calculate_technical_indicators(symbol)
+    except Exception as exc:
+        logger.warning("Comprehensive technical unavailable for %s: %s", symbol, exc)
+        errors.append(f"Technical unavailable: {str(exc)}")
+
+    current_price = 0.0
+    if dcf_result:
+        current_price = float(dcf_result.get("current_price") or 0.0)
+    elif comp_result:
+        current_price = float(comp_result.get("current_price") or 0.0)
+    elif tech_result:
+        current_price = float(tech_result.get("current_price") or 0.0)
+
+    if current_price <= 0:
+        try:
+            fallback_data = valuation_service.get_stock_data(symbol)
+            info = fallback_data.get("info", {}) if isinstance(fallback_data, dict) else {}
+            current_price = float(
+                info.get("currentPrice")
+                or info.get("regularMarketPrice")
+                or 0.0
+            )
+        except Exception as exc:
+            logger.warning("Comprehensive price fallback unavailable for %s: %s", symbol, exc)
+
+    recommendation = {"action": "HOLD", "confidence": "Low", "reasoning": "Limited market data available right now."}
+    if dcf_result and comp_result and tech_result:
+        recommendation = get_overall_recommendation(dcf_result, comp_result, tech_result)
+    elif dcf_result:
+        dcf_upside = float(dcf_result.get("upside_percentage") or 0.0)
+        if dcf_upside > 10:
+            recommendation = {
+                "action": "BUY",
+                "confidence": "Medium",
+                "reasoning": "DCF indicates material upside while some inputs are temporarily unavailable.",
+            }
+        elif dcf_upside < -10:
+            recommendation = {
+                "action": "SELL",
+                "confidence": "Medium",
+                "reasoning": "DCF indicates downside risk while some inputs are temporarily unavailable.",
+            }
+        else:
+            recommendation = {
+                "action": "HOLD",
+                "confidence": "Medium",
+                "reasoning": "DCF is near fair value; waiting for more confirmation from other signals.",
+            }
+    elif comp_result:
+        comp_upside = float(comp_result.get("upside_percentage") or 0.0)
+        recommendation = {
+            "action": "BUY" if comp_upside > 8 else "SELL" if comp_upside < -8 else "HOLD",
+            "confidence": "Low",
+            "reasoning": "Recommendation is based on peer valuation only due temporary data gaps.",
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Comprehensive analysis failed: {str(e)}")
+
+    return {
+        "symbol": symbol,
+        "timestamp": datetime.now().isoformat(),
+        "current_price": current_price,
+        "valuations": {
+            "dcf": {
+                "intrinsic_value": float(dcf_result.get("intrinsic_value") or current_price or 0.0) if dcf_result else float(current_price or 0.0),
+                "upside": float(dcf_result.get("upside_percentage") or 0.0) if dcf_result else 0.0,
+                "confidence": str(dcf_result.get("confidence_level") or "Unavailable") if dcf_result else "Unavailable",
+            },
+            "comparable": {
+                "average_valuation": float(comp_result.get("average_valuation") or current_price or 0.0) if comp_result else float(current_price or 0.0),
+                "upside": float(comp_result.get("upside_percentage") or 0.0) if comp_result else 0.0,
+                "confidence": str(comp_result.get("confidence_level") or "Unavailable") if comp_result else "Unavailable",
+            },
+        },
+        "technical_analysis": {
+            "signals": tech_result.get("signals", []) if tech_result else [],
+            "rsi": float(tech_result.get("momentum_indicators", {}).get("rsi", 50.0)) if tech_result else 50.0,
+            "support": float(tech_result.get("support_resistance", {}).get("support", current_price or 0.0)) if tech_result else float(current_price or 0.0),
+            "resistance": float(tech_result.get("support_resistance", {}).get("resistance", current_price or 0.0)) if tech_result else float(current_price or 0.0),
+        },
+        "recommendation": recommendation,
+        "data_quality": {
+            "partial": bool(errors),
+            "errors": errors,
+        },
+    }
 
 def get_overall_recommendation(dcf_result, comp_result, tech_result):
     """Generate overall buy/hold/sell recommendation"""
@@ -1712,8 +2130,11 @@ async def advanced_peer_comparison(symbol: str, include_ratios: bool = True):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/portfolio")
-async def get_portfolio():
-    """Get portfolio holdings with valuation, performance, and risk metrics."""
+async def get_portfolio(
+    inflation_rate: float = Query(3.0, ge=0, le=50),
+    transaction_cost_rate: float = Query(0.25, ge=0, le=10),
+):
+    """Get portfolio holdings with valuation, performance, risk, and real return metrics."""
     portfolio = _load_portfolio_data()
     positions_output = []
     allocation_by_sector: Dict[str, float] = {}
@@ -1721,6 +2142,12 @@ async def get_portfolio():
 
     total_value = 0.0
     total_cost = 0.0
+    total_dividends = 0.0
+    total_transaction_costs = 0.0
+    total_inflation_impact = 0.0
+    total_return = 0.0
+    total_real_profit = 0.0
+
     now = datetime.now()
     period_dates = {
         "monthly": now - timedelta(days=30),
@@ -1734,22 +2161,75 @@ async def get_portfolio():
     volatility_weight_sum = 0.0
     drawdown_weighted = 0.0
 
+    transactions_by_symbol: Dict[str, List[Dict[str, Any]]] = {}
+    try:
+        for txn in db.get_transactions(1):
+            txn_symbol = (txn.get("symbol") or "").upper()
+            if txn_symbol:
+                transactions_by_symbol.setdefault(txn_symbol, []).append(txn)
+    except Exception as exc:
+        logger.warning("Unable to load transaction history for portfolio adjustments: %s", exc)
+
     for position in portfolio.positions:
         symbol = position.symbol.upper()
-        data = valuation_service.get_stock_data(symbol, period="1y")
-        info = data["info"]
-        history = data.get("history")
+        try:
+            data = valuation_service.get_stock_data(symbol, period="1y")
+            info = data.get("info", {})
+            history = data.get("history")
+        except Exception as exc:
+            logger.warning(
+                "Portfolio data fetch failed for %s, using fallback values: %s",
+                symbol,
+                exc,
+            )
+            info = {"sector": "Unknown"}
+            history = None
 
         current_price = info.get("currentPrice") or info.get("regularMarketPrice")
         if not current_price and history is not None and not history.empty:
             current_price = float(history["Close"].iloc[-1])
 
-        current_price = float(current_price or 0)
+        current_price = float(current_price or position.cost_basis or 0)
         market_value = position.shares * current_price
         cost_value = position.shares * position.cost_basis
         profit = market_value - cost_value
         profit_pct = (profit / cost_value * 100) if cost_value > 0 else 0
         sector = info.get("sector", "Unknown") or "Unknown"
+
+        symbol_transactions = transactions_by_symbol.get(symbol, [])
+        buy_dates = [t.get("date") for t in symbol_transactions if t.get("action") == "buy" and t.get("date")]
+        purchase_date = min(buy_dates) if buy_dates else portfolio.last_updated
+        holding_period_years = calculate_holding_period_years(buy_dates, default_years=1.0)
+
+        explicit_transaction_costs = sum(
+            float(t.get("fee", 0) or t.get("transactionCost", 0) or 0)
+            for t in symbol_transactions
+        )
+
+        dividends_series = None
+        try:
+            dividends_series = yf.Ticker(symbol).dividends
+        except Exception:
+            dividends_series = None
+
+        dividend_income = estimate_dividend_income(
+            dividends_series,
+            position.shares,
+            purchase_date=purchase_date,
+            fallback_annual_dividend=float(info.get("dividendRate") or 0),
+            holding_period_years=holding_period_years,
+        )
+
+        return_metrics = calculate_investor_returns(
+            shares=position.shares,
+            purchase_price=position.cost_basis,
+            current_price=current_price,
+            total_dividends=dividend_income,
+            holding_period_years=holding_period_years,
+            inflation_rate_pct=inflation_rate,
+            transaction_cost_rate_pct=transaction_cost_rate,
+            explicit_transaction_costs=explicit_transaction_costs if explicit_transaction_costs > 0 else None,
+        )
 
         positions_output.append({
             "symbol": symbol,
@@ -1761,10 +2241,29 @@ async def get_portfolio():
             "profit": profit,
             "profit_pct": profit_pct,
             "sector": sector,
+            "quantity": position.shares,
+            "purchase_price": position.cost_basis,
+            "current_value": market_value,
+            "return_pct": return_metrics["total_return_pct"],
+            "capital_gain": return_metrics["capital_gain"],
+            "dividend_income": return_metrics["dividend_income"],
+            "transaction_costs": return_metrics["transaction_costs"],
+            "total_return": return_metrics["total_return"],
+            "total_return_pct": return_metrics["total_return_pct"],
+            "inflation_impact": return_metrics["inflation_impact"],
+            "real_return": return_metrics["real_return"],
+            "real_return_pct": return_metrics["real_return_pct"],
+            "holding_period_years": return_metrics["holding_period_years"],
         })
 
         total_value += market_value
         total_cost += cost_value
+        total_dividends += return_metrics["dividend_income"]
+        total_transaction_costs += return_metrics["transaction_costs"]
+        total_inflation_impact += return_metrics["inflation_impact"]
+        total_return += return_metrics["total_return"]
+        total_real_profit += return_metrics["real_return"]
+
         allocation_by_sector[sector] = allocation_by_sector.get(sector, 0.0) + market_value
         allocation_by_symbol[symbol] = allocation_by_symbol.get(symbol, 0.0) + market_value
 
@@ -1791,12 +2290,14 @@ async def get_portfolio():
     total_equity = total_value + portfolio.cash
     total_profit = total_value - total_cost
     total_profit_pct = (total_profit / total_cost * 100) if total_cost > 0 else 0
+    total_return_pct = (total_return / total_cost * 100) if total_cost > 0 else 0
+    total_real_profit_pct = (total_real_profit / total_cost * 100) if total_cost > 0 else 0
 
     best_performer = None
     worst_performer = None
     if positions_output:
-        best_performer = max(positions_output, key=lambda item: item["profit_pct"])
-        worst_performer = min(positions_output, key=lambda item: item["profit_pct"])
+        best_performer = max(positions_output, key=lambda item: item.get("real_return_pct", item["profit_pct"]))
+        worst_performer = min(positions_output, key=lambda item: item.get("real_return_pct", item["profit_pct"]))
 
     performance = {}
     for key in period_dates.keys():
@@ -1824,11 +2325,20 @@ async def get_portfolio():
     return {
         "positions": positions_output,
         "cash": portfolio.cash,
+        "portfolio_value": total_value,
+        "total_invested": total_cost,
         "summary": {
             "total_value": total_value,
             "total_cost": total_cost,
             "total_profit": total_profit,
             "total_profit_pct": total_profit_pct,
+            "total_dividends": total_dividends,
+            "total_transaction_costs": total_transaction_costs,
+            "total_return": total_return,
+            "total_return_pct": total_return_pct,
+            "total_inflation_impact": total_inflation_impact,
+            "total_real_profit": total_real_profit,
+            "total_real_profit_pct": total_real_profit_pct,
             "total_equity": total_equity,
             "best_performer": best_performer,
             "worst_performer": worst_performer,
@@ -1836,7 +2346,7 @@ async def get_portfolio():
         "performance": performance,
         "risk": {
             "volatility": volatility,
-            "risk_score": _calculate_risk_score(volatility),
+            "risk_score": _calculate_portfolio_risk_score(volatility),
             "max_drawdown": avg_drawdown,
         },
         "allocation": {
@@ -1852,45 +2362,65 @@ async def update_portfolio(payload: PortfolioData):
     _save_portfolio_data(payload)
     return {"status": "updated", "last_updated": datetime.now().isoformat()}
 
-@app.get("/market/ngx/summary")
-async def ngx_market_summary(symbols: Optional[str] = None):
-    """Get NGX market summary with gainers, losers, volume leaders, and sector performance."""
-    if symbols:
-        symbol_list = [_normalize_ngx_symbol(s) for s in symbols.split(",") if s.strip()]
-    else:
-        portfolio = _load_portfolio_data()
-        symbol_list = [_normalize_ngx_symbol(pos.symbol) for pos in portfolio.positions]
-        if not symbol_list:
-            symbol_list = DEFAULT_NGX_SYMBOLS
 
-    snapshots = _get_market_snapshot(symbol_list)
-    gainers = sorted(snapshots, key=lambda item: item["change_pct"], reverse=True)[:5]
-    losers = sorted(snapshots, key=lambda item: item["change_pct"])[:5]
-    volume_leaders = sorted(snapshots, key=lambda item: item["volume"], reverse=True)[:5]
+@app.post("/analysis/investor-returns")
+async def analyze_investor_returns(req: InvestorReturnRequest):
+    """Calculate investor returns including dividends, inflation, and transaction costs."""
+    if req.shares <= 0 or req.purchase_price <= 0:
+        raise HTTPException(status_code=400, detail="shares and purchase_price must be positive")
 
-    sector_groups: Dict[str, List[float]] = {}
-    for quote in snapshots:
-        sector_groups.setdefault(quote["sector"], []).append(quote["change_pct"])
+    current_price = req.current_price
+    holding_period_years = calculate_holding_period_years([req.purchase_date], default_years=1.0)
+    total_dividends = req.total_dividends
 
-    sectors = [
-        {
-            "sector": sector,
-            "avg_change_pct": float(np.mean(changes)) if changes else 0,
-            "count": len(changes),
-        }
-        for sector, changes in sector_groups.items()
-    ]
-    sectors.sort(key=lambda item: item["avg_change_pct"], reverse=True)
+    if req.symbol:
+        try:
+            ticker = yf.Ticker(req.symbol.upper())
+            info = ticker.info or {}
+            if current_price is None:
+                current_price = info.get("currentPrice") or info.get("regularMarketPrice") or req.purchase_price
+            if total_dividends is None:
+                total_dividends = estimate_dividend_income(
+                    ticker.dividends,
+                    req.shares,
+                    purchase_date=req.purchase_date,
+                    fallback_annual_dividend=float(req.annual_dividend_per_share or info.get("dividendRate") or 0),
+                    holding_period_years=holding_period_years,
+                )
+        except Exception as exc:
+            logger.warning("Investor return enrichment failed for %s: %s", req.symbol, exc)
+
+    if current_price is None:
+        current_price = req.purchase_price
+
+    if total_dividends is None:
+        fallback_dividend = float(req.annual_dividend_per_share or 0) * req.shares * holding_period_years
+        total_dividends = fallback_dividend
+
+    result = calculate_investor_returns(
+        shares=req.shares,
+        purchase_price=req.purchase_price,
+        current_price=current_price,
+        total_dividends=total_dividends,
+        holding_period_years=holding_period_years,
+        inflation_rate_pct=req.inflation_rate_pct,
+        transaction_cost_rate_pct=req.transaction_cost_rate_pct,
+        fixed_transaction_cost=req.fixed_transaction_cost,
+        capital_gains_tax_rate_pct=req.capital_gains_tax_rate_pct,
+    )
 
     return {
-        "quotes": snapshots,
-        "index": _get_ngx_index(),
-        "gainers": gainers,
-        "losers": losers,
-        "volume_leaders": volume_leaders,
-        "sectors": sectors,
-        "source_symbols": symbol_list,
-        "last_updated": datetime.now().isoformat(),
+        "symbol": req.symbol.upper() if req.symbol else None,
+        **result,
+        "inputs": {
+            "shares": req.shares,
+            "purchase_price": req.purchase_price,
+            "current_price": current_price,
+            "purchase_date": req.purchase_date,
+            "inflation_rate_pct": req.inflation_rate_pct,
+            "transaction_cost_rate_pct": req.transaction_cost_rate_pct,
+            "capital_gains_tax_rate_pct": req.capital_gains_tax_rate_pct,
+        },
     }
 
 @app.get("/market/ngx/summary")
@@ -2036,6 +2566,68 @@ async def eu_market_summary(symbols: Optional[str] = None):
         "source_symbols": symbol_list,
         "last_updated": datetime.now().isoformat(),
     }
+
+
+# Lightweight HTML dashboard for quick local checks (mobile web fallback)
+from fastapi.responses import HTMLResponse
+
+
+@app.get("/world-markets", response_class=HTMLResponse)
+async def world_markets_page():
+        html = """
+        <!doctype html>
+        <html>
+        <head>
+            <meta charset="utf-8" />
+            <meta name="viewport" content="width=device-width,initial-scale=1" />
+            <title>World Markets - Stock Valuation</title>
+            <style>
+                body{font-family:system-ui, -apple-system, Roboto, 'Segoe UI', Arial; background:#0b1220; color:#e6eef8;}
+                .container{max-width:980px;margin:24px auto;padding:16px}
+                table{width:100%;border-collapse:collapse}
+                th,td{padding:8px 10px;border-bottom:1px solid rgba(255,255,255,0.04);text-align:left}
+                th{color:#9fb3d9;font-size:12px;text-transform:uppercase}
+                .up{color:#10b981} .down{color:#ef4444}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h2>World Markets Snapshot</h2>
+                <p id="updated">Updating...</p>
+                <table>
+                    <thead>
+                        <tr><th>Region</th><th>Symbol</th><th>Name</th><th>Price</th><th>Change %</th></tr>
+                    </thead>
+                    <tbody id="rows"></tbody>
+                </table>
+            </div>
+            <script>
+                const regions = ['us','uk','eu','asia','emerging','ngx'];
+                async function load(){
+                    const rows = document.getElementById('rows'); rows.innerHTML='';
+                    for(const r of regions){
+                        try{
+                            const res = await fetch(`/market/${r}/summary`);
+                            if(!res.ok) continue;
+                            const json = await res.json();
+                            const quotes = json.quotes || [];
+                            for(const q of quotes){
+                                const tr = document.createElement('tr');
+                                const change = (q.change_pct||0).toFixed(2);
+                                tr.innerHTML = `<td>${r.toUpperCase()}</td><td>${q.symbol||''}</td><td>${q.name||''}</td><td>${(q.price||q.last_price||0).toFixed ? (q.price||q.last_price||0).toFixed(2) : (q.price||q.last_price||0)}</td><td class="${change>=0?'up':'down'}">${change}%</td>`;
+                                rows.appendChild(tr);
+                            }
+                        }catch(e){console.warn('skip',r,e)}
+                    }
+                    document.getElementById('updated').textContent = 'Last updated: ' + new Date().toLocaleTimeString();
+                }
+                load();
+                setInterval(load, 60000);
+            </script>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=html, status_code=200)
 
 @app.get("/market/asia/summary")
 async def asia_market_summary(symbols: Optional[str] = None):
@@ -2318,30 +2910,54 @@ async def international_screener(
     }
 
 @app.get("/smart-strategy")
-async def get_smart_strategy(symbols: Optional[str] = None):
+async def get_smart_strategy(symbols: Optional[str] = None, include_portfolio: bool = True, include_watchlist: bool = True):
     """
-    Professional hedge fund strategy: Value + Quality + Momentum.
+    Professional hedge fund strategy: Value + Quality + Momentum + Risk.
     Returns scored stocks with BUY/HOLD/SELL recommendations.
+    Integrates user's portfolio and watchlist for personalized analysis.
+    Results are cached for 5 minutes per symbol set.
     """
-    # Default to major US stocks if none provided (well-supported by yfinance)
+    # Build symbol list from multiple sources
+    symbol_set = set()
+
     if symbols:
-        symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
-    else:
-        symbol_list = [
-            "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", 
-            "META", "TSLA", "BRK.B", "JPM", "V",
+        symbol_set.update(s.strip().upper() for s in symbols.split(",") if s.strip())
+
+    # Add portfolio stocks
+    if include_portfolio:
+        try:
+            portfolio_data = _load_json("portfolio.json")
+            for pos in portfolio_data.get("positions", []):
+                sym = pos.get("symbol", "").upper()
+                if sym:
+                    symbol_set.add(sym)
+        except Exception:
+            pass
+
+    # If still empty, use default universe
+    if not symbol_set:
+        symbol_set = {
+            "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA",
+            "META", "TSLA", "BRK-B", "JPM", "V",
             "JNJ", "WMT", "PG", "MA", "HD",
             "BAC", "DIS", "NFLX", "KO", "CSCO"
-        ]
+        }
 
+    symbol_list = sorted(symbol_set)
     results = []
 
     for symbol in symbol_list:
         try:
+            # Check cache first
+            cached = _strategy_cache_get(symbol)
+            if cached:
+                results.append(cached)
+                continue
+
             stock = yf.Ticker(symbol)
             info = stock.info
             hist = stock.history(period="1y")
-            
+
             if hist.empty or 'currentPrice' not in info:
                 continue
 
@@ -2349,46 +2965,54 @@ async def get_smart_strategy(symbols: Optional[str] = None):
             if current_price == 0:
                 continue
 
-            # Layer 1: Value Score
+            # Layer 1: Value Score (sector-aware)
             value_score = _calculate_value_score(info, current_price)
-            
-            # Layer 2: Quality Score
+
+            # Layer 2: Quality Score (expanded)
             quality_score = _calculate_quality_score(info)
-            
-            # Layer 3: Momentum Score
+
+            # Layer 3: Momentum Score (with RSI)
             momentum_score = _calculate_momentum_score(hist, current_price)
-            
-            # Overall score (weighted average)
-            overall_score = (value_score * 0.4 + quality_score * 0.3 + momentum_score * 0.3)
-            
-            # Recommendation logic
-            recommendation = _get_recommendation(value_score, quality_score, momentum_score, overall_score)
-            
+
+            # Layer 4: Risk Score (new)
+            risk_score, risk_metrics = _calculate_risk_score(hist, info)
+
+            # Overall score (4-layer weighted)
+            overall_score = (value_score * 0.30 + quality_score * 0.25
+                             + momentum_score * 0.25 + risk_score * 0.20)
+
+            # Flexible weighted recommendation
+            recommendation = _get_recommendation(value_score, quality_score, momentum_score, risk_score, overall_score)
+
             # Confidence level
-            confidence = _get_confidence_level(value_score, quality_score, momentum_score)
-            
+            confidence = _get_confidence_level(value_score, quality_score, momentum_score, risk_score)
+
             # Position allocation (risk-adjusted)
-            allocation = _calculate_allocation(overall_score, recommendation)
-            
-            # Calculate metrics for detail view
+            allocation = _calculate_allocation(overall_score, recommendation, risk_metrics)
+
+            # Intrinsic value & discount
             intrinsic_value = _estimate_intrinsic_value(info, current_price)
             discount = ((intrinsic_value - current_price) / intrinsic_value * 100) if intrinsic_value > 0 else 0
-            
+
             # Moving averages
             ma50 = hist['Close'].rolling(window=50).mean().iloc[-1] if len(hist) >= 50 else current_price
             ma200 = hist['Close'].rolling(window=200).mean().iloc[-1] if len(hist) >= 200 else current_price
-            
-            # Relative strength (price performance vs 1Y ago)
+
+            # Relative strength
             year_ago_price = hist['Close'].iloc[0] if len(hist) > 0 else current_price
             relative_strength = ((current_price - year_ago_price) / year_ago_price * 100) if year_ago_price > 0 else 0
 
-            results.append({
+            # RSI
+            rsi = _calculate_rsi(hist)
+
+            entry = {
                 "symbol": symbol,
                 "companyName": info.get('longName', info.get('shortName', symbol)),
                 "currentPrice": round(current_price, 2),
                 "valueScore": round(value_score, 0),
                 "qualityScore": round(quality_score, 0),
                 "momentumScore": round(momentum_score, 0),
+                "riskScore": round(risk_score, 0),
                 "overallScore": round(overall_score, 0),
                 "recommendation": recommendation,
                 "confidence": confidence,
@@ -2398,11 +3022,22 @@ async def get_smart_strategy(symbols: Optional[str] = None):
                 "ma50": round(ma50, 2),
                 "ma200": round(ma200, 2),
                 "relativeStrength": round(relative_strength, 1),
+                "rsi": round(rsi, 1),
                 "fcfPositive": info.get('freeCashflow', 0) > 0,
-                "revenueGrowth": info.get('revenueGrowth', 0) * 100 if info.get('revenueGrowth') else 0,
-                "debtRatio": _calculate_debt_ratio(info),
-                "profitMargin": info.get('profitMargins', 0) * 100 if info.get('profitMargins') else 0,
-            })
+                "revenueGrowth": round(info.get('revenueGrowth', 0) * 100, 1) if info.get('revenueGrowth') else 0,
+                "debtRatio": round(_calculate_debt_ratio(info), 1),
+                "profitMargin": round(info.get('profitMargins', 0) * 100, 1) if info.get('profitMargins') else 0,
+                "roe": round(info.get('returnOnEquity', 0) * 100, 1) if info.get('returnOnEquity') else 0,
+                "currentRatio": round(info.get('currentRatio', 0), 2) if info.get('currentRatio') else 0,
+                "beta": round(risk_metrics.get('beta', 1.0), 2),
+                "volatility": round(risk_metrics.get('volatility', 0), 1),
+                "maxDrawdown": round(risk_metrics.get('max_drawdown', 0), 1),
+                "sharpeEstimate": round(risk_metrics.get('sharpe', 0), 2),
+            }
+
+            # Cache the result
+            _strategy_cache_set(symbol, entry)
+            results.append(entry)
 
         except Exception as e:
             logger.error(f"Error analyzing {symbol}: {str(e)}")
@@ -2417,256 +3052,2331 @@ async def get_smart_strategy(symbols: Optional[str] = None):
         "last_updated": datetime.now().isoformat(),
     }
 
+# ── Strategy cache (5-minute TTL) ──────────────────────────────────────
+_strategy_cache: dict = {}
+_STRATEGY_CACHE_TTL = 300  # seconds
+
+def _strategy_cache_get(symbol: str):
+    entry = _strategy_cache.get(symbol)
+    if entry and (datetime.now().timestamp() - entry["ts"]) < _STRATEGY_CACHE_TTL:
+        return entry["data"]
+    return None
+
+def _strategy_cache_set(symbol: str, data: dict):
+    _strategy_cache[symbol] = {"data": data, "ts": datetime.now().timestamp()}
+
+
+# ── Sector-aware PE multiples ──────────────────────────────────────────
+SECTOR_PE = {
+    "Technology":        25,
+    "Communication Services": 20,
+    "Consumer Cyclical":  18,
+    "Consumer Defensive": 20,
+    "Healthcare":         18,
+    "Financial Services": 13,
+    "Industrials":        17,
+    "Energy":             12,
+    "Basic Materials":    14,
+    "Real Estate":        18,
+    "Utilities":          16,
+}
+
+
+def _calculate_rsi(hist, period=14) -> float:
+    """Calculate 14-day RSI."""
+    try:
+        if len(hist) < period + 1:
+            return 50.0
+        close = hist['Close']
+        delta = close.diff()
+        gain = delta.clip(lower=0)
+        loss = (-delta.clip(upper=0))
+        avg_gain = gain.rolling(window=period, min_periods=period).mean()
+        avg_loss = loss.rolling(window=period, min_periods=period).mean()
+        rs = avg_gain / avg_loss.replace(0, 1e-10)
+        rsi = 100 - (100 / (1 + rs))
+        return float(rsi.iloc[-1])
+    except Exception:
+        return 50.0
+
+
+def _calculate_risk_score(hist, info: dict) -> tuple:
+    """
+    Layer 4: Risk assessment.
+    Returns (score 0-100, metrics dict).
+    Higher score = lower risk = better.
+    """
+    metrics = {"beta": 1.0, "volatility": 0, "max_drawdown": 0, "sharpe": 0}
+    try:
+        if len(hist) < 30:
+            return 50.0, metrics
+
+        # Annualized volatility
+        daily_returns = hist['Close'].pct_change().dropna()
+        vol = float(daily_returns.std() * (252 ** 0.5) * 100)  # annualized %
+        metrics["volatility"] = vol
+
+        # Max drawdown
+        cummax = hist['Close'].cummax()
+        drawdown = ((hist['Close'] - cummax) / cummax * 100)
+        max_dd = float(drawdown.min())
+        metrics["max_drawdown"] = max_dd
+
+        # Beta
+        beta = info.get('beta', 1.0) or 1.0
+        metrics["beta"] = beta
+
+        # Sharpe estimate (annualized return / vol, risk-free ≈ 5%)
+        total_return = (hist['Close'].iloc[-1] / hist['Close'].iloc[0]) - 1
+        ann_return = total_return * (252 / len(hist))
+        sharpe = ((ann_return - 0.05) / (vol / 100)) if vol > 0 else 0
+        metrics["sharpe"] = sharpe
+
+        # Score: lower vol, smaller drawdown, lower beta, higher Sharpe → better
+        score = 0
+
+        # Volatility component (30 pts) — under 20% annual is great
+        if vol < 15:
+            score += 30
+        elif vol < 25:
+            score += 25
+        elif vol < 35:
+            score += 18
+        elif vol < 50:
+            score += 10
+        else:
+            score += 5
+
+        # Max drawdown component (25 pts)
+        if max_dd > -10:
+            score += 25
+        elif max_dd > -20:
+            score += 20
+        elif max_dd > -30:
+            score += 15
+        elif max_dd > -50:
+            score += 8
+        else:
+            score += 3
+
+        # Beta component (25 pts)
+        if beta < 0.8:
+            score += 25
+        elif beta < 1.0:
+            score += 22
+        elif beta < 1.2:
+            score += 18
+        elif beta < 1.5:
+            score += 12
+        else:
+            score += 5
+
+        # Sharpe component (20 pts)
+        if sharpe > 1.5:
+            score += 20
+        elif sharpe > 1.0:
+            score += 16
+        elif sharpe > 0.5:
+            score += 12
+        elif sharpe > 0:
+            score += 8
+        else:
+            score += 3
+
+        return min(100, max(0, score)), metrics
+    except Exception as e:
+        logger.debug(f"Risk score error: {e}")
+        return 50.0, metrics
+
+
 def _calculate_value_score(info: dict, current_price: float) -> float:
-    """
-    Calculate value score based on price vs intrinsic value.
-    100 = Deep value (50%+ discount)
-    50+ = Good value (positive discount)
-    20-50 = Fair value (slightly overvalued)
-    0-20 = Overvalued (significantly overvalued)
-    """
+    """Value score using sector-aware PE and multiple valuation methods."""
     try:
         intrinsic_value = _estimate_intrinsic_value(info, current_price)
         if intrinsic_value <= 0:
             return 0
-        
-        # Calculate discount/premium percentage
+
         discount = ((intrinsic_value - current_price) / intrinsic_value) * 100
-        
-        # Scoring logic - rewards undervaluation, penalizes overvaluation
+
         if discount >= 50:
-            # Deep value territory
             score = 100
         elif discount >= 40:
-            score = 90 + (discount - 40) * 1.0
+            score = 90 + (discount - 40)
         elif discount >= 30:
-            score = 80 + (discount - 30) * 1.0
+            score = 80 + (discount - 30)
         elif discount >= 20:
-            score = 70 + (discount - 20) * 1.0
+            score = 70 + (discount - 20)
         elif discount >= 10:
             score = 55 + (discount - 10) * 1.5
         elif discount >= 0:
-            # Slightly undervalued to fairly valued
-            score = 45 + (discount) * 1.0
+            score = 45 + discount
         elif discount >= -20:
-            # Slightly overvalued (give some credit)
             score = 30 + (discount + 20) * 0.75
         elif discount >= -50:
-            # Moderately overvalued
             score = 15 + (discount + 50) * 0.5
         else:
-            # Significantly overvalued
             score = max(0, 15 + (discount + 50) * 0.3)
-        
+
         return min(100, max(0, score))
-    except Exception as e:
-        logger.debug(f"Error calculating value score: {e}")
+    except Exception:
         return 0
 
+
 def _calculate_debt_ratio(info: dict) -> float:
-    """Calculate debt-to-equity ratio as a percentage."""
     try:
         total_debt = info.get('totalDebt', 0)
         total_equity = info.get('totalStockholdersEquity', 0)
-        
         if total_equity > 0 and total_debt >= 0:
             return (total_debt / total_equity) * 100
         return 0
     except Exception:
         return 0
 
+
 def _calculate_quality_score(info: dict) -> float:
-    """Calculate quality score based on financial health."""
+    """
+    Expanded quality score: FCF, revenue growth, debt, profit margin,
+    ROE, current ratio (6 metrics, ~17 pts each).
+    """
     try:
         score = 0
-        
-        # Free cash flow (25 points)
-        fcf = info.get('freeCashflow', 0)
-        if fcf > 0:
-            score += 25
-        
-        # Revenue growth (25 points)
-        revenue_growth = info.get('revenueGrowth', 0)
-        if revenue_growth:
-            if revenue_growth > 0.20:
-                score += 25
-            elif revenue_growth > 0.10:
-                score += 20
-            elif revenue_growth > 0:
-                score += 15
-        
-        # Debt ratio (25 points)
-        debt_ratio = _calculate_debt_ratio(info)
-        if debt_ratio < 30:
-            score += 25
-        elif debt_ratio < 50:
-            score += 15
-        elif debt_ratio < 70:
-            score += 10
-        
-        # Profit margin (25 points)
-        profit_margin = info.get('profitMargins', 0)
-        if profit_margin:
-            if profit_margin > 0.20:
-                score += 25
-            elif profit_margin > 0.10:
-                score += 20
-            elif profit_margin > 0:
-                score += 15
-        
+
+        # Free cash flow (17 pts)
+        if info.get('freeCashflow', 0) > 0:
+            score += 17
+
+        # Revenue growth (17 pts)
+        rg = info.get('revenueGrowth', 0) or 0
+        if rg > 0.20:
+            score += 17
+        elif rg > 0.10:
+            score += 13
+        elif rg > 0:
+            score += 9
+
+        # Debt ratio (17 pts)
+        dr = _calculate_debt_ratio(info)
+        if dr < 30:
+            score += 17
+        elif dr < 50:
+            score += 12
+        elif dr < 80:
+            score += 6
+
+        # Profit margin (17 pts)
+        pm = info.get('profitMargins', 0) or 0
+        if pm > 0.20:
+            score += 17
+        elif pm > 0.10:
+            score += 13
+        elif pm > 0:
+            score += 8
+
+        # ROE (16 pts) — new
+        roe = info.get('returnOnEquity', 0) or 0
+        if roe > 0.20:
+            score += 16
+        elif roe > 0.12:
+            score += 12
+        elif roe > 0.05:
+            score += 8
+
+        # Current ratio (16 pts) — new
+        cr = info.get('currentRatio', 0) or 0
+        if cr >= 1.5:
+            score += 16
+        elif cr >= 1.0:
+            score += 12
+        elif cr >= 0.7:
+            score += 6
+
         return min(100, score)
-    except:
+    except Exception:
         return 0
 
-def _calculate_momentum_score(hist: pd.DataFrame, current_price: float) -> float:
-    """Calculate momentum score based on technical indicators."""
+
+def _calculate_momentum_score(hist, current_price: float) -> float:
+    """Momentum score: MA50, MA200, relative strength, RSI."""
     try:
         if hist.empty or len(hist) < 50:
             return 0
-        
+
         score = 0
-        
-        # MA50 (33 points)
+
+        # MA50 (25 pts)
         ma50 = hist['Close'].rolling(window=50).mean().iloc[-1]
         if current_price > ma50:
-            score += 33
-        
-        # MA200 (34 points)
+            score += 25
+
+        # MA200 (25 pts)
         if len(hist) >= 200:
             ma200 = hist['Close'].rolling(window=200).mean().iloc[-1]
             if current_price > ma200:
-                score += 34
-        else:
-            if current_price > ma50:
-                score += 17
-        
-        # Relative strength (33 points)
-        year_ago_price = hist['Close'].iloc[0]
-        if year_ago_price > 0:
-            performance = ((current_price - year_ago_price) / year_ago_price) * 100
-            if performance > 20:
-                score += 33
-            elif performance > 10:
                 score += 25
-            elif performance > 0:
+        elif current_price > ma50:
+            score += 12
+
+        # Relative strength — 1Y return (25 pts)
+        year_ago = hist['Close'].iloc[0]
+        if year_ago > 0:
+            perf = ((current_price - year_ago) / year_ago) * 100
+            if perf > 30:
+                score += 25
+            elif perf > 15:
+                score += 20
+            elif perf > 5:
                 score += 15
-        
+            elif perf > 0:
+                score += 10
+
+        # RSI sweet spot (25 pts) — 40-65 is ideal entry, penalize extremes
+        rsi = _calculate_rsi(hist)
+        if 40 <= rsi <= 65:
+            score += 25  # ideal zone
+        elif 30 <= rsi < 40:
+            score += 20  # approaching oversold — attractive
+        elif 65 < rsi <= 75:
+            score += 15  # slightly overbought
+        elif rsi < 30:
+            score += 12  # deeply oversold — risky but can bounce
+        else:
+            score += 5   # overbought >75
+
         return min(100, score)
-    except:
+    except Exception:
         return 0
 
+
 def _estimate_intrinsic_value(info: dict, current_price: float) -> float:
-    """
-    Estimate intrinsic value using conservative value investing principles.
-    Returns a fair value that value investors would consider reasonable.
-    """
+    """Sector-aware intrinsic value using multiple methods."""
     try:
         intrinsic_values = []
-        
-        # Method 1: Graham Number (Value Investing Classic)
+
+        # Detect sector PE
+        sector = info.get('sector', '')
+        sector_pe = SECTOR_PE.get(sector, 15)
+
         eps = info.get('trailingEps', 0)
         book_value = info.get('bookValue', 0)
+
+        # Method 1: Graham Number
         if eps > 0 and book_value > 0:
-            graham_number = (22.5 * eps * book_value) ** 0.5
-            intrinsic_values.append(graham_number)
-        
-        # Method 2: Earnings Power Value (Conservative PE approach)
-        # Use sector-average or conservative PE of 15
+            intrinsic_values.append((22.5 * eps * book_value) ** 0.5)
+
+        # Method 2: Sector-aware Earnings Power Value
         if eps > 0:
-            conservative_pe = 15
-            earnings_value = eps * conservative_pe
-            intrinsic_values.append(earnings_value)
-        
+            intrinsic_values.append(eps * sector_pe)
+
         # Method 3: Book Value with quality premium
         roe = info.get('returnOnEquity', 0)
         if book_value > 0:
-            if roe > 0.15:  # Strong ROE > 15%
-                book_multiplier = 1.5
-            elif roe > 0.10:  # Good ROE > 10%
-                book_multiplier = 1.3
-            else:
-                book_multiplier = 1.0  # Just book value
-            book_based_value = book_value * book_multiplier
-            intrinsic_values.append(book_based_value)
-        
-        # Method 4: Dividend Discount Model (for dividend payers)
+            mult = 1.5 if roe > 0.15 else 1.3 if roe > 0.10 else 1.0
+            intrinsic_values.append(book_value * mult)
+
+        # Method 4: DDM
         dividend = info.get('dividendRate', 0)
-        dividend_yield = info.get('dividendYield', 0)
-        if dividend > 0 and dividend_yield and dividend_yield > 0:
-            # Required return of 10%
-            required_return = 0.10
-            growth_rate = info.get('earningsGrowth', 0.05)  # Assume 5% if not available
-            if growth_rate < required_return:
-                ddm_value = dividend / (required_return - growth_rate)
-                if ddm_value > 0 and ddm_value < current_price * 3:  # Sanity check
-                    intrinsic_values.append(ddm_value)
-        
-        # Method 5: Free Cash Flow based (if available)
-        fcf_per_share = info.get('freeCashflow', 0) / info.get('sharesOutstanding', 1) if info.get('sharesOutstanding') else 0
-        if fcf_per_share > 0:
-            # Use conservative multiple of 12-15x FCF
-            fcf_value = fcf_per_share * 12
-            intrinsic_values.append(fcf_value)
-        
-        # Return the median of available methods (more robust than average)
+        if dividend > 0:
+            growth = info.get('earningsGrowth', 0.05) or 0.05
+            growth = min(max(growth, 0.01), 0.08)  # clamp 1-8%
+            req_return = 0.10
+            if growth < req_return:
+                ddm = dividend / (req_return - growth)
+                if 0 < ddm < current_price * 3:
+                    intrinsic_values.append(ddm)
+
+        # Method 5: FCF yield
+        shares = info.get('sharesOutstanding', 0)
+        fcf = info.get('freeCashflow', 0)
+        if fcf > 0 and shares > 0:
+            fcf_per_share = fcf / shares
+            intrinsic_values.append(fcf_per_share * min(sector_pe, 15))
+
         if intrinsic_values:
             intrinsic_values.sort()
             mid = len(intrinsic_values) // 2
             if len(intrinsic_values) % 2 == 0:
                 return (intrinsic_values[mid - 1] + intrinsic_values[mid]) / 2
-            else:
-                return intrinsic_values[mid]
-        
-        # Fallback: Apply a 20% buffer to current price as fair value
-        # (Assumes market is somewhat efficient but can be 20% off)
+            return intrinsic_values[mid]
+
         return current_price * 1.20
-        
-    except Exception as e:
-        logger.debug(f"Error estimating intrinsic value: {e}")
+    except Exception:
         return current_price * 1.20
 
-def _get_recommendation(value_score: float, quality_score: float, momentum_score: float, overall_score: float) -> str:
-    """Determine BUY/HOLD/SELL/AVOID recommendation."""
-    if value_score >= 60 and quality_score >= 60 and momentum_score >= 60:
+
+def _get_recommendation(value: float, quality: float, momentum: float, risk: float, overall: float) -> str:
+    """Flexible weighted recommendation — no longer requires all layers to pass."""
+    # Strong conviction BUY: overall >= 70 and at least 3 layers strong
+    strong = sum([value >= 60, quality >= 60, momentum >= 55, risk >= 55])
+    if overall >= 70 and strong >= 3:
         return "BUY"
-    
-    passes = sum([value_score >= 60, quality_score >= 60, momentum_score >= 60])
-    if passes >= 2 and overall_score >= 55:
-        return "HOLD"
-    
-    if value_score >= 70 and overall_score >= 45:
-        return "HOLD"
-    
-    if overall_score < 40:
-        return "AVOID"
-    
-    return "SELL"
 
-def _get_confidence_level(value_score: float, quality_score: float, momentum_score: float) -> str:
-    """Determine confidence level based on score consistency."""
-    avg_score = (value_score + quality_score + momentum_score) / 3
-    std_dev = np.std([value_score, quality_score, momentum_score])
-    
-    if avg_score >= 70 and std_dev < 15:
+    # Moderate BUY: overall >= 60 and at least 2 layers strong
+    if overall >= 60 and strong >= 2:
+        return "BUY"
+
+    # HOLD: overall 45-60 or mixed signals
+    if overall >= 45:
+        return "HOLD"
+
+    # SELL: below 35
+    if overall < 35:
+        return "SELL"
+
+    return "AVOID"
+
+
+def _get_confidence_level(value: float, quality: float, momentum: float, risk: float) -> str:
+    scores = [value, quality, momentum, risk]
+    avg = sum(scores) / 4
+    std = float(np.std(scores))
+
+    if avg >= 65 and std < 15:
         return "HIGH"
-    
-    if avg_score >= 50 or std_dev < 20:
+    if avg >= 45 or std < 20:
         return "MEDIUM"
-    
     return "LOW"
 
-def _calculate_allocation(overall_score: float, recommendation: str) -> float:
-    """Calculate suggested portfolio allocation (%)."""
-    if recommendation == "AVOID" or recommendation == "SELL":
+
+def _calculate_allocation(overall: float, recommendation: str, risk_metrics: dict) -> float:
+    """Risk-adjusted position sizing."""
+    if recommendation in ("AVOID", "SELL"):
         return 0.0
-    
+
+    base = overall / 10  # 0-10%
+
+    # Risk-adjust: high vol or high beta → smaller position
+    vol = risk_metrics.get("volatility", 30)
+    beta = risk_metrics.get("beta", 1.0)
+
+    if vol > 40:
+        base *= 0.6
+    elif vol > 30:
+        base *= 0.8
+
+    if beta > 1.5:
+        base *= 0.7
+    elif beta > 1.2:
+        base *= 0.85
+
     if recommendation == "HOLD":
-        return min(5.0, overall_score / 20)
+        base = min(base, 5.0)
+
+    return round(min(10.0, max(1.0, base)), 1)
+
+
+# ── Financial Statements & Ratio Trends ─────────────────────────────────
+@app.get("/financials/{symbol}")
+async def get_financial_statements(symbol: str, period: str = "annual"):
+    """
+    Returns structured financial statements (income, balance sheet, cash flow)
+    plus key ratio trends for investment decision-making.
+    period: 'annual' or 'quarterly'
+    """
+    try:
+        stock = yf.Ticker(symbol.upper())
+        info = stock.info
+
+        if period == "quarterly":
+            inc = stock.quarterly_financials
+            bs = stock.quarterly_balance_sheet
+            cf = stock.quarterly_cashflow
+        else:
+            inc = stock.financials
+            bs = stock.balance_sheet
+            cf = stock.cashflow
+
+        def _df_to_dict(df):
+            """Convert yfinance DataFrame to {row_label: {date: value}} with dates as strings."""
+            if df is None or df.empty:
+                return {}
+            result = {}
+            for row in df.index:
+                vals = {}
+                for col in df.columns:
+                    v = df.loc[row, col]
+                    if pd.notna(v):
+                        vals[col.strftime("%Y-%m-%d")] = float(v)
+                if vals:
+                    result[str(row)] = vals
+            return result
+
+        inc_dict = _df_to_dict(inc)
+        bs_dict = _df_to_dict(bs)
+        cf_dict = _df_to_dict(cf)
+
+        # Get sorted date columns (most recent first)
+        dates = []
+        for df in [inc, bs, cf]:
+            if df is not None and not df.empty:
+                dates = [c.strftime("%Y-%m-%d") for c in df.columns]
+                break
+
+        # Build key metrics summary across years
+        def _safe(d, key, date):
+            try:
+                return d.get(key, {}).get(date)
+            except Exception:
+                return None
+
+        def _pct(a, b):
+            if a is not None and b is not None and b != 0:
+                return round((a - b) / abs(b) * 100, 1)
+            return None
+
+        key_metrics = []
+        for i, date in enumerate(dates):
+            prev_date = dates[i + 1] if i + 1 < len(dates) else None
+
+            revenue = _safe(inc_dict, "Total Revenue", date)
+            gross_profit = _safe(inc_dict, "Gross Profit", date)
+            operating_income = _safe(inc_dict, "Operating Income", date) or _safe(inc_dict, "EBIT", date)
+            net_income = _safe(inc_dict, "Net Income", date)
+            total_assets = _safe(bs_dict, "Total Assets", date)
+            total_liabilities = _safe(bs_dict, "Total Liabilities Net Minority Interest", date)
+            total_equity = _safe(bs_dict, "Stockholders Equity", date) or _safe(bs_dict, "Total Stockholders Equity", date)
+            total_debt = _safe(bs_dict, "Total Debt", date)
+            current_assets = _safe(bs_dict, "Current Assets", date)
+            current_liabilities = _safe(bs_dict, "Current Liabilities", date)
+            op_cashflow = _safe(cf_dict, "Operating Cash Flow", date) or _safe(cf_dict, "Total Cash From Operating Activities", date)
+            capex = _safe(cf_dict, "Capital Expenditure", date)
+            fcf = (op_cashflow + capex) if op_cashflow is not None and capex is not None else None  # capex is negative
+
+            prev_revenue = _safe(inc_dict, "Total Revenue", prev_date) if prev_date else None
+
+            m = {
+                "date": date,
+                "revenue": revenue,
+                "revenueGrowth": _pct(revenue, prev_revenue),
+                "grossProfit": gross_profit,
+                "grossMargin": round(gross_profit / revenue * 100, 1) if gross_profit and revenue else None,
+                "operatingIncome": operating_income,
+                "operatingMargin": round(operating_income / revenue * 100, 1) if operating_income and revenue else None,
+                "netIncome": net_income,
+                "netMargin": round(net_income / revenue * 100, 1) if net_income and revenue else None,
+                "totalAssets": total_assets,
+                "totalLiabilities": total_liabilities,
+                "totalEquity": total_equity,
+                "totalDebt": total_debt,
+                "debtToEquity": round(total_debt / total_equity, 2) if total_debt and total_equity and total_equity != 0 else None,
+                "currentRatio": round(current_assets / current_liabilities, 2) if current_assets and current_liabilities and current_liabilities != 0 else None,
+                "operatingCashFlow": op_cashflow,
+                "capex": capex,
+                "freeCashFlow": fcf,
+                "fcfMargin": round(fcf / revenue * 100, 1) if fcf and revenue and revenue != 0 else None,
+                "roe": round(net_income / total_equity * 100, 1) if net_income and total_equity and total_equity != 0 else None,
+                "roa": round(net_income / total_assets * 100, 1) if net_income and total_assets and total_assets != 0 else None,
+            }
+            key_metrics.append(m)
+
+        return {
+            "symbol": symbol.upper(),
+            "companyName": info.get("shortName", symbol.upper()),
+            "sector": info.get("sector", ""),
+            "industry": info.get("industry", ""),
+            "currency": info.get("currency", "USD"),
+            "period": period,
+            "dates": dates,
+            "incomeStatement": inc_dict,
+            "balanceSheet": bs_dict,
+            "cashFlowStatement": cf_dict,
+            "keyMetrics": key_metrics,
+            "currentPrice": info.get("currentPrice") or info.get("regularMarketPrice"),
+            "marketCap": info.get("marketCap"),
+        }
+
+    except Exception as e:
+        logger.error(f"Error fetching financials for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Earnings Analysis ────────────────────────────────────────────────────
+@app.get("/earnings/{symbol}")
+async def get_earnings_analysis(symbol: str):
+    """Earnings history with beat/miss tracking and EPS trends."""
+    try:
+        stock = yf.Ticker(symbol.upper())
+        info = stock.info
+
+        # Earnings dates with estimates vs actuals
+        ed = stock.earnings_dates
+        quarters = []
+        if ed is not None and not ed.empty:
+            for idx, row in ed.iterrows():
+                event_type = row.get("Event Type", "")
+                if event_type == "Meeting":
+                    continue
+                est = row.get("EPS Estimate")
+                actual = row.get("Reported EPS")
+                surprise = row.get("Surprise(%)")
+                date_str = idx.strftime("%Y-%m-%d") if hasattr(idx, "strftime") else str(idx)
+                q = {
+                    "date": date_str,
+                    "epsEstimate": float(est) if pd.notna(est) else None,
+                    "epsActual": float(actual) if pd.notna(actual) else None,
+                    "surprisePct": float(surprise) if pd.notna(surprise) else None,
+                    "beat": bool(actual > est) if pd.notna(actual) and pd.notna(est) else None,
+                }
+                quarters.append(q)
+
+        # Annual EPS from financials
+        fin = stock.financials
+        annual_eps = []
+        if fin is not None and not fin.empty:
+            for col in fin.columns:
+                ni = fin.loc["Net Income", col] if "Net Income" in fin.index else None
+                shares = fin.loc["Diluted Average Shares", col] if "Diluted Average Shares" in fin.index else None
+                eps = float(ni / shares) if ni is not None and shares is not None and pd.notna(ni) and pd.notna(shares) and shares != 0 else None
+                annual_eps.append({
+                    "date": col.strftime("%Y-%m-%d"),
+                    "eps": eps,
+                    "netIncome": float(ni) if ni is not None and pd.notna(ni) else None,
+                })
+
+        # Stats
+        beats = [q for q in quarters if q["beat"] is True]
+        misses = [q for q in quarters if q["beat"] is False]
+        total_reported = [q for q in quarters if q["beat"] is not None]
+
+        return {
+            "symbol": symbol.upper(),
+            "companyName": info.get("shortName", symbol.upper()),
+            "trailingEps": info.get("trailingEps"),
+            "forwardEps": info.get("forwardEps"),
+            "trailingPE": info.get("trailingPE"),
+            "forwardPE": info.get("forwardPE"),
+            "quarters": quarters,
+            "annualEps": annual_eps,
+            "stats": {
+                "totalReported": len(total_reported),
+                "beats": len(beats),
+                "misses": len(misses),
+                "beatRate": round(len(beats) / len(total_reported) * 100, 1) if total_reported else None,
+                "avgSurprise": round(np.mean([q["surprisePct"] for q in quarters if q["surprisePct"] is not None]), 2) if any(q["surprisePct"] is not None for q in quarters) else None,
+            },
+        }
+    except Exception as e:
+        logger.error(f"Error fetching earnings for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Valuation History ────────────────────────────────────────────────────
+@app.get("/valuation-history/{symbol}")
+async def get_valuation_history(symbol: str):
+    """Historical valuation multiples (P/E, P/B, P/S, EV/EBITDA) with current vs 5-year range."""
+    try:
+        stock = yf.Ticker(symbol.upper())
+        info = stock.info
+
+        current = {
+            "pe": info.get("trailingPE"),
+            "forwardPE": info.get("forwardPE"),
+            "pb": info.get("priceToBook"),
+            "ps": info.get("priceToSalesTrailing12Months"),
+            "evEbitda": info.get("enterpriseToEbitda"),
+            "evRevenue": info.get("enterpriseToRevenue"),
+            "pegRatio": info.get("pegRatio"),
+            "dividendYield": info.get("dividendYield"),
+            "currentPrice": info.get("currentPrice") or info.get("regularMarketPrice"),
+            "marketCap": info.get("marketCap"),
+        }
+
+        # Build historical multiples from annual financials + price history
+        fin = stock.financials
+        bs = stock.balance_sheet
+        hist = stock.history(period="5y", interval="1mo")
+        shares_outstanding = info.get("sharesOutstanding", 0)
+
+        historical = []
+        if fin is not None and not fin.empty and hist is not None and not hist.empty:
+            # Normalize timezone to avoid comparison errors
+            if hist.index.tz is not None:
+                hist.index = hist.index.tz_localize(None)
+            for col in fin.columns:
+                date = col
+                date_str = date.strftime("%Y-%m-%d")
+
+                # Find closest price to this date
+                price = None
+                if not hist.empty:
+                    closest_idx = hist.index.get_indexer([date], method="nearest")[0]
+                    if 0 <= closest_idx < len(hist):
+                        price = float(hist.iloc[closest_idx]["Close"])
+
+                revenue = fin.loc["Total Revenue", col] if "Total Revenue" in fin.index else None
+                net_income = fin.loc["Net Income", col] if "Net Income" in fin.index else None
+                ebitda = fin.loc["EBITDA", col] if "EBITDA" in fin.index else None
+
+                book_value = None
+                if bs is not None and not bs.empty and date in bs.columns:
+                    equity = bs.loc["Stockholders Equity", date] if "Stockholders Equity" in bs.index else None
+                    if equity is not None and pd.notna(equity) and shares_outstanding:
+                        book_value = float(equity) / shares_outstanding
+
+                eps = float(net_income / shares_outstanding) if net_income is not None and pd.notna(net_income) and shares_outstanding else None
+
+                h = {"date": date_str, "price": price}
+                h["pe"] = round(price / eps, 1) if price and eps and eps > 0 else None
+                h["pb"] = round(price / book_value, 1) if price and book_value and book_value > 0 else None
+                h["ps"] = round(price * shares_outstanding / float(revenue), 1) if price and revenue and pd.notna(revenue) and float(revenue) > 0 else None
+                h["evEbitda"] = round(price * shares_outstanding / float(ebitda), 1) if price and ebitda and pd.notna(ebitda) and float(ebitda) > 0 else None
+                historical.append(h)
+
+        # Calculate 5-year ranges for each multiple
+        def _range(key):
+            vals = [h[key] for h in historical if h.get(key) is not None and h[key] > 0]
+            if not vals:
+                return None
+            return {
+                "min": round(min(vals), 1),
+                "max": round(max(vals), 1),
+                "avg": round(np.mean(vals), 1),
+                "median": round(np.median(vals), 1),
+                "current": current.get(key),
+            }
+
+        ranges = {
+            "pe": _range("pe"),
+            "pb": _range("pb"),
+            "ps": _range("ps"),
+            "evEbitda": _range("evEbitda"),
+        }
+
+        # Where current sits in range (percentile)
+        verdicts = {}
+        for key, r in ranges.items():
+            if r and r["current"] is not None:
+                c = r["current"]
+                if c <= r["avg"]:
+                    verdicts[key] = "Below average — potentially undervalued"
+                elif c <= r["max"] * 0.75:
+                    verdicts[key] = "Near average — fairly valued"
+                else:
+                    verdicts[key] = "Above average — potentially overvalued"
+            else:
+                verdicts[key] = None
+
+        return {
+            "symbol": symbol.upper(),
+            "companyName": info.get("shortName", symbol.upper()),
+            "sector": info.get("sector", ""),
+            "current": current,
+            "historical": historical,
+            "ranges": ranges,
+            "verdicts": verdicts,
+        }
+    except Exception as e:
+        logger.error(f"Error fetching valuation history for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Enhanced Peer Comparison ─────────────────────────────────────────────
+SECTOR_PEERS = {
+    "Technology": ["AAPL", "MSFT", "GOOGL", "META", "NVDA", "AVGO", "ORCL", "CRM", "AMD", "INTC"],
+    "Healthcare": ["JNJ", "UNH", "PFE", "ABBV", "MRK", "LLY", "TMO", "ABT", "BMY", "AMGN"],
+    "Financial Services": ["JPM", "BAC", "WFC", "GS", "MS", "C", "BLK", "SCHW", "AXP", "USB"],
+    "Consumer Cyclical": ["AMZN", "TSLA", "HD", "MCD", "NKE", "SBUX", "TJX", "LOW", "BKNG", "CMG"],
+    "Consumer Defensive": ["WMT", "PG", "KO", "PEP", "COST", "PM", "CL", "MDLZ", "MO", "KHC"],
+    "Communication Services": ["GOOGL", "META", "DIS", "NFLX", "T", "VZ", "CMCSA", "TMUS", "CHTR", "EA"],
+    "Energy": ["XOM", "CVX", "COP", "SLB", "EOG", "MPC", "PSX", "VLO", "OXY", "PXD"],
+    "Industrials": ["UNP", "HON", "UPS", "CAT", "DE", "LMT", "RTX", "BA", "GE", "MMM"],
+    "Real Estate": ["PLD", "AMT", "CCI", "EQIX", "PSA", "SPG", "O", "WELL", "DLR", "AVB"],
+    "Utilities": ["NEE", "DUK", "SO", "D", "AEP", "SRE", "EXC", "XEL", "ED", "WEC"],
+    "Basic Materials": ["LIN", "APD", "ECL", "SHW", "DD", "NEM", "FCX", "NUE", "DOW", "VMC"],
+}
+
+
+@app.get("/peer-compare/{symbol}")
+async def get_peer_comparison_table(symbol: str, peers: Optional[str] = None):
+    """
+    Side-by-side financial comparison of a stock vs its sector peers.
+    Custom peers can be passed as comma-separated symbols.
+    """
+    try:
+        stock = yf.Ticker(symbol.upper())
+        info = stock.info
+        sector = info.get("sector", "")
+
+        # Determine peer list
+        if peers:
+            peer_list = [p.strip().upper() for p in peers.split(",") if p.strip()]
+        else:
+            sector_list = SECTOR_PEERS.get(sector, [])
+            peer_list = [p for p in sector_list if p != symbol.upper()][:5]
+
+        # Fetch data for target + peers
+        all_symbols = [symbol.upper()] + peer_list
+        results = []
+
+        for sym in all_symbols:
+            try:
+                s = yf.Ticker(sym)
+                si = s.info
+                fin = s.financials
+                bs = s.balance_sheet
+                cf = s.cashflow
+
+                revenue = None
+                net_income = None
+                gross_profit = None
+                op_income = None
+                fcf = None
+                total_equity = None
+                total_debt_val = None
+                total_assets = None
+                current_assets = None
+                current_liabs = None
+
+                if fin is not None and not fin.empty:
+                    col = fin.columns[0]
+                    revenue = float(fin.loc["Total Revenue", col]) if "Total Revenue" in fin.index and pd.notna(fin.loc["Total Revenue", col]) else None
+                    net_income = float(fin.loc["Net Income", col]) if "Net Income" in fin.index and pd.notna(fin.loc["Net Income", col]) else None
+                    gross_profit = float(fin.loc["Gross Profit", col]) if "Gross Profit" in fin.index and pd.notna(fin.loc["Gross Profit", col]) else None
+                    op_income = float(fin.loc["Operating Income", col]) if "Operating Income" in fin.index and pd.notna(fin.loc["Operating Income", col]) else None
+
+                if bs is not None and not bs.empty:
+                    col = bs.columns[0]
+                    total_equity = float(bs.loc["Stockholders Equity", col]) if "Stockholders Equity" in bs.index and pd.notna(bs.loc["Stockholders Equity", col]) else None
+                    total_debt_val = float(bs.loc["Total Debt", col]) if "Total Debt" in bs.index and pd.notna(bs.loc["Total Debt", col]) else None
+                    total_assets = float(bs.loc["Total Assets", col]) if "Total Assets" in bs.index and pd.notna(bs.loc["Total Assets", col]) else None
+                    current_assets = float(bs.loc["Current Assets", col]) if "Current Assets" in bs.index and pd.notna(bs.loc["Current Assets", col]) else None
+                    current_liabs = float(bs.loc["Current Liabilities", col]) if "Current Liabilities" in bs.index and pd.notna(bs.loc["Current Liabilities", col]) else None
+
+                if cf is not None and not cf.empty:
+                    col = cf.columns[0]
+                    op_cf = cf.loc["Operating Cash Flow", col] if "Operating Cash Flow" in cf.index else None
+                    capex = cf.loc["Capital Expenditure", col] if "Capital Expenditure" in cf.index else None
+                    if op_cf is not None and capex is not None and pd.notna(op_cf) and pd.notna(capex):
+                        fcf = float(op_cf) + float(capex)
+
+                price = si.get("currentPrice") or si.get("regularMarketPrice") or 0
+                mktcap = si.get("marketCap") or 0
+
+                results.append({
+                    "symbol": sym,
+                    "companyName": si.get("shortName", sym),
+                    "isTarget": sym == symbol.upper(),
+                    "price": price,
+                    "marketCap": mktcap,
+                    "pe": si.get("trailingPE"),
+                    "forwardPE": si.get("forwardPE"),
+                    "pb": si.get("priceToBook"),
+                    "ps": si.get("priceToSalesTrailing12Months"),
+                    "evEbitda": si.get("enterpriseToEbitda"),
+                    "dividendYield": round(si.get("dividendYield", 0), 2) if si.get("dividendYield") else None,
+                    "beta": si.get("beta"),
+                    "revenue": revenue,
+                    "netIncome": net_income,
+                    "grossMargin": round(gross_profit / revenue * 100, 1) if gross_profit and revenue else None,
+                    "operatingMargin": round(op_income / revenue * 100, 1) if op_income and revenue else None,
+                    "netMargin": round(net_income / revenue * 100, 1) if net_income and revenue else None,
+                    "roe": round(net_income / total_equity * 100, 1) if net_income and total_equity and total_equity != 0 else None,
+                    "roa": round(net_income / total_assets * 100, 1) if net_income and total_assets and total_assets != 0 else None,
+                    "debtToEquity": round(total_debt_val / total_equity, 2) if total_debt_val and total_equity and total_equity != 0 else None,
+                    "currentRatio": round(current_assets / current_liabs, 2) if current_assets and current_liabs and current_liabs != 0 else None,
+                    "fcf": fcf,
+                    "fcfMargin": round(fcf / revenue * 100, 1) if fcf and revenue and revenue != 0 else None,
+                    "revenueGrowth": round(si.get("revenueGrowth", 0) * 100, 1) if si.get("revenueGrowth") else None,
+                    "earningsGrowth": round(si.get("earningsGrowth", 0) * 100, 1) if si.get("earningsGrowth") else None,
+                })
+            except Exception as ex:
+                logger.warning(f"Peer compare: skipping {sym}: {ex}")
+                continue
+
+        # Calculate sector averages (excluding target)
+        peers_only = [r for r in results if not r["isTarget"]]
+        avg_keys = ["pe", "forwardPE", "pb", "ps", "evEbitda", "grossMargin", "operatingMargin", "netMargin", "roe", "roa", "debtToEquity", "currentRatio", "fcfMargin", "beta", "dividendYield"]
+        sector_avg = {}
+        for k in avg_keys:
+            vals = [r[k] for r in peers_only if r.get(k) is not None]
+            sector_avg[k] = round(np.mean(vals), 2) if vals else None
+
+        return {
+            "symbol": symbol.upper(),
+            "sector": sector,
+            "companies": results,
+            "sectorAverage": sector_avg,
+            "peerCount": len(peers_only),
+        }
+    except Exception as e:
+        logger.error(f"Error in peer comparison for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ────────────────────────────────────────────────────────────────
+#  DIVIDEND INCOME ANALYSIS
+# ────────────────────────────────────────────────────────────────
+@app.get("/dividends/{symbol}")
+async def get_dividend_analysis(symbol: str):
+    """Dividend history, yield analysis, income projection and DRIP simulation."""
+    try:
+        stock = yf.Ticker(symbol.upper())
+        info = stock.info
+        divs = stock.dividends
+
+        current_price = info.get("currentPrice") or info.get("regularMarketPrice") or 0
+        annual_dividend = info.get("dividendRate") or 0
+        dividend_yield = info.get("dividendYield") or 0
+        payout_ratio = info.get("payoutRatio")
+        ex_date = info.get("exDividendDate")
+
+        # Dividend history (last 5 years)
+        history = []
+        annual_totals = {}
+        if divs is not None and not divs.empty:
+            for date, amount in divs.items():
+                d = date.strftime("%Y-%m-%d") if hasattr(date, 'strftime') else str(date)
+                year = d[:4]
+                history.append({"date": d, "amount": round(float(amount), 4)})
+                annual_totals[year] = annual_totals.get(year, 0) + float(amount)
+
+        annual_history = [{"year": y, "total": round(t, 4)} for y, t in sorted(annual_totals.items())]
+
+        # Growth rate
+        years_list = sorted(annual_totals.keys())
+        growth_rates = []
+        for i in range(1, len(years_list)):
+            prev = annual_totals[years_list[i - 1]]
+            curr = annual_totals[years_list[i]]
+            if prev > 0:
+                growth_rates.append((curr - prev) / prev)
+        avg_growth = round(np.mean(growth_rates) * 100, 1) if growth_rates else 0
+
+        # Income projection: $10k, $50k, $100k invested
+        projections = []
+        for investment in [10000, 50000, 100000]:
+            if current_price > 0 and annual_dividend > 0:
+                shares = investment / current_price
+                annual_income = shares * annual_dividend
+                monthly_income = annual_income / 12
+
+                # 10-year DRIP projection
+                drip_shares = shares
+                drip_values = []
+                div_rate = annual_dividend
+                for yr in range(1, 11):
+                    div_income = drip_shares * div_rate
+                    new_shares = div_income / current_price
+                    drip_shares += new_shares
+                    div_rate *= (1 + avg_growth / 100)
+                    drip_values.append({
+                        "year": yr,
+                        "shares": round(drip_shares, 2),
+                        "annualIncome": round(drip_shares * div_rate, 2),
+                        "portfolioValue": round(drip_shares * current_price, 2),
+                    })
+
+                projections.append({
+                    "investment": investment,
+                    "shares": round(shares, 2),
+                    "annualIncome": round(annual_income, 2),
+                    "monthlyIncome": round(monthly_income, 2),
+                    "yieldOnCost": round(dividend_yield, 2),
+                    "drip10Year": drip_values,
+                })
+
+        # Dividend safety score (0-100)
+        safety = 50
+        if payout_ratio is not None:
+            if payout_ratio < 0.4:
+                safety = 90
+            elif payout_ratio < 0.6:
+                safety = 75
+            elif payout_ratio < 0.8:
+                safety = 55
+            else:
+                safety = 30
+        if avg_growth > 5:
+            safety = min(100, safety + 10)
+        if len(annual_history) >= 5:
+            safety = min(100, safety + 5)
+
+        return {
+            "symbol": symbol.upper(),
+            "companyName": info.get("shortName", symbol),
+            "currentPrice": current_price,
+            "annualDividend": annual_dividend,
+            "dividendYield": round(dividend_yield, 2) if dividend_yield else 0,
+            "payoutRatio": round(payout_ratio * 100, 1) if payout_ratio else None,
+            "exDividendDate": ex_date,
+            "dividendHistory": history[-20:],
+            "annualHistory": annual_history,
+            "avgGrowthRate": avg_growth,
+            "yearsOfDividends": len(annual_history),
+            "safetyScore": safety,
+            "projections": projections,
+        }
+    except Exception as e:
+        logger.error(f"Error in dividend analysis for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ────────────────────────────────────────────────────────────────
+#  INVESTMENT GOAL PLANNER
+# ────────────────────────────────────────────────────────────────
+class GoalPlannerRequest(BaseModel):
+    targetAmount: float = 1000000
+    currentSavings: float = 0
+    monthlyContribution: float = 500
+    annualReturn: float = 10.0
+    years: int = 20
+    inflationRate: float = 3.0
+    mode: str = "long_term"
+    weeks: int = 12
+    weeklyContribution: Optional[float] = None
+
+
+_RECOMMENDATION_UNIVERSE: Dict[str, List[Dict[str, Any]]] = {
+    "US": [
+        {"symbol": "VTI", "name": "Vanguard Total Stock Market ETF", "assetType": "ETF", "riskLevel": "medium", "horizon": "long", "style": "core"},
+        {"symbol": "VOO", "name": "Vanguard S&P 500 ETF", "assetType": "ETF", "riskLevel": "medium", "horizon": "long", "style": "core"},
+        {"symbol": "SCHD", "name": "Schwab US Dividend Equity ETF", "assetType": "ETF", "riskLevel": "low", "horizon": "long", "style": "income"},
+        {"symbol": "BND", "name": "Vanguard Total Bond Market ETF", "assetType": "ETF", "riskLevel": "low", "horizon": "long", "style": "defensive"},
+        {"symbol": "QQQ", "name": "Invesco QQQ ETF", "assetType": "ETF", "riskLevel": "high", "horizon": "medium", "style": "growth"},
+        {"symbol": "AAPL", "name": "Apple Inc.", "assetType": "Stock", "riskLevel": "medium", "horizon": "medium", "style": "quality"},
+        {"symbol": "MSFT", "name": "Microsoft Corp.", "assetType": "Stock", "riskLevel": "medium", "horizon": "long", "style": "quality"},
+        {"symbol": "NVDA", "name": "NVIDIA Corp.", "assetType": "Stock", "riskLevel": "high", "horizon": "medium", "style": "growth"},
+    ],
+    "NGX": [
+        {"symbol": "DANGCEM.NG", "name": "Dangote Cement", "assetType": "Stock", "riskLevel": "medium", "horizon": "long", "style": "core"},
+        {"symbol": "GTCO.NG", "name": "GTCO", "assetType": "Stock", "riskLevel": "medium", "horizon": "long", "style": "income"},
+        {"symbol": "ZENITHBANK.NG", "name": "Zenith Bank", "assetType": "Stock", "riskLevel": "medium", "horizon": "long", "style": "income"},
+        {"symbol": "MTNN.NG", "name": "MTN Nigeria", "assetType": "Stock", "riskLevel": "medium", "horizon": "long", "style": "quality"},
+        {"symbol": "SEPLAT.NG", "name": "Seplat Energy", "assetType": "Stock", "riskLevel": "high", "horizon": "medium", "style": "growth"},
+    ],
+    "UK": [
+        {"symbol": "VUSA.L", "name": "Vanguard S&P 500 UCITS ETF", "assetType": "ETF", "riskLevel": "medium", "horizon": "long", "style": "core"},
+        {"symbol": "VUKE.L", "name": "Vanguard FTSE 100 UCITS ETF", "assetType": "ETF", "riskLevel": "medium", "horizon": "long", "style": "income"},
+        {"symbol": "LLOY.L", "name": "Lloyds Banking Group", "assetType": "Stock", "riskLevel": "medium", "horizon": "medium", "style": "value"},
+        {"symbol": "AZN.L", "name": "AstraZeneca", "assetType": "Stock", "riskLevel": "low", "horizon": "long", "style": "quality"},
+    ],
+    "EU": [
+        {"symbol": "EXSA.DE", "name": "iShares STOXX Europe 600 UCITS ETF", "assetType": "ETF", "riskLevel": "medium", "horizon": "long", "style": "core"},
+        {"symbol": "ASML.AS", "name": "ASML Holding", "assetType": "Stock", "riskLevel": "high", "horizon": "medium", "style": "growth"},
+        {"symbol": "SAP.DE", "name": "SAP SE", "assetType": "Stock", "riskLevel": "medium", "horizon": "long", "style": "quality"},
+    ],
+    "ASIA": [
+        {"symbol": "EWJ", "name": "iShares MSCI Japan ETF", "assetType": "ETF", "riskLevel": "medium", "horizon": "long", "style": "core"},
+        {"symbol": "0700.HK", "name": "Tencent Holdings", "assetType": "Stock", "riskLevel": "high", "horizon": "medium", "style": "growth"},
+        {"symbol": "7203.T", "name": "Toyota Motor", "assetType": "Stock", "riskLevel": "medium", "horizon": "long", "style": "quality"},
+    ],
+    "EMERGING": [
+        {"symbol": "VWO", "name": "Vanguard FTSE Emerging Markets ETF", "assetType": "ETF", "riskLevel": "high", "horizon": "long", "style": "core"},
+        {"symbol": "INDA", "name": "iShares MSCI India ETF", "assetType": "ETF", "riskLevel": "high", "horizon": "long", "style": "growth"},
+        {"symbol": "TSM", "name": "Taiwan Semiconductor", "assetType": "Stock", "riskLevel": "high", "horizon": "long", "style": "quality"},
+    ],
+}
+
+
+def _match_score(
+    asset: Dict[str, Any],
+    persona: str,
+    risk_tolerance: Optional[str],
+    primary_goal: Optional[str],
+    time_horizon: Optional[str],
+) -> Dict[str, Any]:
+    score = 40
+    reasons: List[str] = []
+
+    if persona == "beginner_protector":
+        if asset["riskLevel"] == "low":
+            score += 26
+            reasons.append("Lower-volatility fit for confidence building")
+        if asset["style"] in {"income", "defensive", "quality"}:
+            score += 12
+            reasons.append("Focuses on steadier assets")
+    elif persona == "wealth_builder":
+        if asset["horizon"] == "long":
+            score += 22
+            reasons.append("Built for long-term compounding")
+        if asset["style"] in {"core", "quality", "income"}:
+            score += 12
+            reasons.append("Matches disciplined wealth-building style")
+    elif persona == "active_opportunity_seeker":
+        if asset["riskLevel"] == "high":
+            score += 20
+            reasons.append("Higher-upside profile alignment")
+        if asset["style"] in {"growth", "value"}:
+            score += 14
+            reasons.append("Supports opportunity-focused strategy")
+
+    if risk_tolerance:
+        if risk_tolerance == "low" and asset["riskLevel"] == "low":
+            score += 18
+            reasons.append("Matches low-risk preference")
+        elif risk_tolerance == "medium" and asset["riskLevel"] == "medium":
+            score += 18
+            reasons.append("Matches balanced risk preference")
+        elif risk_tolerance == "high" and asset["riskLevel"] == "high":
+            score += 18
+            reasons.append("Matches higher-risk preference")
+
+    if primary_goal:
+        if primary_goal == "avoid_losses" and asset["style"] in {"defensive", "income", "quality"}:
+            score += 14
+            reasons.append("Supports downside-awareness goal")
+        elif primary_goal == "long_term_growth" and asset["horizon"] == "long":
+            score += 14
+            reasons.append("Aligned with long-term growth goal")
+        elif primary_goal == "find_setups" and asset["style"] in {"growth", "value"}:
+            score += 14
+            reasons.append("Better suited for setup hunting")
+
+    if time_horizon:
+        if time_horizon == "long" and asset["horizon"] == "long":
+            score += 10
+            reasons.append("Matches your multi-year horizon")
+        elif time_horizon == "medium" and asset["horizon"] in {"medium", "long"}:
+            score += 8
+            reasons.append("Fits your medium-term plan")
+        elif time_horizon == "short" and asset["horizon"] == "medium":
+            score += 6
+            reasons.append("Suitable for shorter tactical horizon")
+
+    if not reasons:
+        reasons.append("Balanced fit for your current profile")
+
+    return {
+        "fitScore": max(1, min(99, score)),
+        "reasons": reasons[:3],
+    }
+
+
+@app.get("/recommendations/profile")
+async def get_profile_recommendations(
+    market: str = Query("US"),
+    limit: int = Query(5, ge=1, le=10),
+    persona: str = Query("wealth_builder"),
+    riskTolerance: Optional[str] = Query(None),
+    primaryGoal: Optional[str] = Query(None),
+    timeHorizon: Optional[str] = Query(None),
+):
+    market_code = market.upper()
+    universe = _RECOMMENDATION_UNIVERSE.get(market_code) or _RECOMMENDATION_UNIVERSE["US"]
+
+    scored = []
+    for asset in universe:
+        match = _match_score(asset, persona, riskTolerance, primaryGoal, timeHorizon)
+        scored.append({
+            **asset,
+            "fitScore": match["fitScore"],
+            "reasons": match["reasons"],
+            "market": market_code,
+        })
+
+    scored.sort(key=lambda item: item["fitScore"], reverse=True)
+
+    return {
+        "persona": persona,
+        "market": market_code,
+        "generatedAt": datetime.now().isoformat(),
+        "recommendations": scored[:limit],
+    }
+
+
+@app.get("/recommendations/public")
+async def get_recommendations(
+    market: str = Query("US"),
+    limit: int = Query(5, ge=1, le=10),
+):
+    return await get_profile_recommendations(market=market, limit=limit)
+
+@app.post("/goal-planner")
+async def goal_planner(req: GoalPlannerRequest):
+    """Calculate path to financial goal with long-term or 12-week breakdown."""
+    try:
+        if req.mode == "12_week":
+            weeks = max(1, min(req.weeks, 52))
+            weekly_contribution = req.weeklyContribution
+            if weekly_contribution is None:
+                weekly_contribution = req.monthlyContribution / 4 if req.monthlyContribution > 0 else 125
+
+            weekly_rate = (1 + (req.annualReturn / 100)) ** (1 / 52) - 1
+            balance = req.currentSavings
+            total_contributed = req.currentSavings
+            weekly_data = []
+
+            for week in range(1, weeks + 1):
+                balance = balance * (1 + weekly_rate) + weekly_contribution
+                total_contributed += weekly_contribution
+                earnings = balance - total_contributed
+                weekly_data.append({
+                    "week": week,
+                    "balance": round(balance, 2),
+                    "contributed": round(total_contributed, 2),
+                    "earnings": round(earnings, 2),
+                })
+
+            final_balance = balance
+            goal_reached = final_balance >= req.targetAmount
+
+            goal_week = None
+            for wd in weekly_data:
+                if wd["balance"] >= req.targetAmount:
+                    goal_week = wd["week"]
+                    break
+
+            if not goal_reached and weeks > 0:
+                fv_factor = (1 + weekly_rate) ** weeks
+                if weekly_rate > 0:
+                    needed_weekly = (req.targetAmount - req.currentSavings * fv_factor) / ((fv_factor - 1) / weekly_rate)
+                else:
+                    needed_weekly = (req.targetAmount - req.currentSavings) / weeks
+                required_weekly = max(0, round(needed_weekly, 2))
+            else:
+                required_weekly = round(weekly_contribution, 2)
+
+            milestones = []
+            for pct in [25, 50, 75, 100]:
+                target = req.targetAmount * pct / 100
+                for wd in weekly_data:
+                    if wd["balance"] >= target:
+                        milestones.append({"percent": pct, "week": wd["week"], "amount": target})
+                        break
+
+            progress_percent = min(100.0, (final_balance / req.targetAmount) * 100) if req.targetAmount > 0 else 0.0
+
+            return {
+                "mode": "12_week",
+                "goalAmount": req.targetAmount,
+                "finalBalance": round(final_balance, 2),
+                "goalReached": goal_reached,
+                "goalWeek": goal_week,
+                "totalContributed": round(total_contributed, 2),
+                "totalEarnings": round(final_balance - total_contributed, 2),
+                "requiredWeekly": required_weekly,
+                "weeklyProjection": weekly_data,
+                "milestones": milestones,
+                "progressPercent": round(progress_percent, 1),
+                "assumptions": {
+                    "annualReturn": req.annualReturn,
+                    "weeklyRatePct": round(weekly_rate * 100, 4),
+                    "weeks": weeks,
+                    "weeklyContribution": round(weekly_contribution, 2),
+                },
+            }
+
+        monthly_rate = req.annualReturn / 100 / 12
+        total_months = req.years * 12
+
+        # Nominal projection
+        yearly_data = []
+        balance = req.currentSavings
+        total_contributed = req.currentSavings
+        for year in range(1, req.years + 1):
+            for _ in range(12):
+                balance = balance * (1 + monthly_rate) + req.monthlyContribution
+                total_contributed += req.monthlyContribution
+            earnings = balance - total_contributed
+            yearly_data.append({
+                "year": year,
+                "balance": round(balance, 2),
+                "contributed": round(total_contributed, 2),
+                "earnings": round(earnings, 2),
+                "realBalance": round(balance / ((1 + req.inflationRate / 100) ** year), 2),
+            })
+
+        final_balance = balance
+        goal_reached = final_balance >= req.targetAmount
+
+        # Find year goal is reached
+        goal_year = None
+        for yd in yearly_data:
+            if yd["balance"] >= req.targetAmount:
+                goal_year = yd["year"]
+                break
+
+        # Calculate required monthly to hit goal
+        if not goal_reached and total_months > 0:
+            # FV = PV*(1+r)^n + PMT*((1+r)^n - 1)/r
+            fv_factor = (1 + monthly_rate) ** total_months
+            if monthly_rate > 0:
+                needed_monthly = (req.targetAmount - req.currentSavings * fv_factor) / ((fv_factor - 1) / monthly_rate)
+            else:
+                needed_monthly = (req.targetAmount - req.currentSavings) / total_months
+            required_monthly = max(0, round(needed_monthly, 2))
+        else:
+            required_monthly = req.monthlyContribution
+
+        # Passive income at goal (4% rule)
+        passive_monthly = round(req.targetAmount * 0.04 / 12, 2)
+        passive_annual = round(req.targetAmount * 0.04, 2)
+
+        # Milestone markers
+        milestones = []
+        for pct in [25, 50, 75, 100]:
+            target = req.targetAmount * pct / 100
+            for yd in yearly_data:
+                if yd["balance"] >= target:
+                    milestones.append({"percent": pct, "year": yd["year"], "amount": target})
+                    break
+
+        return {
+            "mode": "long_term",
+            "goalAmount": req.targetAmount,
+            "finalBalance": round(final_balance, 2),
+            "goalReached": goal_reached,
+            "goalYear": goal_year,
+            "totalContributed": round(total_contributed, 2),
+            "totalEarnings": round(final_balance - total_contributed, 2),
+            "requiredMonthly": required_monthly,
+            "passiveIncome": {"monthly": passive_monthly, "annual": passive_annual},
+            "yearlyProjection": yearly_data,
+            "milestones": milestones,
+            "assumptions": {
+                "annualReturn": req.annualReturn,
+                "inflationRate": req.inflationRate,
+                "realReturn": round(req.annualReturn - req.inflationRate, 1),
+            },
+        }
+    except Exception as e:
+        logger.error(f"Error in goal planner: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ────────────────────────────────────────────────────────────────
+#  DCA (Dollar-Cost Averaging) CALCULATOR
+# ────────────────────────────────────────────────────────────────
+@app.get("/dca/{symbol}")
+async def dca_calculator(
+    symbol: str,
+    monthly_amount: float = Query(500, ge=1),
+    years: int = Query(5, ge=1, le=30),
+):
+    """Backtest DCA strategy: what if you invested $X/month for Y years?"""
+    try:
+        stock = yf.Ticker(symbol.upper())
+        hist = stock.history(period=f"{years}y", interval="1mo")
+
+        if hist is None or hist.empty:
+            raise HTTPException(status_code=404, detail=f"No price history for {symbol}")
+
+        if hist.index.tz is not None:
+            hist.index = hist.index.tz_localize(None)
+
+        total_invested = 0
+        total_shares = 0
+        monthly_data = []
+
+        for i, (date, row) in enumerate(hist.iterrows()):
+            price = float(row["Close"])
+            if price <= 0:
+                continue
+            shares_bought = monthly_amount / price
+            total_invested += monthly_amount
+            total_shares += shares_bought
+            portfolio_value = total_shares * price
+            monthly_data.append({
+                "date": date.strftime("%Y-%m-%d"),
+                "price": round(price, 2),
+                "sharesBought": round(shares_bought, 4),
+                "totalShares": round(total_shares, 4),
+                "totalInvested": round(total_invested, 2),
+                "portfolioValue": round(portfolio_value, 2),
+                "gainLoss": round(portfolio_value - total_invested, 2),
+                "returnPct": round((portfolio_value / total_invested - 1) * 100, 1) if total_invested > 0 else 0,
+            })
+
+        if not monthly_data:
+            raise HTTPException(status_code=404, detail="No valid price data")
+
+        latest = monthly_data[-1]
+        avg_cost = total_invested / total_shares if total_shares > 0 else 0
+        current_price = latest["price"]
+
+        # Compare vs lump sum
+        first_price = monthly_data[0]["price"]
+        lump_sum_total = monthly_amount * len(monthly_data)
+        lump_sum_shares = lump_sum_total / first_price if first_price > 0 else 0
+        lump_sum_value = lump_sum_shares * current_price
+
+        # Annual returns
+        annual_data = {}
+        for m in monthly_data:
+            yr = m["date"][:4]
+            annual_data[yr] = m
+        annual_summary = []
+        for yr, m in sorted(annual_data.items()):
+            annual_summary.append({
+                "year": yr,
+                "portfolioValue": m["portfolioValue"],
+                "totalInvested": m["totalInvested"],
+                "returnPct": m["returnPct"],
+            })
+
+        # Dividend income if applicable
+        info = stock.info
+        div_yield = info.get("dividendYield", 0) or 0
+        est_annual_div_income = round(latest["portfolioValue"] * div_yield / 100, 2)
+
+        return {
+            "symbol": symbol.upper(),
+            "companyName": info.get("shortName", symbol),
+            "monthlyAmount": monthly_amount,
+            "periodYears": years,
+            "monthsInvested": len(monthly_data),
+            "totalInvested": latest["totalInvested"],
+            "currentValue": latest["portfolioValue"],
+            "totalReturn": latest["gainLoss"],
+            "totalReturnPct": latest["returnPct"],
+            "totalShares": round(total_shares, 4),
+            "avgCostBasis": round(avg_cost, 2),
+            "currentPrice": current_price,
+            "lumpSumComparison": {
+                "lumpSumValue": round(lump_sum_value, 2),
+                "dcaValue": latest["portfolioValue"],
+                "dcaBetter": latest["portfolioValue"] > lump_sum_value,
+                "difference": round(latest["portfolioValue"] - lump_sum_value, 2),
+            },
+            "estimatedAnnualDividendIncome": est_annual_div_income,
+            "annualSummary": annual_summary,
+            "monthlyData": monthly_data,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in DCA calculator for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ────────────────────────────────────────────────────────────────
+#  ECONOMIC DASHBOARD — real-time macro snapshot
+# ────────────────────────────────────────────────────────────────
+
+SECTOR_ETFS = {
+    "Technology": "XLK",
+    "Healthcare": "XLV",
+    "Financials": "XLF",
+    "Energy": "XLE",
+    "Consumer Discretionary": "XLY",
+    "Consumer Staples": "XLP",
+    "Industrials": "XLI",
+    "Materials": "XLB",
+    "Utilities": "XLU",
+    "Real Estate": "XLRE",
+    "Communication Services": "XLC",
+}
+
+MARKET_INDICES = {
+    "S&P 500": "^GSPC",
+    "Dow Jones": "^DJI",
+    "NASDAQ": "^IXIC",
+    "Russell 2000": "^RUT",
+}
+
+_econ_cache: Dict[str, Any] = {}
+_econ_cache_time: float = 0
+
+
+@app.get("/economic-dashboard")
+async def economic_dashboard():
+    """Economy snapshot: indices, sector performance, yields, volatility."""
+    global _econ_cache, _econ_cache_time
+    import time
+    now = time.time()
+    if _econ_cache and now - _econ_cache_time < 300:
+        return _econ_cache
+
+    try:
+        # ── Market indices ──
+        indices = []
+        idx_symbols = list(MARKET_INDICES.values())
+        idx_names = list(MARKET_INDICES.keys())
+
+        def _fetch_quote(sym: str) -> dict:
+            t = yf.Ticker(sym)
+            h = t.history(period="5d")
+            if h is None or len(h) < 2:
+                return {}
+            last = float(h["Close"].iloc[-1])
+            prev = float(h["Close"].iloc[-2])
+            chg = last - prev
+            chg_pct = (chg / prev * 100) if prev else 0
+            # YTD
+            ytd_h = t.history(period="ytd")
+            ytd_start = float(ytd_h["Close"].iloc[0]) if ytd_h is not None and len(ytd_h) > 0 else last
+            ytd_pct = ((last - ytd_start) / ytd_start * 100) if ytd_start else 0
+            return {
+                "price": round(last, 2),
+                "change": round(chg, 2),
+                "changePct": round(chg_pct, 2),
+                "ytdPct": round(ytd_pct, 2),
+            }
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            idx_futs = {pool.submit(_fetch_quote, sym): name for sym, name in zip(idx_symbols, idx_names)}
+            for fut in as_completed(idx_futs):
+                name = idx_futs[fut]
+                try:
+                    data = fut.result()
+                    if data:
+                        indices.append({"name": name, **data})
+                except Exception:
+                    pass
+
+        # ── Sector performance ──
+        sectors = []
+        sec_items = list(SECTOR_ETFS.items())
+
+        def _fetch_sector(pair):
+            name, sym = pair
+            try:
+                t = yf.Ticker(sym)
+                h = t.history(period="5d")
+                if h is None or len(h) < 2:
+                    return None
+                last = float(h["Close"].iloc[-1])
+                prev = float(h["Close"].iloc[-2])
+                chg_pct = ((last - prev) / prev * 100) if prev else 0
+                # 1-month
+                h_1m = t.history(period="1mo")
+                start_1m = float(h_1m["Close"].iloc[0]) if h_1m is not None and len(h_1m) > 0 else last
+                mo_pct = ((last - start_1m) / start_1m * 100) if start_1m else 0
+                return {
+                    "sector": name,
+                    "etf": sym,
+                    "price": round(last, 2),
+                    "dayChangePct": round(chg_pct, 2),
+                    "monthChangePct": round(mo_pct, 2),
+                }
+            except Exception:
+                return None
+
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            sec_futs = list(pool.map(_fetch_sector, sec_items))
+        sectors = [s for s in sec_futs if s]
+        sectors.sort(key=lambda x: x["dayChangePct"], reverse=True)
+
+        # ── Treasury yields & VIX ──
+        bond_vix = {}
+        for label, sym in [("treasury10Y", "^TNX"), ("treasury2Y", "^IRX"), ("vix", "^VIX")]:
+            try:
+                t = yf.Ticker(sym)
+                h = t.history(period="5d")
+                if h is not None and len(h) >= 2:
+                    last = float(h["Close"].iloc[-1])
+                    prev = float(h["Close"].iloc[-2])
+                    bond_vix[label] = {
+                        "value": round(last, 2),
+                        "change": round(last - prev, 2),
+                        "changePct": round((last - prev) / prev * 100, 2) if prev else 0,
+                    }
+            except Exception:
+                pass
+
+        # ── Market health assessment ──
+        up_sectors = sum(1 for s in sectors if s["dayChangePct"] > 0)
+        vix_val = bond_vix.get("vix", {}).get("value", 20)
+        if vix_val < 15 and up_sectors >= 7:
+            health = {"status": "Strong", "color": "green", "summary": "Low volatility, broad sector strength"}
+        elif vix_val < 25 and up_sectors >= 5:
+            health = {"status": "Stable", "color": "blue", "summary": "Normal conditions with mixed signals"}
+        elif vix_val < 30:
+            health = {"status": "Cautious", "color": "orange", "summary": "Elevated volatility, selective opportunities"}
+        else:
+            health = {"status": "Stressed", "color": "red", "summary": "High volatility, defensive positioning recommended"}
+
+        result = {
+            "indices": indices,
+            "sectors": sectors,
+            "yields": {
+                "treasury10Y": bond_vix.get("treasury10Y"),
+                "treasury2Y": bond_vix.get("treasury2Y"),
+            },
+            "vix": bond_vix.get("vix"),
+            "marketHealth": health,
+            "sectorCount": {"up": up_sectors, "down": len(sectors) - up_sectors},
+            "timestamp": datetime.now().isoformat(),
+        }
+        _econ_cache = result
+        _econ_cache_time = now
+        return result
+    except Exception as e:
+        logger.error(f"Error in economic dashboard: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ────────────────────────────────────────────────────────────────
+#  ECONOMIC IMPACT ANALYSIS — how macro affects a specific stock
+# ────────────────────────────────────────────────────────────────
+@app.get("/economic-impact/{symbol}")
+async def economic_impact(symbol: str):
+    """Analyse how economic conditions affect a company's performance & outlook."""
+    try:
+        stock = yf.Ticker(symbol.upper())
+        info = stock.info
+        sector = info.get("sector", "Unknown")
+        industry = info.get("industry", "Unknown")
+        beta = info.get("beta", 1.0) or 1.0
+        current_price = info.get("currentPrice") or info.get("regularMarketPrice") or 0
+
+        # ── Company financials snapshot ──
+        revenue = info.get("totalRevenue", 0) or 0
+        net_income = info.get("netIncomeToCommon", 0) or 0
+        fcf = info.get("freeCashflow", 0) or 0
+        op_margin = info.get("operatingMargins", 0) or 0
+        revenue_growth = info.get("revenueGrowth", 0) or 0
+        earnings_growth = info.get("earningsGrowth", 0) or 0
+        debt_to_equity = info.get("debtToEquity", 0) or 0
+        forward_pe = info.get("forwardPE", 0) or 0
+        trailing_pe = info.get("trailingPE", 0) or 0
+
+        # ── Fetch macro context in parallel ──
+        macro = {}
+
+        def _get_vix():
+            h = yf.Ticker("^VIX").history(period="5d")
+            if h is not None and len(h) > 0:
+                return round(float(h["Close"].iloc[-1]), 2)
+            return None
+
+        def _get_yield_10y():
+            h = yf.Ticker("^TNX").history(period="5d")
+            if h is not None and len(h) > 0:
+                return round(float(h["Close"].iloc[-1]), 2)
+            return None
+
+        def _get_sp500_ytd():
+            t = yf.Ticker("^GSPC")
+            h = t.history(period="ytd")
+            if h is not None and len(h) > 1:
+                return round((float(h["Close"].iloc[-1]) / float(h["Close"].iloc[0]) - 1) * 100, 2)
+            return None
+
+        def _get_sector_perf():
+            etf = SECTOR_ETFS.get(sector)
+            if not etf:
+                return None
+            h = yf.Ticker(etf).history(period="1mo")
+            if h is not None and len(h) > 1:
+                return round((float(h["Close"].iloc[-1]) / float(h["Close"].iloc[0]) - 1) * 100, 2)
+            return None
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            f_vix = pool.submit(_get_vix)
+            f_yield = pool.submit(_get_yield_10y)
+            f_sp = pool.submit(_get_sp500_ytd)
+            f_sec = pool.submit(_get_sector_perf)
+            macro["vix"] = f_vix.result()
+            macro["treasury10Y"] = f_yield.result()
+            macro["sp500YTD"] = f_sp.result()
+            macro["sectorMonthPct"] = f_sec.result()
+
+        # ── Interest rate sensitivity ──
+        rate_sensitivity = "low"
+        rate_impact = "neutral"
+        if sector in ["Real Estate", "Utilities", "Financials"]:
+            rate_sensitivity = "high"
+            rate_impact = "Rising rates pressure valuations and borrowing costs"
+        elif sector in ["Technology", "Consumer Discretionary"]:
+            rate_sensitivity = "medium"
+            rate_impact = "Higher rates compress growth multiples"
+        elif debt_to_equity > 150:
+            rate_sensitivity = "high"
+            rate_impact = "Heavy debt load makes interest expense a significant factor"
+        else:
+            rate_impact = "Limited direct impact from rate changes"
+
+        # ── Inflation exposure ──
+        if sector in ["Energy", "Materials"]:
+            inflation_exposure = {"level": "beneficiary", "detail": "Commodity-linked revenue tends to rise with inflation"}
+        elif sector in ["Consumer Staples"]:
+            inflation_exposure = {"level": "moderate", "detail": "Pricing power but margin pressure from input costs"}
+        elif sector in ["Technology"]:
+            inflation_exposure = {"level": "low", "detail": "Digital products have low input-cost sensitivity"}
+        elif op_margin and op_margin > 0.25:
+            inflation_exposure = {"level": "resilient", "detail": "High margins provide buffer against cost increases"}
+        else:
+            inflation_exposure = {"level": "moderate", "detail": "Some margin pressure possible from rising costs"}
+
+        # ── Earnings outlook factors ──
+        factors = []
+        # 1. Revenue momentum
+        if revenue_growth and revenue_growth > 0.1:
+            factors.append({"factor": "Revenue Growth", "signal": "positive", "detail": f"Strong {round(revenue_growth*100,1)}% growth supports earnings expansion"})
+        elif revenue_growth and revenue_growth > 0:
+            factors.append({"factor": "Revenue Growth", "signal": "neutral", "detail": f"Modest {round(revenue_growth*100,1)}% growth — stable but not accelerating"})
+        else:
+            factors.append({"factor": "Revenue Growth", "signal": "negative", "detail": f"Revenue declining at {round((revenue_growth or 0)*100,1)}% — earnings at risk"})
+
+        # 2. Margin health
+        if op_margin and op_margin > 0.20:
+            factors.append({"factor": "Operating Margin", "signal": "positive", "detail": f"{round(op_margin*100,1)}% margins — strong pricing power and cost control"})
+        elif op_margin and op_margin > 0.10:
+            factors.append({"factor": "Operating Margin", "signal": "neutral", "detail": f"{round(op_margin*100,1)}% margins — adequate but limited cushion"})
+        else:
+            factors.append({"factor": "Operating Margin", "signal": "negative", "detail": f"Thin {round((op_margin or 0)*100,1)}% margins — vulnerable to cost pressures"})
+
+        # 3. Market volatility
+        vix = macro.get("vix", 20)
+        if vix and vix < 15:
+            factors.append({"factor": "Market Volatility (VIX)", "signal": "positive", "detail": f"VIX at {vix} — low fear, supportive of equity valuations"})
+        elif vix and vix < 25:
+            factors.append({"factor": "Market Volatility (VIX)", "signal": "neutral", "detail": f"VIX at {vix} — normal range, standard uncertainty"})
+        else:
+            factors.append({"factor": "Market Volatility (VIX)", "signal": "negative", "detail": f"VIX at {vix} — elevated fear may compress multiples"})
+
+        # 4. Interest rates
+        t10 = macro.get("treasury10Y", 4.0)
+        if t10 and t10 > 4.5:
+            factors.append({"factor": "Interest Rates (10Y)", "signal": "negative", "detail": f"Yields at {t10}% — high discount rate lowers present value of future cash flows"})
+        elif t10 and t10 > 3.5:
+            factors.append({"factor": "Interest Rates (10Y)", "signal": "neutral", "detail": f"Yields at {t10}% — moderate, balanced impact"})
+        else:
+            factors.append({"factor": "Interest Rates (10Y)", "signal": "positive", "detail": f"Yields at {t10}% — low rates supportive for growth stocks"})
+
+        # 5. Sector momentum
+        sec_pct = macro.get("sectorMonthPct")
+        if sec_pct is not None:
+            if sec_pct > 3:
+                factors.append({"factor": "Sector Momentum", "signal": "positive", "detail": f"{sector} ETF up {sec_pct}% this month — strong sector tailwind"})
+            elif sec_pct > -3:
+                factors.append({"factor": "Sector Momentum", "signal": "neutral", "detail": f"{sector} ETF {sec_pct:+.1f}% this month — muted sector trend"})
+            else:
+                factors.append({"factor": "Sector Momentum", "signal": "negative", "detail": f"{sector} ETF {sec_pct:+.1f}% this month — sector headwind"})
+
+        # 6. Free cash flow strength
+        if fcf and revenue:
+            fcf_margin = fcf / revenue
+            if fcf_margin > 0.15:
+                factors.append({"factor": "Free Cash Flow", "signal": "positive", "detail": f"{round(fcf_margin*100,1)}% FCF margin — excellent cash generation for reinvestment & dividends"})
+            elif fcf_margin > 0.05:
+                factors.append({"factor": "Free Cash Flow", "signal": "neutral", "detail": f"{round(fcf_margin*100,1)}% FCF margin — adequate cash generation"})
+            else:
+                factors.append({"factor": "Free Cash Flow", "signal": "negative", "detail": f"{round(fcf_margin*100,1)}% FCF margin — limited cash for growth or shareholder returns"})
+
+        # Overall economic outlook score
+        pos = sum(1 for f in factors if f["signal"] == "positive")
+        neg = sum(1 for f in factors if f["signal"] == "negative")
+        total = len(factors)
+        outlook_score = round((pos - neg) / total * 100) if total else 0
+        if outlook_score > 30:
+            outlook = "Favorable"
+        elif outlook_score > -30:
+            outlook = "Mixed"
+        else:
+            outlook = "Challenging"
+
+        # ── Cash flow projection (simplified) ──
+        cf_projections = []
+        if fcf and revenue:
+            base_growth = revenue_growth if revenue_growth else 0.05
+            base_fcf = fcf
+            for yr in range(1, 6):
+                # Adjust growth for macro conditions
+                macro_adj = 0
+                if vix and vix > 25:
+                    macro_adj -= 0.02
+                if t10 and t10 > 4.5:
+                    macro_adj -= 0.01
+                if sec_pct and sec_pct > 0:
+                    macro_adj += 0.01
+                adj_growth = base_growth + macro_adj
+                # Decay growth toward terminal rate
+                yr_growth = adj_growth * (0.85 ** (yr - 1))
+                base_fcf = base_fcf * (1 + yr_growth)
+                cf_projections.append({
+                    "year": yr,
+                    "projectedFCF": round(base_fcf / 1e9, 2),
+                    "growthRate": round(yr_growth * 100, 1),
+                })
+
+        return {
+            "symbol": symbol.upper(),
+            "companyName": info.get("shortName", symbol),
+            "sector": sector,
+            "industry": industry,
+            "beta": round(beta, 2),
+            "macro": macro,
+            "interestRateSensitivity": {
+                "level": rate_sensitivity,
+                "detail": rate_impact,
+            },
+            "inflationExposure": inflation_exposure,
+            "earningsFactors": factors,
+            "outlookScore": outlook_score,
+            "outlook": outlook,
+            "cashFlowProjections": cf_projections,
+            "financials": {
+                "revenue": revenue,
+                "netIncome": net_income,
+                "freeCashFlow": fcf,
+                "operatingMargin": round(op_margin * 100, 1) if op_margin else None,
+                "revenueGrowth": round(revenue_growth * 100, 1) if revenue_growth else None,
+                "earningsGrowth": round(earnings_growth * 100, 1) if earnings_growth else None,
+                "debtToEquity": round(debt_to_equity, 1),
+                "forwardPE": round(forward_pe, 1) if forward_pe else None,
+                "trailingPE": round(trailing_pe, 1) if trailing_pe else None,
+            },
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"Error in economic impact for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ────────────────────────────────────────────────────────────────
+#  NEWS IMPACT ON EARNINGS & CASH FLOW
+# ────────────────────────────────────────────────────────────────
+
+_ECON_KEYWORDS_POS = {"growth", "expansion", "strong", "recovery", "stimulus", "rate cut", "easing", "surge", "hiring", "boost"}
+_ECON_KEYWORDS_NEG = {"recession", "contraction", "weak", "slowdown", "rate hike", "tightening", "inflation", "layoffs", "tariff", "shutdown", "crisis"}
+_INDUSTRY_FACTORS = {
+    "Technology": {"drivers": ["AI adoption", "cloud spending", "chip demand", "digital transformation"], "risks": ["regulation", "antitrust", "ad spending cuts"]},
+    "Healthcare": {"drivers": ["aging population", "drug approvals", "M&A"], "risks": ["drug pricing reform", "patent cliffs", "trial failures"]},
+    "Financials": {"drivers": ["rate environment", "loan demand", "capital markets"], "risks": ["credit losses", "regulation", "rate cuts"]},
+    "Energy": {"drivers": ["oil prices", "demand recovery", "LNG exports"], "risks": ["renewable transition", "oversupply", "regulation"]},
+    "Consumer Discretionary": {"drivers": ["consumer confidence", "employment", "wage growth"], "risks": ["inflation", "consumer debt", "spending pullback"]},
+    "Consumer Staples": {"drivers": ["pricing power", "volume stability", "defensive demand"], "risks": ["input costs", "private labels", "margin pressure"]},
+    "Industrials": {"drivers": ["infrastructure spending", "reshoring", "defense budgets"], "risks": ["supply chain", "labor costs", "economic slowdown"]},
+    "Materials": {"drivers": ["commodity prices", "construction demand", "EV materials"], "risks": ["oversupply", "China slowdown", "environmental regulation"]},
+    "Utilities": {"drivers": ["rate base growth", "renewables transition", "stable demand"], "risks": ["rate cases", "regulation", "extreme weather costs"]},
+    "Real Estate": {"drivers": ["population growth", "occupancy rates", "rent growth"], "risks": ["rising rates", "remote work", "overbuilding"]},
+    "Communication Services": {"drivers": ["streaming growth", "digital ads", "5G", "content"], "risks": ["subscriber churn", "regulation", "competition"]},
+}
+
+
+def _score_text_impact(text: str) -> dict:
+    """Score a piece of text for positive/negative economic signals."""
+    lower = text.lower()
+    pos = sum(1 for w in _ECON_KEYWORDS_POS if w in lower)
+    neg = sum(1 for w in _ECON_KEYWORDS_NEG if w in lower)
+    if pos > neg:
+        return {"sentiment": "positive", "score": min(pos, 5)}
+    elif neg > pos:
+        return {"sentiment": "negative", "score": -min(neg, 5)}
+    return {"sentiment": "neutral", "score": 0}
+
+
+@app.get("/news-impact/{symbol}")
+async def news_impact_analysis(symbol: str):
+    """3-layer news impact: economy → industry → company, with earnings/cash flow projection."""
+    try:
+        stock = yf.Ticker(symbol.upper())
+        info = stock.info
+        sector = info.get("sector", "Unknown")
+        industry = info.get("industry", "Unknown")
+        company_name = info.get("shortName", symbol)
+        revenue = info.get("totalRevenue", 0) or 0
+        fcf = info.get("freeCashflow", 0) or 0
+        eps = info.get("trailingEps", 0) or 0
+        forward_eps = info.get("forwardEps", 0) or 0
+
+        from news_integration import _get_news, _score_sentiment
+
+        # ── Layer 1: Economy news ──
+        econ_news_raw = _get_news("US economy GDP inflation interest rates Federal Reserve", 10)
+        econ_articles = []
+        econ_score_total = 0
+        for art in econ_news_raw:
+            impact = _score_text_impact(art.get("title", "") + " " + (art.get("summary", "") or ""))
+            art["impact"] = impact
+            art["sentiment"] = _score_sentiment(art.get("title", ""))
+            econ_articles.append(art)
+            econ_score_total += impact["score"]
+        econ_sentiment = "positive" if econ_score_total > 1 else ("negative" if econ_score_total < -1 else "neutral")
+
+        # ── Layer 2: Industry/Sector news ──
+        industry_news_raw = _get_news(f"{sector} {industry} sector industry outlook", 10)
+        industry_articles = []
+        industry_score_total = 0
+        for art in industry_news_raw:
+            impact = _score_text_impact(art.get("title", "") + " " + (art.get("summary", "") or ""))
+            art["impact"] = impact
+            art["sentiment"] = _score_sentiment(art.get("title", ""))
+            industry_articles.append(art)
+            industry_score_total += impact["score"]
+        industry_sentiment = "positive" if industry_score_total > 1 else ("negative" if industry_score_total < -1 else "neutral")
+
+        # ── Layer 3: Company news ──
+        company_news_raw = _get_news(f"{symbol} {company_name} stock", 10, symbol=symbol.upper())
+        company_articles = []
+        company_score_total = 0
+        for art in company_news_raw:
+            impact = _score_text_impact(art.get("title", "") + " " + (art.get("summary", "") or ""))
+            art["impact"] = impact
+            art["sentiment"] = _score_sentiment(art.get("title", ""))
+            company_articles.append(art)
+            company_score_total += impact["score"]
+        company_sentiment = "positive" if company_score_total > 1 else ("negative" if company_score_total < -1 else "neutral")
+
+        # ── Composite impact score (-100 to +100) ──
+        # Weights: company 50%, industry 30%, economy 20%
+        max_possible = 50  # 10 articles * 5 max score
+        econ_norm = (econ_score_total / max_possible * 100) if max_possible else 0
+        ind_norm = (industry_score_total / max_possible * 100) if max_possible else 0
+        co_norm = (company_score_total / max_possible * 100) if max_possible else 0
+        composite = round(co_norm * 0.5 + ind_norm * 0.3 + econ_norm * 0.2)
+        composite = max(-100, min(100, composite))
+
+        # ── Projected earnings impact ──
+        # Translate composite score to earnings adjustment
+        earnings_adj_pct = composite * 0.05  # 1% earnings change per 20 pts
+        projected_eps = round(eps * (1 + earnings_adj_pct / 100), 2) if eps else None
+        projected_fcf = round(fcf * (1 + earnings_adj_pct / 100)) if fcf else None
+        projected_revenue = round(revenue * (1 + earnings_adj_pct / 200)) if revenue else None  # half as sensitive
+
+        # ── Industry-specific factors ──
+        ind_factors = _INDUSTRY_FACTORS.get(sector, {"drivers": ["Company-specific factors"], "risks": ["Market conditions"]})
+
+        # Overall signal
+        if composite > 20:
+            signal = {"direction": "Tailwind", "strength": "Strong" if composite > 40 else "Moderate", "color": "green"}
+        elif composite > -20:
+            signal = {"direction": "Neutral", "strength": "Mixed signals", "color": "blue"}
+        else:
+            signal = {"direction": "Headwind", "strength": "Strong" if composite < -40 else "Moderate", "color": "red"}
+
+        return {
+            "symbol": symbol.upper(),
+            "companyName": company_name,
+            "sector": sector,
+            "industry": industry,
+            "compositeScore": composite,
+            "signal": signal,
+            "layers": {
+                "economy": {
+                    "sentiment": econ_sentiment,
+                    "score": econ_score_total,
+                    "articles": econ_articles[:5],
+                    "articleCount": len(econ_articles),
+                },
+                "industry": {
+                    "sentiment": industry_sentiment,
+                    "score": industry_score_total,
+                    "articles": industry_articles[:5],
+                    "articleCount": len(industry_articles),
+                    "sectorDrivers": ind_factors["drivers"],
+                    "sectorRisks": ind_factors["risks"],
+                },
+                "company": {
+                    "sentiment": company_sentiment,
+                    "score": company_score_total,
+                    "articles": company_articles[:5],
+                    "articleCount": len(company_articles),
+                },
+            },
+            "earningsImpact": {
+                "adjustmentPct": round(earnings_adj_pct, 2),
+                "currentEPS": eps,
+                "forwardEPS": forward_eps,
+                "projectedEPS": projected_eps,
+                "currentFCF": fcf,
+                "projectedFCF": projected_fcf,
+                "currentRevenue": revenue,
+                "projectedRevenue": projected_revenue,
+            },
+            "sectorFactors": ind_factors,
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"Error in news impact for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ────────────────────────────────────────────────────────────────
+#  TRANSACTION HISTORY — SQLite backed
+# ────────────────────────────────────────────────────────────────
+
+class TransactionRequest(BaseModel):
+    symbol: str
+    action: str  # "buy" or "sell"
+    shares: float
+    price: float
+    date: Optional[str] = None
+    notes: Optional[str] = None
+
+
+@app.post("/transactions")
+async def add_transaction_endpoint(req: TransactionRequest, request: Request):
+    """Record a buy/sell transaction."""
+    if req.action not in ("buy", "sell"):
+        raise HTTPException(status_code=400, detail="action must be 'buy' or 'sell'")
+    if req.shares <= 0 or req.price <= 0:
+        raise HTTPException(status_code=400, detail="shares and price must be positive")
+
+    user = await get_current_user(request)
+    user_id = get_user_id(user)
+    txn = db.add_transaction(user_id, req.symbol.upper(), req.action, req.shares, req.price, req.date, req.notes)
+    return {"message": "Transaction recorded", "transaction": txn}
+
+
+@app.get("/transactions")
+async def get_transactions_endpoint(symbol: Optional[str] = None, request: Request = None):
+    """Get transaction history, optionally filtered by symbol."""
+    user = await get_current_user(request)
+    user_id = get_user_id(user)
+    txns = db.get_transactions(user_id, symbol)
+
+    # Calculate per-symbol summary
+    holdings: Dict[str, Any] = {}
+    for t in txns:
+        sym = t["symbol"]
+        if sym not in holdings:
+            holdings[sym] = {"totalShares": 0, "totalCost": 0, "realized": 0}
+        if t["action"] == "buy":
+            holdings[sym]["totalShares"] += t["shares"]
+            holdings[sym]["totalCost"] += t["total"]
+        else:
+            holdings[sym]["totalShares"] -= t["shares"]
+            holdings[sym]["realized"] += t["total"]
+
+    summary = []
+    for sym, h in holdings.items():
+        avg_cost = h["totalCost"] / h["totalShares"] if h["totalShares"] > 0 else 0
+        try:
+            info = yf.Ticker(sym).info
+            curr_price = info.get("currentPrice") or info.get("regularMarketPrice") or 0
+        except Exception:
+            curr_price = 0
+        market_value = round(h["totalShares"] * curr_price, 2)
+        unrealized = round(market_value - h["totalCost"], 2) if h["totalShares"] > 0 else 0
+        summary.append({
+            "symbol": sym,
+            "shares": round(h["totalShares"], 4),
+            "avgCostBasis": round(avg_cost, 2),
+            "currentPrice": curr_price,
+            "marketValue": market_value,
+            "totalCost": round(h["totalCost"], 2),
+            "unrealizedPL": unrealized,
+            "unrealizedPLPct": round(unrealized / h["totalCost"] * 100, 1) if h["totalCost"] > 0 else 0,
+            "realizedPL": round(h["realized"], 2),
+        })
+
+    return {
+        "transactions": sorted(txns, key=lambda x: x.get("date", ""), reverse=True),
+        "summary": summary,
+        "totalTransactions": len(txns),
+    }
+
+
+@app.delete("/transactions/{txn_id}")
+async def delete_transaction_endpoint(txn_id: int, request: Request):
+    """Delete a transaction by ID."""
+    user = await get_current_user(request)
+    user_id = get_user_id(user)
+    if not db.delete_transaction(user_id, txn_id):
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    return {"message": "Transaction deleted"}
+
+
+# ── Financial Statement Upload & DCF/Growth Analysis ──────────────
+
+ALLOWED_EXTENSIONS = {".csv"}
+MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
+
+
+def _parse_csv_financial_data(content: str) -> Dict[str, Any]:
+    """Parse a CSV financial statement into structured data.
     
-    base_allocation = overall_score / 10
-    
-    return min(10.0, max(3.0, base_allocation))
+    Supports two formats:
+    1. Row-per-metric: Column A = metric name, remaining columns = yearly values
+       e.g.  Revenue, 100000, 120000, 150000
+    2. Column-per-metric: Header row has metric names, each row is a year
+    """
+    reader = csv.reader(io.StringIO(content))
+    rows = [r for r in reader if any(cell.strip() for cell in r)]
+    if len(rows) < 2:
+        raise HTTPException(status_code=400, detail="CSV must have at least a header and one data row")
+
+    # Detect orientation: if first column of row 1 looks like a number/year, it's column-per-metric
+    header = [h.strip() for h in rows[0]]
+
+    def _try_float(s: str) -> Optional[float]:
+        s = s.strip().replace(",", "").replace("$", "").replace("(", "-").replace(")", "")
+        try:
+            return float(s)
+        except (ValueError, TypeError):
+            return None
+
+    # Heuristic: if header[0] is a number (year), treat as column-per-metric
+    if _try_float(header[0]) is not None or header[0].lower() in ("year", "period", "date"):
+        # Column-per-metric: header = [Year, Revenue, NetIncome, …]
+        years_data = []
+        for row in rows[1:]:
+            entry: Dict[str, Any] = {}
+            for i, col_name in enumerate(header):
+                val = row[i].strip() if i < len(row) else ""
+                num = _try_float(val)
+                entry[col_name] = num if num is not None else val
+            years_data.append(entry)
+        return {"format": "column_per_metric", "periods": years_data, "metrics": header}
+    else:
+        # Row-per-metric: each row = [MetricName, val1, val2, …]
+        periods = header[1:]  # e.g. ["2021", "2022", "2023"]
+        metrics: Dict[str, List[Optional[float]]] = {}
+        for row in rows[1:]:
+            name = row[0].strip() if row else ""
+            values = [_try_float(c) for c in row[1:]]
+            if name:
+                metrics[name] = values
+        return {"format": "row_per_metric", "periods": periods, "metrics": metrics}
+
+
+# Canonical metric name lookup
+_METRIC_ALIASES: Dict[str, List[str]] = {
+    "revenue": ["revenue", "total revenue", "total_revenue", "sales", "net sales", "net_sales", "total sales"],
+    "net_income": ["net income", "net_income", "earnings", "net earnings", "profit", "net profit"],
+    "free_cash_flow": ["free cash flow", "free_cash_flow", "fcf"],
+    "operating_income": ["operating income", "operating_income", "ebit", "operating profit"],
+    "total_debt": ["total debt", "total_debt", "long term debt", "long_term_debt", "debt"],
+    "cash": ["cash", "cash and equivalents", "cash_and_equivalents", "total cash"],
+    "shares_outstanding": ["shares outstanding", "shares_outstanding", "diluted shares", "diluted_shares", "shares"],
+    "capex": ["capex", "capital expenditures", "capital_expenditures", "capital expenditure", "capex_abs"],
+    "depreciation": ["depreciation", "depreciation and amortization", "d&a", "depreciation_and_amortization"],
+    "total_assets": ["total assets", "total_assets"],
+    "total_equity": ["total equity", "total_equity", "shareholders equity", "stockholders equity"],
+    "operating_cash_flow": ["operating cash flow", "operating_cash_flow", "cash from operations"],
+    "tax_rate": ["tax rate", "tax_rate", "effective tax rate"],
+}
+
+
+def _resolve_metric(parsed: Dict[str, Any], canonical: str) -> List[Optional[float]]:
+    """Find a metric by canonical name or alias in parsed data."""
+    aliases = _METRIC_ALIASES.get(canonical, [canonical])
+    if parsed["format"] == "row_per_metric":
+        for alias in aliases:
+            for key, vals in parsed["metrics"].items():
+                if key.lower().strip() == alias:
+                    return vals
+        return []
+    else:
+        # column_per_metric
+        for alias in aliases:
+            for metric_name in parsed["metrics"]:
+                if metric_name.lower().strip() == alias:
+                    return [p.get(metric_name) for p in parsed["periods"]]
+        return []
+
+
+def _compute_growth(values: List[Optional[float]]) -> Dict[str, Any]:
+    """Compute YoY growth rates and CAGR from a list of period values (oldest first)."""
+    clean = [(i, v) for i, v in enumerate(values) if v is not None and v != 0]
+    yoy = []
+    for j in range(1, len(clean)):
+        prev_val = clean[j - 1][1]
+        cur_val = clean[j][1]
+        if prev_val and prev_val != 0:
+            yoy.append(round((cur_val - prev_val) / abs(prev_val) * 100, 2))
+    cagr = None
+    if len(clean) >= 2:
+        first_val, last_val = clean[0][1], clean[-1][1]
+        n = clean[-1][0] - clean[0][0]
+        if n > 0 and first_val > 0 and last_val > 0:
+            cagr = round(((last_val / first_val) ** (1 / n) - 1) * 100, 2)
+    return {"values": values, "yoy_growth_pct": yoy, "cagr_pct": cagr, "latest": clean[-1][1] if clean else None}
+
+
+def _run_dcf_from_upload(parsed: Dict[str, Any], discount_rate: float = 0.10,
+                          terminal_growth_rate: float = 0.03, years: int = 5) -> Dict[str, Any]:
+    """Run a DCF valuation using uploaded financial statement data."""
+    fcf_values = _resolve_metric(parsed, "free_cash_flow")
+    # Fallback: operating_cash_flow - capex
+    if not any(v for v in fcf_values if v is not None):
+        ocf = _resolve_metric(parsed, "operating_cash_flow")
+        capex = _resolve_metric(parsed, "capex")
+        if ocf:
+            fcf_values = []
+            for i in range(len(ocf)):
+                o = ocf[i] if i < len(ocf) else None
+                c = abs(capex[i]) if (capex and i < len(capex) and capex[i] is not None) else 0
+                fcf_values.append(round(o - c, 2) if o is not None else None)
+
+    # Fallback: net_income + depreciation - capex
+    if not any(v for v in fcf_values if v is not None):
+        ni = _resolve_metric(parsed, "net_income")
+        dep = _resolve_metric(parsed, "depreciation")
+        capex = _resolve_metric(parsed, "capex")
+        if ni and any(v for v in ni if v is not None):
+            fcf_values = []
+            for i in range(len(ni)):
+                n = ni[i] if i < len(ni) else 0
+                d = dep[i] if (dep and i < len(dep) and dep[i]) else 0
+                c = abs(capex[i]) if (capex and i < len(capex) and capex[i]) else 0
+                fcf_values.append(round((n or 0) + (d or 0) - c, 2))
+
+    if not any(v for v in fcf_values if v is not None):
+        return {"error": "Could not determine Free Cash Flow from uploaded data. Include FCF, Operating Cash Flow, or Net Income columns."}
+
+    current_fcf = next((v for v in reversed(fcf_values) if v is not None), 0)
+    if current_fcf <= 0:
+        return {"error": f"Latest FCF is {current_fcf}. DCF requires positive free cash flow.", "current_fcf": current_fcf}
+
+    # Historical FCF growth rate
+    fcf_growth = _compute_growth(fcf_values)
+    implied_growth = (fcf_growth["cagr_pct"] / 100) if fcf_growth["cagr_pct"] and fcf_growth["cagr_pct"] > 0 else 0.05
+
+    projected_fcf = []
+    for yr in range(1, years + 1):
+        yr_growth = implied_growth * (0.9 ** (yr - 1))
+        projected_fcf.append(round(current_fcf * ((1 + yr_growth) ** yr), 2))
+
+    terminal_fcf = projected_fcf[-1] * (1 + terminal_growth_rate)
+    terminal_value = terminal_fcf / (discount_rate - terminal_growth_rate)
+
+    pv_fcf = [round(f / ((1 + discount_rate) ** yr), 2) for yr, f in enumerate(projected_fcf, 1)]
+    pv_terminal = round(terminal_value / ((1 + discount_rate) ** years), 2)
+
+    enterprise_value = round(sum(pv_fcf) + pv_terminal, 2)
+
+    # Equity value if debt/cash available
+    cash_vals = _resolve_metric(parsed, "cash")
+    debt_vals = _resolve_metric(parsed, "total_debt")
+    shares_vals = _resolve_metric(parsed, "shares_outstanding")
+
+    total_cash = next((v for v in reversed(cash_vals) if v is not None), 0) if cash_vals else 0
+    total_debt = next((v for v in reversed(debt_vals) if v is not None), 0) if debt_vals else 0
+    shares = next((v for v in reversed(shares_vals) if v is not None), 0) if shares_vals else 0
+
+    equity_value = round(enterprise_value + total_cash - total_debt, 2)
+    per_share = round(equity_value / shares, 2) if shares and shares > 0 else None
+
+    return {
+        "current_fcf": current_fcf,
+        "implied_growth_rate": round(implied_growth * 100, 2),
+        "projected_fcf": projected_fcf,
+        "pv_fcf": pv_fcf,
+        "terminal_value": round(terminal_value, 2),
+        "pv_terminal": pv_terminal,
+        "enterprise_value": enterprise_value,
+        "equity_value": equity_value,
+        "intrinsic_value_per_share": per_share,
+        "shares_outstanding": shares,
+        "total_cash": total_cash,
+        "total_debt": total_debt,
+        "assumptions": {
+            "discount_rate": discount_rate,
+            "terminal_growth_rate": terminal_growth_rate,
+            "years_projected": years,
+        },
+    }
+
+
+@app.post("/financial-upload")
+async def upload_financial_statement(
+    file: UploadFile = File(...),
+    company_name: str = Form(...),
+    symbol: str = Form(""),
+    discount_rate: float = Form(0.10),
+    terminal_growth_rate: float = Form(0.03),
+    request: Request = None,
+):
+    """Upload a CSV financial statement, run DCF valuation and growth analysis."""
+    # Validate file
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file provided")
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"Only CSV files are supported. Got: {ext}")
+
+    raw = await file.read()
+    if len(raw) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="File too large (max 5 MB)")
+
+    content = raw.decode("utf-8-sig", errors="replace")
+    parsed = _parse_csv_financial_data(content)
+
+    # DCF
+    dcf_result = _run_dcf_from_upload(parsed, discount_rate, terminal_growth_rate)
+
+    # Growth analysis for key metrics
+    growth_metrics = {}
+    for metric in ["revenue", "net_income", "free_cash_flow", "operating_income", "total_assets", "total_equity"]:
+        vals = _resolve_metric(parsed, metric)
+        if vals and any(v for v in vals if v is not None):
+            growth_metrics[metric] = _compute_growth(vals)
+
+    # Persist
+    user_id = 1
+    try:
+        user = await get_current_user(request)
+        user_id = get_user_id(user)
+    except Exception:
+        pass
+
+    upload_id = db.save_financial_upload(
+        user_id=user_id,
+        company_name=company_name,
+        symbol=symbol or None,
+        statement_type="financial_statement",
+        data_json=json.dumps(parsed),
+        dcf_result_json=json.dumps(dcf_result),
+        growth_json=json.dumps(growth_metrics),
+    )
+
+    return {
+        "id": upload_id,
+        "company_name": company_name,
+        "symbol": symbol,
+        "dcf": dcf_result,
+        "growth": growth_metrics,
+        "periods": parsed.get("periods", [p.get(parsed["metrics"][0]) for p in parsed.get("periods", [])] if parsed["format"] == "column_per_metric" else []),
+    }
+
+
+@app.get("/financial-uploads")
+async def list_financial_uploads(request: Request):
+    """List user's uploaded financial statements."""
+    user_id = 1
+    try:
+        user = await get_current_user(request)
+        user_id = get_user_id(user)
+    except Exception:
+        pass
+    uploads = db.get_financial_uploads(user_id)
+    results = []
+    for u in uploads:
+        results.append({
+            "id": u["id"],
+            "company_name": u["company_name"],
+            "symbol": u["symbol"],
+            "statement_type": u["statement_type"],
+            "created_at": u["created_at"],
+            "has_dcf": u["dcf_result_json"] is not None,
+            "has_growth": u["growth_json"] is not None,
+        })
+    return {"uploads": results}
+
+
+@app.get("/financial-uploads/{upload_id}")
+async def get_financial_upload_detail(upload_id: int, request: Request):
+    """Get full detail of an uploaded financial statement including DCF and growth results."""
+    user_id = 1
+    try:
+        user = await get_current_user(request)
+        user_id = get_user_id(user)
+    except Exception:
+        pass
+    record = db.get_financial_upload(upload_id, user_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Upload not found")
+    return {
+        "id": record["id"],
+        "company_name": record["company_name"],
+        "symbol": record["symbol"],
+        "statement_type": record["statement_type"],
+        "created_at": record["created_at"],
+        "data": json.loads(record["data_json"]) if record["data_json"] else None,
+        "dcf": json.loads(record["dcf_result_json"]) if record["dcf_result_json"] else None,
+        "growth": json.loads(record["growth_json"]) if record["growth_json"] else None,
+    }
+
+
+@app.delete("/financial-uploads/{upload_id}")
+async def delete_financial_upload_endpoint(upload_id: int, request: Request):
+    """Delete an uploaded financial statement."""
+    user_id = 1
+    try:
+        user = await get_current_user(request)
+        user_id = get_user_id(user)
+    except Exception:
+        pass
+    if not db.delete_financial_upload(upload_id, user_id):
+        raise HTTPException(status_code=404, detail="Upload not found")
+    return {"message": "Upload deleted"}
+
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+    port = int(os.getenv("PORT", "8000"))
+    uvicorn.run(app, host="0.0.0.0", port=port)

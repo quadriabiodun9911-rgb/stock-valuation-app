@@ -16,6 +16,9 @@ interface Props {
 
 const StrategyDetailScreen: React.FC<Props> = ({ route, navigation }) => {
     const { stock } = route.params;
+    const upsidePct = stock.currentPrice
+        ? ((stock.intrinsicValue - stock.currentPrice) / stock.currentPrice) * 100
+        : 0;
 
     const renderLayer = (
         title: string,
@@ -99,8 +102,8 @@ const StrategyDetailScreen: React.FC<Props> = ({ route, navigation }) => {
                                     stock.recommendation === 'BUY'
                                         ? '#34C759'
                                         : stock.recommendation === 'HOLD'
-                                        ? '#FF9500'
-                                        : '#FF3B30',
+                                            ? '#FF9500'
+                                            : '#FF3B30',
                             },
                         ]}
                     >
@@ -109,6 +112,45 @@ const StrategyDetailScreen: React.FC<Props> = ({ route, navigation }) => {
                     <Text style={styles.confidenceText}>
                         Confidence: {stock.confidence}
                     </Text>
+                    <View style={styles.miniStatsRow}>
+                        <View style={styles.miniStatCard}>
+                            <Text style={styles.miniStatLabel}>Upside</Text>
+                            <Text style={[styles.miniStatValue, upsidePct >= 0 ? styles.positiveValue : styles.negativeValue]}>
+                                {upsidePct >= 0 ? '+' : ''}{upsidePct.toFixed(1)}%
+                            </Text>
+                        </View>
+                        <View style={styles.miniStatCard}>
+                            <Text style={styles.miniStatLabel}>Target</Text>
+                            <Text style={styles.miniStatValue}>${stock.intrinsicValue.toFixed(2)}</Text>
+                        </View>
+                    </View>
+                </View>
+
+                <View style={styles.quickLinksCard}>
+                    <Text style={styles.quickLinksTitle}>Related Actions</Text>
+                    <View style={styles.quickLinksRow}>
+                        <TouchableOpacity
+                            style={styles.quickLinkButton}
+                            onPress={() => navigation.navigate('Valuation', { symbol: stock.symbol })}
+                        >
+                            <Ionicons name="calculator" size={16} color="#2563eb" />
+                            <Text style={styles.quickLinkText}>Valuation</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={styles.quickLinkButton}
+                            onPress={() => navigation.navigate('EnhancedCharting', { symbol: stock.symbol })}
+                        >
+                            <Ionicons name="bar-chart" size={16} color="#2563eb" />
+                            <Text style={styles.quickLinkText}>Chart</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={styles.quickLinkButton}
+                            onPress={() => navigation.navigate('DCA', { symbol: stock.symbol })}
+                        >
+                            <Ionicons name="repeat" size={16} color="#2563eb" />
+                            <Text style={styles.quickLinkText}>DCA</Text>
+                        </TouchableOpacity>
+                    </View>
                 </View>
 
                 {/* Allocation */}
@@ -134,12 +176,12 @@ const StrategyDetailScreen: React.FC<Props> = ({ route, navigation }) => {
                     [
                         {
                             label: 'Intrinsic Value',
-                            value: `₦${stock.intrinsicValue.toFixed(2)}`,
+                            value: `$${stock.intrinsicValue.toFixed(2)}`,
                             good: true,
                         },
                         {
                             label: 'Current Price',
-                            value: `₦${stock.currentPrice.toFixed(2)}`,
+                            value: `$${stock.currentPrice.toFixed(2)}`,
                             good: stock.discountToFairValue >= 30,
                         },
                         {
@@ -169,18 +211,28 @@ const StrategyDetailScreen: React.FC<Props> = ({ route, navigation }) => {
                         },
                         {
                             label: 'Revenue Growth',
-                            value: `${stock.revenueGrowth.toFixed(1)}%`,
-                            good: stock.revenueGrowth > 0,
+                            value: `${(stock.revenueGrowth ?? 0).toFixed(1)}%`,
+                            good: (stock.revenueGrowth ?? 0) > 0,
                         },
                         {
                             label: 'Debt Ratio',
-                            value: `${stock.debtRatio.toFixed(1)}%`,
-                            good: stock.debtRatio < 50,
+                            value: `${(stock.debtRatio ?? 0).toFixed(1)}%`,
+                            good: (stock.debtRatio ?? 0) < 50,
                         },
                         {
                             label: 'Profit Margin',
-                            value: `${stock.profitMargin.toFixed(1)}%`,
-                            good: stock.profitMargin > 0,
+                            value: `${(stock.profitMargin ?? 0).toFixed(1)}%`,
+                            good: (stock.profitMargin ?? 0) > 0,
+                        },
+                        {
+                            label: 'Return on Equity',
+                            value: `${((stock.roe ?? 0) * 100).toFixed(1)}%`,
+                            good: (stock.roe ?? 0) > 0.15,
+                        },
+                        {
+                            label: 'Current Ratio',
+                            value: `${(stock.currentRatio ?? 0).toFixed(2)}`,
+                            good: (stock.currentRatio ?? 0) >= 1.0,
                         },
                     ]
                 )}
@@ -194,12 +246,12 @@ const StrategyDetailScreen: React.FC<Props> = ({ route, navigation }) => {
                     [
                         {
                             label: '50-Day MA',
-                            value: `₦${stock.ma50.toFixed(2)}`,
+                            value: `$${stock.ma50.toFixed(2)}`,
                             good: stock.currentPrice > stock.ma50,
                         },
                         {
                             label: '200-Day MA',
-                            value: `₦${stock.ma200.toFixed(2)}`,
+                            value: `$${stock.ma200.toFixed(2)}`,
                             good: stock.currentPrice > stock.ma200,
                         },
                         {
@@ -211,9 +263,44 @@ const StrategyDetailScreen: React.FC<Props> = ({ route, navigation }) => {
                             good: stock.currentPrice > stock.ma50,
                         },
                         {
+                            label: 'RSI (14)',
+                            value: `${(stock.rsi ?? 50).toFixed(0)}`,
+                            good: (stock.rsi ?? 50) >= 30 && (stock.rsi ?? 50) <= 70,
+                        },
+                        {
                             label: 'Relative Strength',
                             value: `${stock.relativeStrength.toFixed(0)}`,
                             good: stock.relativeStrength > 50,
+                        },
+                    ]
+                )}
+
+                {/* Layer 4: Risk */}
+                {renderLayer(
+                    'Layer 4: Risk Assessment',
+                    'warning',
+                    '#8B5CF6',
+                    stock.riskScore ?? 0,
+                    [
+                        {
+                            label: 'Beta',
+                            value: `${(stock.beta ?? 1).toFixed(2)}`,
+                            good: (stock.beta ?? 1) <= 1.5,
+                        },
+                        {
+                            label: 'Volatility',
+                            value: `${((stock.volatility ?? 0) * 100).toFixed(1)}%`,
+                            good: (stock.volatility ?? 0) < 0.4,
+                        },
+                        {
+                            label: 'Max Drawdown',
+                            value: `${((stock.maxDrawdown ?? 0) * 100).toFixed(1)}%`,
+                            good: Math.abs(stock.maxDrawdown ?? 0) < 0.3,
+                        },
+                        {
+                            label: 'Sharpe Estimate',
+                            value: `${(stock.sharpeEstimate ?? 0).toFixed(2)}`,
+                            good: (stock.sharpeEstimate ?? 0) > 0.5,
                         },
                     ]
                 )}
@@ -228,7 +315,7 @@ const StrategyDetailScreen: React.FC<Props> = ({ route, navigation }) => {
                         <View style={styles.exitRule}>
                             <Ionicons name="checkmark-circle" size={18} color="#999" />
                             <Text style={styles.exitRuleText}>
-                                Sell when price reaches ₦{stock.intrinsicValue.toFixed(2)}
+                                Sell when price reaches ${stock.intrinsicValue.toFixed(2)}
                             </Text>
                         </View>
                         <View style={styles.exitRule}>
@@ -255,7 +342,10 @@ const StrategyDetailScreen: React.FC<Props> = ({ route, navigation }) => {
                     <TouchableOpacity
                         style={styles.actionButton}
                         onPress={() =>
-                            navigation.navigate('Watchlist', { addSymbol: stock.symbol })
+                            navigation.navigate('MainTabs', {
+                                screen: 'Watchlist',
+                                params: { addSymbol: stock.symbol },
+                            })
                         }
                     >
                         <Ionicons name="bookmark" size={20} color="white" />
@@ -297,10 +387,15 @@ const styles = StyleSheet.create({
         margin: 16,
         padding: 20,
         backgroundColor: 'white',
-        borderRadius: 12,
+        borderRadius: 16,
         alignItems: 'center',
         borderWidth: 1,
         borderColor: '#e5e7eb',
+        shadowColor: '#0f172a',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 8,
+        elevation: 2,
     },
     overallLabel: {
         fontSize: 12,
@@ -327,6 +422,70 @@ const styles = StyleSheet.create({
     confidenceText: {
         fontSize: 12,
         color: '#666',
+    },
+    miniStatsRow: {
+        flexDirection: 'row',
+        gap: 10,
+        marginTop: 14,
+    },
+    miniStatCard: {
+        flex: 1,
+        backgroundColor: '#f8fafc',
+        borderRadius: 12,
+        paddingVertical: 10,
+        paddingHorizontal: 12,
+        alignItems: 'center',
+    },
+    miniStatLabel: {
+        fontSize: 11,
+        color: '#64748b',
+        marginBottom: 4,
+    },
+    miniStatValue: {
+        fontSize: 15,
+        fontWeight: '700',
+        color: '#0f172a',
+    },
+    positiveValue: {
+        color: '#16a34a',
+    },
+    negativeValue: {
+        color: '#dc2626',
+    },
+    quickLinksCard: {
+        marginHorizontal: 16,
+        marginBottom: 16,
+        padding: 16,
+        backgroundColor: '#ffffff',
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: '#e5e7eb',
+    },
+    quickLinksTitle: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#0f172a',
+        marginBottom: 12,
+    },
+    quickLinksRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+    },
+    quickLinkButton: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#eff6ff',
+        borderRadius: 12,
+        paddingVertical: 10,
+        marginHorizontal: 4,
+        gap: 6,
+    },
+    quickLinkText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#1d4ed8',
     },
     allocationCard: {
         marginHorizontal: 16,

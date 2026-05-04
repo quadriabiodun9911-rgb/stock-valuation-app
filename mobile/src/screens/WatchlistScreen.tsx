@@ -16,6 +16,7 @@ import { Market, MarketInfo, stockAPI } from '../services/api';
 
 interface Props {
     navigation: any;
+    route?: any;
 }
 
 type AlertDirection = 'above' | 'below';
@@ -34,7 +35,7 @@ interface WatchlistItem {
     changePct?: number;
 }
 
-const WatchlistScreen: React.FC<Props> = ({ navigation }) => {
+const WatchlistScreen: React.FC<Props> = ({ navigation, route }) => {
     const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
     const [selectedMarket, setSelectedMarket] = useState<Market>('US');
     const [autoRefresh, setAutoRefresh] = useState(true);
@@ -46,6 +47,25 @@ const WatchlistScreen: React.FC<Props> = ({ navigation }) => {
         () => watchlist.map((item) => item.symbol).sort().join(','),
         [watchlist]
     );
+
+    useEffect(() => {
+        const incomingSymbol = route?.params?.addSymbol?.trim?.().toUpperCase();
+        if (!incomingSymbol) return;
+
+        setWatchlist((prev) => {
+            const exists = prev.some((item: WatchlistItem) => item.symbol === incomingSymbol);
+            if (exists) return prev;
+            return [
+                ...prev,
+                {
+                    symbol: incomingSymbol,
+                    alertDirection: 'above',
+                    alertEnabled: false,
+                    dayMoveAlertEnabled: false,
+                },
+            ];
+        });
+    }, [route?.params?.addSymbol]);
 
     const handleAddPress: () => void = () => {
         if (!pendingSymbol.trim()) {
@@ -86,10 +106,7 @@ const WatchlistScreen: React.FC<Props> = ({ navigation }) => {
     };
 
     const navigateToStock = (symbol: string): void => {
-        navigation.navigate('Home', {
-            screen: 'StockDetail',
-            params: { symbol }
-        });
+        navigation.navigate('StockDetail', { symbol });
     };
 
     const formatCurrency = (value?: number) =>
@@ -161,7 +178,7 @@ const WatchlistScreen: React.FC<Props> = ({ navigation }) => {
         if (!autoRefresh || !symbolKey) return;
         const intervalId = setInterval(() => {
             refreshWatchlist(false);
-        }, 60000);
+        }, 300000);
         return () => clearInterval(intervalId);
     }, [autoRefresh, symbolKey, selectedMarket]);
 
@@ -227,7 +244,7 @@ const WatchlistScreen: React.FC<Props> = ({ navigation }) => {
                 </View>
                 {refreshing && (
                     <View style={styles.inlineLoading}>
-                        <ActivityIndicator size="small" color="#007AFF" />
+                        <ActivityIndicator size="small" color="#2563eb" />
                         <Text style={styles.inlineLoadingText}>Refreshing prices...</Text>
                     </View>
                 )}
@@ -553,7 +570,7 @@ const styles = StyleSheet.create({
     addActionButton: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#007AFF',
+        backgroundColor: '#2563eb',
         paddingHorizontal: 14,
         paddingVertical: 10,
         borderRadius: 10,
@@ -591,7 +608,7 @@ const styles = StyleSheet.create({
     refreshButton: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#007AFF',
+        backgroundColor: '#2563eb',
         paddingHorizontal: 12,
         paddingVertical: 8,
         borderRadius: 10,
