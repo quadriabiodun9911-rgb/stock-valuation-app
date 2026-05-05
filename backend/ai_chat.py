@@ -13,6 +13,36 @@ from ai_service import advisor
 
 
 logger = logging.getLogger(__name__)
+
+
+def _get_info_and_fast_info(symbol: str) -> tuple[dict, dict]:
+    """
+    Fetch stock info through ValuationService's shared in-memory cache so that
+    AI-chat calls benefit from the same 30-min cached yfinance data as valuation
+    endpoints — avoiding redundant requests that trigger rate limiting.
+    Falls back to a direct yfinance call if the service is unavailable.
+    """
+    try:
+        # Import here to avoid circular import at module load time
+        from main import valuation_service
+        data = valuation_service.get_stock_data(symbol)
+        info = data.get("info", {})
+        # Build a fast_info-compatible dict from the full info blob
+        fast_info: dict = {
+            "lastPrice": info.get("currentPrice") or info.get("regularMarketPrice", 0),
+            "last_price": info.get("currentPrice") or info.get("regularMarketPrice", 0),
+            "marketCap": info.get("marketCap", 0),
+            "market_cap": info.get("marketCap", 0),
+            "yearHigh": info.get("fiftyTwoWeekHigh", 0),
+            "year_high": info.get("fiftyTwoWeekHigh", 0),
+            "yearLow": info.get("fiftyTwoWeekLow", 0),
+            "year_low": info.get("fiftyTwoWeekLow", 0),
+        }
+        return info, fast_info
+    except Exception as exc:
+        logger.warning("valuation_service cache miss for %s, falling back to yfinance: %s", symbol, exc)
+        t = yf.Ticker(symbol)
+        return t.info, t.fast_info
 router = APIRouter(tags=["ai-chat"])
 
 _SYMBOL_STOPWORDS = {
@@ -161,9 +191,7 @@ def _buy_sell_analysis(symbol: str, holdings):
     if not symbol:
         return {"response": "Which stock are you asking about? Please include a ticker symbol.", "type": "clarification", "data": None}
     try:
-        t = yf.Ticker(symbol)
-        info = t.info
-        fi = t.fast_info
+        info, fi = _get_info_and_fast_info(symbol)
         price = float(fi.get("lastPrice", 0) or fi.get("last_price", 0))
         pe = info.get("trailingPE") or info.get("forwardPE")
         target = info.get("targetMeanPrice")
@@ -245,8 +273,8 @@ def _portfolio_summary(holdings):
     details = []
     for h in holdings:
         try:
-            t = yf.Ticker(h["symbol"])
-            price = float(t.fast_info.get("lastPrice", 0) or t.fast_info.get("last_price", 0))
+            _info, _fi = _get_info_and_fast_info(h["symbol"])
+            price = float(_fi.get("lastPrice", 0) or _fi.get("last_price", 0))
             value = price * h["shares"]
             cost = h["cost_basis"] * h["shares"]
             gain_pct = ((price - h["cost_basis"]) / h["cost_basis"] * 100) if h["cost_basis"] else 0
@@ -290,9 +318,7 @@ def _compare_stocks(question: str, symbol: str):
     results = []
     for s in symbols:
         try:
-            t = yf.Ticker(s)
-            info = t.info
-            fi = t.fast_info
+            info, fi = _get_info_and_fast_info(s)
             results.append({
                 "symbol": s,
                 "name": info.get("shortName", s),
@@ -328,8 +354,7 @@ def _dividend_analysis(symbol: str):
     if not symbol:
         return {"response": "Which stock's dividends? Include a ticker.", "type": "clarification", "data": None}
     try:
-        t = yf.Ticker(symbol)
-        info = t.info
+        info, _fi = _get_info_and_fast_info(symbol)
         div_yield = info.get("dividendYield", 0)
         div_rate = info.get("dividendRate", 0)
         payout = info.get("payoutRatio", 0)
@@ -357,8 +382,7 @@ def _financials_summary(symbol: str):
     if not symbol:
         return {"response": "Which stock? Include a ticker.", "type": "clarification", "data": None}
     try:
-        t = yf.Ticker(symbol)
-        info = t.info
+        info, _fi = _get_info_and_fast_info(symbol)
         name = info.get("shortName", symbol)
         revenue = info.get("totalRevenue", 0)
         profit = info.get("netIncomeToCommon", 0)
@@ -384,9 +408,7 @@ def _risk_analysis(symbol: str):
     if not symbol:
         return {"response": "Which stock? Include a ticker.", "type": "clarification", "data": None}
     try:
-        t = yf.Ticker(symbol)
-        info = t.info
-        fi = t.fast_info
+        info, fi = _get_info_and_fast_info(symbol)
         beta = info.get("beta", 1)
         high52 = float(fi.get("yearHigh", 0) or fi.get("year_high", 0))
         low52 = float(fi.get("yearLow", 0) or fi.get("year_low", 0))
@@ -411,9 +433,7 @@ def _risk_analysis(symbol: str):
 
 def _general_stock_info(symbol: str):
     try:
-        t = yf.Ticker(symbol)
-        info = t.info
-        fi = t.fast_info
+        info, fi = _get_info_and_fast_info(symbol)
         price = float(fi.get("lastPrice", 0) or fi.get("last_price", 0))
         name = info.get("shortName", symbol)
         sector = info.get("sector", "Unknown")
@@ -448,8 +468,7 @@ class OptionsCalcRequest(BaseModel):
 async def calculate_options(req: OptionsCalcRequest, user: dict = Depends(get_current_user)):
     """Calculate options profit/loss scenarios."""
     try:
-        t = yf.Ticker(req.symbol)
-        fi = t.fast_info
+        _info, fi = _get_info_and_fast_info(req.symbol)
         current_price = float(fi.get("lastPrice", 0) or fi.get("last_price", 0))
 
         shares_per_contract = 100

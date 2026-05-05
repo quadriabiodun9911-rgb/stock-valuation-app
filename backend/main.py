@@ -612,15 +612,19 @@ class ValuationResult:
     valuation_method: str
     confidence_level: str
 
+# Common symbols to pre-warm on startup
+_WARM_UP_SYMBOLS = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA", "META", "JPM", "SPY", "QQQ"]
+
 class StockValuationService:
     def __init__(self):
         self.cache = {}
-        self.cache_duration = int(os.getenv("MARKET_CACHE_TTL_SECONDS", "300"))
+        # Default 30-min active cache; 24-hour stale fallback; 10-second retry backoff
+        self.cache_duration = int(os.getenv("MARKET_CACHE_TTL_SECONDS", "1800"))
         self.stale_cache_duration = int(
-            os.getenv("MARKET_STALE_CACHE_TTL_SECONDS", "1800")
+            os.getenv("MARKET_STALE_CACHE_TTL_SECONDS", "86400")
         )
         self.fetch_backoff_seconds = int(
-            os.getenv("MARKET_FETCH_BACKOFF_SECONDS", "30")
+            os.getenv("MARKET_FETCH_BACKOFF_SECONDS", "10")
         )
         self.last_failure = {}
         self.cache_lock = threading.Lock()
@@ -664,48 +668,63 @@ class StockValuationService:
                 ),
             )
 
-        try:
-            stock = yf.Ticker(symbol)
-            data = {
-                'info': stock.info,
-                'history': stock.history(period=period),
-                'financials': stock.financials,
-                'balance_sheet': stock.balance_sheet,
-                'cashflow': stock.cashflow,
-                'calendar': stock.calendar,
-                'recommendations': stock.recommendations,
-                'major_holders': stock.major_holders,
-                'institutional_holders': stock.institutional_holders
-            }
+        # Retry up to 3 times with exponential back-off for rate-limit errors
+        last_exc: Exception = RuntimeError("unknown")
+        for attempt in range(3):
+            try:
+                stock = yf.Ticker(symbol)
+                data = {
+                    'info': stock.info,
+                    'history': stock.history(period=period),
+                    'financials': stock.financials,
+                    'balance_sheet': stock.balance_sheet,
+                    'cashflow': stock.cashflow,
+                    'calendar': stock.calendar,
+                    'recommendations': stock.recommendations,
+                    'major_holders': stock.major_holders,
+                    'institutional_holders': stock.institutional_holders
+                }
+                with self.cache_lock:
+                    self.cache[cache_key] = (data, current_time)
+                    self.last_failure.pop(cache_key, None)
+                return data
+            except Exception as e:
+                last_exc = e
+                err_str = str(e).lower()
+                is_rate_limit = any(
+                    kw in err_str
+                    for kw in ("too many requests", "rate limit", "rate-limit", "429", "throttle")
+                )
+                if is_rate_limit and attempt < 2:
+                    wait = 2 ** attempt  # 1s, 2s
+                    logger.warning("Rate-limited fetching %s, retrying in %ss (attempt %d)", symbol, wait, attempt + 1)
+                    time.sleep(wait)
+                    continue
+                break
 
-            with self.cache_lock:
-                self.cache[cache_key] = (data, current_time)
-                self.last_failure.pop(cache_key, None)
-            return data
-        except Exception as e:
-            with self.cache_lock:
-                self.last_failure[cache_key] = current_time
-                cached_entry = self.cache.get(cache_key)
+        with self.cache_lock:
+            self.last_failure[cache_key] = current_time
+            cached_entry = self.cache.get(cache_key)
 
-            if cached_entry:
-                cached_data, cached_time = cached_entry
-                cache_age = (current_time - cached_time).total_seconds()
-                if cache_age < self.stale_cache_duration:
-                    logger.warning(
-                        "Using stale cached market data for %s after fetch failure: %s",
-                        symbol,
-                        e,
-                    )
-                    return cached_data
+        if cached_entry:
+            cached_data, cached_time = cached_entry
+            cache_age = (current_time - cached_time).total_seconds()
+            if cache_age < self.stale_cache_duration:
+                logger.warning(
+                    "Using stale cached market data for %s after fetch failure: %s",
+                    symbol,
+                    last_exc,
+                )
+                return cached_data
 
-            logger.error(f"Error fetching data for {symbol}: {e}")
-            err_str = str(e).lower()
-            is_rate_limit = any(
-                kw in err_str
-                for kw in ("too many requests", "rate limit", "rate-limit", "429", "throttle")
-            )
-            status_code = 429 if is_rate_limit else 400
-            raise HTTPException(status_code=status_code, detail=f"Error fetching stock data: {str(e)}")
+        logger.error(f"Error fetching data for {symbol}: {last_exc}")
+        err_str = str(last_exc).lower()
+        is_rate_limit = any(
+            kw in err_str
+            for kw in ("too many requests", "rate limit", "rate-limit", "429", "throttle")
+        )
+        status_code = 429 if is_rate_limit else 400
+        raise HTTPException(status_code=status_code, detail=f"Error fetching stock data: {str(last_exc)}")
     
     def calculate_dcf_valuation(self, symbol: str, growth_rate: float = 0.05, 
                                discount_rate: float = 0.10, terminal_growth_rate: float = 0.03):
@@ -1447,6 +1466,25 @@ class StockValuationService:
 
 # Initialize service
 valuation_service = StockValuationService()
+
+
+def _warm_up_cache():
+    """Pre-populate yfinance cache for common symbols on startup."""
+    logger.info("Starting cache warm-up for %d symbols...", len(_WARM_UP_SYMBOLS))
+    for sym in _WARM_UP_SYMBOLS:
+        try:
+            valuation_service.get_stock_data(sym)
+            logger.info("Cache warm-up: %s OK", sym)
+        except Exception as exc:
+            logger.warning("Cache warm-up failed for %s: %s", sym, exc)
+        time.sleep(1)  # 1-second gap to avoid rate limiting
+    logger.info("Cache warm-up complete.")
+
+
+# Kick off warm-up in a daemon thread so it doesn't block startup
+_warm_up_thread = threading.Thread(target=_warm_up_cache, daemon=True)
+_warm_up_thread.start()
+
 
 # API Endpoints
 @app.get("/")
