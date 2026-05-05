@@ -313,6 +313,16 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
                             <Ionicons name={isDark ? 'sunny' : 'moon'} size={18} color={isDark ? '#f59e0b' : '#94a3b8'} />
                         </TouchableOpacity>
                     </View>
+
+                    {/* Big CTA headline */}
+                    <View style={{ marginTop: 8, marginBottom: 4 }}>
+                        <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800', letterSpacing: -0.3 }}>
+                            What stock are you{'\n'}thinking about?
+                        </Text>
+                        <Text style={{ color: '#94a3b8', fontSize: 13, marginTop: 4 }}>
+                            Get valuation, news &amp; AI analysis in seconds
+                        </Text>
+                    </View>
                     <View style={styles.marketToggleRow}>
                         <View style={styles.marketToggle}>
                             {Object.keys(AVAILABLE_MARKETS).map((m) => (
@@ -330,11 +340,11 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
                     </View>
 
                     {/* Search */}
-                    <View style={styles.searchWrap}>
-                        <Ionicons name="search" size={18} color="#94a3b8" style={{ marginRight: 10 }} />
+                    <View style={[styles.searchWrap, { paddingVertical: 14, borderRadius: 14, marginTop: 14, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1.5, borderColor: searchQuery.length > 0 ? '#3b82f6' : 'rgba(255,255,255,0.18)' }]}>
+                        <Ionicons name="search" size={20} color="#e2e8f0" style={{ marginRight: 10 }} />
                         <TextInput
-                            style={styles.searchInput}
-                            placeholder={`Search stocks (e.g. ${AVAILABLE_MARKETS[selectedMarket].featured_stocks[0]})`}
+                            style={[styles.searchInput, { fontSize: 16, color: '#fff' }]}
+                            placeholder={`e.g. AAPL, Tesla, gold...`}
                             placeholderTextColor="#64748b"
                             value={searchQuery}
                             onChangeText={setSearchQuery}
@@ -342,9 +352,13 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
                             autoCapitalize="characters"
                             returnKeyType="search"
                         />
-                        {searchQuery.length > 0 && (
+                        {searchQuery.length > 0 ? (
                             <TouchableOpacity onPress={() => { setSearchQuery(''); setCompanyResults([]); }}>
                                 <Ionicons name="close-circle" size={20} color="#475569" />
+                            </TouchableOpacity>
+                        ) : (
+                            <TouchableOpacity onPress={handleSearch} style={{ backgroundColor: '#2563eb', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6 }}>
+                                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Go</Text>
                             </TouchableOpacity>
                         )}
                     </View>

@@ -79,6 +79,7 @@ import OptionsCalculatorScreen from './src/screens/OptionsCalculatorScreen';
 import ReferralScreen from './src/screens/ReferralScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import CommoditiesCryptoScreen from './src/screens/CommoditiesCryptoScreen';
+import { requestNotificationPermission, scheduleDailyBrief } from './src/services/notifications';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -261,6 +262,21 @@ function AppContent() {
             }
         };
         initAnalytics();
+
+        // Request notification permission and schedule daily brief
+        const initNotifications = async () => {
+            try {
+                const granted = await requestNotificationPermission();
+                if (granted) {
+                    const raw = await AsyncStorage.getItem('watchlist_items');
+                    const watchlist: { symbol: string }[] = raw ? JSON.parse(raw) : [];
+                    await scheduleDailyBrief(watchlist.map((w) => w.symbol));
+                }
+            } catch (e) {
+                console.error('Notification init failed:', e);
+            }
+        };
+        initNotifications();
     }, []);
 
     return (

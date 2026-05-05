@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { API_URL } from '../services/api';
+import { scheduleAlertNotification } from '../services/notifications';
 
 interface PriceAlert {
     symbol: string;
@@ -88,6 +89,8 @@ const PriceAlertsScreen: React.FC<Props> = ({ route, navigation }) => {
                 }),
             });
             if (!res.ok) throw new Error('Failed');
+            // Confirm to the user and schedule a local notification for this alert
+            await scheduleAlertNotification(trimmed, alertType, parseFloat(targetPrice));
             Alert.alert('Created', `Alert set for ${trimmed} ${alertType} $${targetPrice}`);
             setSymbol('');
             setTargetPrice('');

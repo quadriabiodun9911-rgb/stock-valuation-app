@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
     View, Text, StyleSheet, TextInput, TouchableOpacity, FlatList,
-    KeyboardAvoidingView, Platform, ActivityIndicator,
+    KeyboardAvoidingView, Platform, ActivityIndicator, Share,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -182,12 +182,25 @@ const AIChatScreen = ({ navigation, route }: any) => {
                     <Text style={styles.headerTitle}>AI Analyst</Text>
                     <View style={styles.onlineDot} />
                 </View>
-                <TouchableOpacity
-                    onPress={() => navigation.navigate('AssistiveMetrics')}
-                    style={styles.metricsBtn}
-                >
-                    <Ionicons name="stats-chart" size={18} color="#fff" />
-                </TouchableOpacity>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                    <TouchableOpacity
+                        onPress={async () => {
+                            const aiMessages = messages.filter((m) => !m.isUser).map((m) => m.text);
+                            if (!aiMessages.length) return;
+                            const text = `📊 AI Analyst insights${symbolFromRoute ? ` for ${symbolFromRoute}` : ''}:\n\n${aiMessages.slice(-3).join('\n\n')}\n\nResearched via StockVal · Not financial advice`;
+                            await Share.share({ message: text });
+                        }}
+                        style={styles.metricsBtn}
+                    >
+                        <Ionicons name="share-outline" size={18} color="#fff" />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        onPress={() => navigation.navigate('AssistiveMetrics')}
+                        style={styles.metricsBtn}
+                    >
+                        <Ionicons name="stats-chart" size={18} color="#fff" />
+                    </TouchableOpacity>
+                </View>
             </LinearGradient>
 
             {/* Disclaimer banner */}

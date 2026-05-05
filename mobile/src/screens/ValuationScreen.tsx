@@ -8,6 +8,7 @@ import {
     TextInput,
     Alert,
     ActivityIndicator,
+    Share,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { stockAPI, DCFParams, DCFResult, ComparableResult, TechnicalResult, AIRecommendationResult } from '../services/api';
@@ -286,6 +287,32 @@ const ValuationScreen: React.FC<Props> = ({ route, navigation }) => {
         const intrinsic = equityValue / shares;
 
         setDcfPriceResult(intrinsic);
+    };
+
+    const buildVerdict = () => {
+        const prices: number[] = [];
+        if (dcfResult?.intrinsic_value && dcfResult.intrinsic_value > 0) prices.push(dcfResult.intrinsic_value);
+        if (comparableResult?.average_valuation && comparableResult.average_valuation > 0) prices.push(comparableResult.average_valuation);
+        if (prices.length === 0) return null;
+        const fairValue = prices.reduce((a, b) => a + b, 0) / prices.length;
+        const current = stockInfo?.current_price ?? 0;
+        if (!current) return null;
+        const diff = ((fairValue - current) / current) * 100;
+        let label: string, color: string, icon: string, bg: string;
+        if (diff > 10) { label = `${diff.toFixed(1)}% undervalued`; color = '#16a34a'; icon = 'trending-up'; bg = '#f0fdf4'; }
+        else if (diff < -10) { label = `${Math.abs(diff).toFixed(1)}% overvalued`; color = '#dc2626'; icon = 'trending-down'; bg = '#fef2f2'; }
+        else { label = 'Fairly valued'; color = '#d97706'; icon = 'remove-circle'; bg = '#fffbeb'; }
+        return { fairValue, current, diff, label, color, icon, bg };
+    };
+
+    const shareAnalysis = async () => {
+        const verdict = buildVerdict();
+        const lines: string[] = [`📊 ${symbol} Analysis via StockVal`];
+        if (stockInfo?.current_price) lines.push(`Current Price: $${stockInfo.current_price.toFixed(2)}`);
+        if (verdict) lines.push(`Fair Value: $${verdict.fairValue.toFixed(2)} (${verdict.label})`);
+        lines.push(buildFullSummary());
+        lines.push('\nResearch with StockVal — not financial advice.');
+        try { await Share.share({ message: lines.join('\n') }); } catch (_) { }
     };
 
     const buildFullSummary = () => {
@@ -1125,6 +1152,12 @@ const ValuationScreen: React.FC<Props> = ({ route, navigation }) => {
                             <Ionicons name="analytics-outline" size={18} color="white" />
                             <Text style={styles.scenarioButtonText}>Scenarios</Text>
                         </TouchableOpacity>
+                        <TouchableOpacity
+                            style={[styles.scenarioButton, { backgroundColor: '#334155' }]}
+                            onPress={shareAnalysis}
+                        >
+                            <Ionicons name="share-outline" size={18} color="white" />
+                        </TouchableOpacity>
                     </View>
                 </View>
 
@@ -1167,6 +1200,34 @@ const ValuationScreen: React.FC<Props> = ({ route, navigation }) => {
                     </TouchableOpacity>
                 </View>
             </View>
+
+            {/* Verdict Card — shows once DCF or comparable runs */}
+            {(() => {
+                const v = buildVerdict();
+                if (!v) return null;
+                return (
+                    <View style={{ backgroundColor: v.bg, marginHorizontal: 16, marginTop: 14, borderRadius: 14, padding: 16, borderLeftWidth: 4, borderLeftColor: v.color }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                            <Ionicons name={v.icon as any} size={20} color={v.color} />
+                            <Text style={{ fontSize: 16, fontWeight: '800', color: v.color }}>{v.label}</Text>
+                        </View>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-around' }}>
+                            <View style={{ alignItems: 'center' }}>
+                                <Text style={{ fontSize: 11, color: '#64748b', fontWeight: '600', letterSpacing: 0.5 }}>CURRENT PRICE</Text>
+                                <Text style={{ fontSize: 20, fontWeight: '800', color: '#0f172a', marginTop: 2 }}>${v.current.toFixed(2)}</Text>
+                            </View>
+                            <View style={{ width: 1, backgroundColor: '#e2e8f0' }} />
+                            <View style={{ alignItems: 'center' }}>
+                                <Text style={{ fontSize: 11, color: '#64748b', fontWeight: '600', letterSpacing: 0.5 }}>FAIR VALUE</Text>
+                                <Text style={{ fontSize: 20, fontWeight: '800', color: v.color, marginTop: 2 }}>${v.fairValue.toFixed(2)}</Text>
+                            </View>
+                        </View>
+                        <Text style={{ textAlign: 'center', marginTop: 10, fontSize: 11, color: '#94a3b8' }}>
+                            Avg of {dcfResult && comparableResult ? 'DCF + Peer Comp' : dcfResult ? 'DCF model' : 'Peer comparison'} · Not financial advice
+                        </Text>
+                    </View>
+                );
+            })()}
 
             {/* Tab Content */}
             {activeTab === 'dcf' && renderDCFTab()}
