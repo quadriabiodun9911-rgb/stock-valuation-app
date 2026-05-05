@@ -747,6 +747,32 @@ const ProfileScreen = () => {
                     </View>
                 </View>
 
+                {/* Pro teaser */}
+                <View style={{ marginHorizontal: 16, marginBottom: 20, borderRadius: 16, overflow: 'hidden', backgroundColor: '#4f46e5' }}>
+                    <View style={{ padding: 20 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                            <Ionicons name="lock-closed" size={18} color="#fff" />
+                            <Text style={{ color: '#fff', fontWeight: '800', fontSize: 16 }}>Go Pro</Text>
+                            <View style={{ backgroundColor: '#fbbf24', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2 }}>
+                                <Text style={{ color: '#1e1b4b', fontWeight: '700', fontSize: 11 }}>COMING SOON</Text>
+                            </View>
+                        </View>
+                        <Text style={{ color: '#c7d2fe', fontSize: 13, marginBottom: 14 }}>Unlock powerful tools for serious investors</Text>
+                        {['Unlimited price alerts', 'Advanced stock screener', 'Portfolio CSV import', 'Priority AI analysis'].map((f) => (
+                            <View key={f} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                                <Ionicons name="checkmark-circle" size={15} color="#a5b4fc" />
+                                <Text style={{ color: '#e0e7ff', fontSize: 13 }}>{f}</Text>
+                            </View>
+                        ))}
+                        <TouchableOpacity
+                            style={{ marginTop: 14, backgroundColor: '#fff', borderRadius: 10, paddingVertical: 11, alignItems: 'center' }}
+                            onPress={() => Alert.alert('Waitlist', "You've been added to the Pro waitlist! We'll notify you at launch.")}
+                        >
+                            <Text style={{ color: '#4f46e5', fontWeight: '700', fontSize: 14 }}>Join Waitlist →</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+
                 {/* Support section */}
                 <Text style={[s.sectionLabel, { color: theme.textSecondary }]}>Support</Text>
                 <View style={s.menuContainer}>
@@ -782,7 +808,7 @@ const ProfileScreen = () => {
             {activeModal === 'notifications' && renderNotificationsModal()}
             {activeModal === 'privacy' && renderPrivacyModal()}
             {activeModal === 'help' && renderHelpModal()}
-        </SafeAreaView>
+        </SafeAreaView >
     );
 };
 

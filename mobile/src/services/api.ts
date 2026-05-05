@@ -346,6 +346,7 @@ export interface SearchResult {
     longname?: string;
     exchange?: string;
     quote_type?: string;
+    market_cap?: number;
 }
 
 export interface SearchResponse {
@@ -1221,6 +1222,14 @@ export class StockValuationAPI {
         return this.request<any>(`/news-impact/${symbol}`);
     }
 
+    async getMarketNews(limit: number = 20): Promise<{ news: any[]; news_count: number }> {
+        return this.request<any>(`/api/news/market-news`, { params: { limit } });
+    }
+
+    async getStockNews(symbol: string, limit: number = 10): Promise<{ news: any[]; news_count: number }> {
+        return this.request<any>(`/api/news/stock/${symbol}`, { params: { limit } });
+    }
+
     // ── Transactions ────────────────────────────────────────────
     async getTransactions(symbol?: string): Promise<any> {
         const params: any = {};
@@ -1439,10 +1448,10 @@ export class StockValuationAPI {
     }
 
     // ── AI Chat ──
-    async sendAIChat(message: string, symbol?: string): Promise<any> {
+    async sendAIChat(message: string, symbol?: string, stockContext?: Record<string, any>): Promise<any> {
         return this.request<any>('/ai-chat', {
             method: 'POST',
-            body: { message, symbol },
+            body: { message, symbol, stock_context: stockContext },
         });
     }
 

@@ -80,6 +80,7 @@ def _extract_symbol_from_text(raw_message: str) -> Optional[str]:
 class ChatMessage(BaseModel):
     message: str
     symbol: Optional[str] = None
+    stock_context: Optional[dict] = None  # live data pre-fetched by mobile client
 
 
 @router.post("/ai-chat")
@@ -136,11 +137,15 @@ async def ai_chat(msg: ChatMessage, user_id: int = Depends(get_user_id_dep)):
                 "holdings": [dict(h) for h in holdings]
             } if holdings else None
             
+            # Merge pre-fetched mobile context with backend-computed data
+            merged_context = result.get("data") or {}
+            if msg.stock_context:
+                merged_context.update(msg.stock_context)
             enhanced, metrics = await advisor.enhance_response(
                 question=msg.message,
                 base_response=result.get("response", ""),
                 portfolio_context=portfolio_context,
-                stock_context=result.get("data")
+                stock_context=merged_context or None
             )
             result["response"] = enhanced
             result["enhanced"] = True

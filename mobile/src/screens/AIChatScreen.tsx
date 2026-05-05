@@ -67,6 +67,33 @@ const AIChatScreen = ({ navigation, route }: any) => {
         });
     }, [symbolFromRoute]);
 
+    // Extract stock tickers from a message (e.g. AAPL, MSFT, TSLA)
+    const extractTicker = (text: string): string | undefined => {
+        const match = text.match(/\b([A-Z]{1,5})\b/g);
+        // Prefer the route symbol if present, otherwise take first mention
+        if (symbolFromRoute) return symbolFromRoute;
+        return match?.[0];
+    };
+
+    // Fetch live stock snapshot to ground the AI answer
+    const fetchStockContext = async (symbol: string): Promise<Record<string, any> | undefined> => {
+        try {
+            const info = await stockAPI.getStockInfo(symbol);
+            return {
+                symbol,
+                price: info.current_price,
+                pe_ratio: info.pe_ratio,
+                market_cap: info.market_cap,
+                dividend_yield: info.dividend_yield,
+                week_52_high: info['52_week_high'],
+                week_52_low: info['52_week_low'],
+                beta: info.beta,
+            };
+        } catch {
+            return undefined;
+        }
+    };
+
     const sendMessage = async (text?: string) => {
         const msg = (text || input).trim();
         if (!msg || loading) return;
@@ -82,7 +109,11 @@ const AIChatScreen = ({ navigation, route }: any) => {
         setLoading(true);
 
         try {
-            const res = await stockAPI.sendAIChat(msg, symbolFromRoute);
+            // Ground the AI with live data for any mentioned ticker
+            const ticker = extractTicker(msg.toUpperCase());
+            const stockContext = ticker ? await fetchStockContext(ticker) : undefined;
+
+            const res = await stockAPI.sendAIChat(msg, symbolFromRoute, stockContext);
             const aiMsg: Message = {
                 id: (Date.now() + 1).toString(),
                 text: res.response,
@@ -159,6 +190,12 @@ const AIChatScreen = ({ navigation, route }: any) => {
                 </TouchableOpacity>
             </LinearGradient>
 
+            {/* Disclaimer banner */}
+            <View style={styles.disclaimerBar}>
+                <Ionicons name="information-circle-outline" size={13} color="#64748b" />
+                <Text style={styles.disclaimerText}>Based on public market data · Not financial advice · Always do your own research</Text>
+            </View>
+
             <FlatList
                 ref={listRef}
                 data={messages}
@@ -226,6 +263,8 @@ const AIChatScreen = ({ navigation, route }: any) => {
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#f1f5f9' },
     header: { flexDirection: 'row', alignItems: 'center', paddingTop: 60, paddingBottom: 16, paddingHorizontal: 16 },
+    disclaimerBar: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#f8fafc', paddingVertical: 6, paddingHorizontal: 14, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
+    disclaimerText: { flex: 1, fontSize: 11, color: '#64748b', lineHeight: 15 },
     backBtn: { width: 36, height: 36, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.1)', justifyContent: 'center', alignItems: 'center' },
     headerCenter: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
     headerTitle: { fontSize: 18, fontWeight: '800', color: '#fff' },

@@ -1,13 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
     View,
     Text,
     StyleSheet,
     ScrollView,
+    FlatList,
     TouchableOpacity,
     TextInput,
     Alert,
     ActivityIndicator,
+    Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { stockAPI } from '../services/api';
@@ -15,11 +17,11 @@ import { useAuth } from '../contexts/AuthContext';
 import SocialFeedScreen from './SocialFeedScreen';
 import ChatScreen from './ChatScreen';
 
-type CrowdTab = 'social' | 'intelligence' | 'chat';
+type CrowdTab = 'social' | 'intelligence' | 'chat' | 'news';
 
 const IntelligenceScreen: React.FC<{ navigation?: any }> = ({ navigation }) => {
     const { user } = useAuth();
-    const [activeTab, setActiveTab] = useState<CrowdTab>('social');
+    const [activeTab, setActiveTab] = useState<CrowdTab>('news');
     const [loading, setLoading] = useState(true);
 
     // Trade reason submission
@@ -39,6 +41,10 @@ const IntelligenceScreen: React.FC<{ navigation?: any }> = ({ navigation }) => {
     // Trending & feed
     const [trending, setTrending] = useState<any[]>([]);
     const [feed, setFeed] = useState<any[]>([]);
+
+    // Market news
+    const [news, setNews] = useState<any[]>([]);
+    const [newsLoading, setNewsLoading] = useState(false);
 
     useEffect(() => {
         loadData();
@@ -133,12 +139,64 @@ const IntelligenceScreen: React.FC<{ navigation?: any }> = ({ navigation }) => {
                 <Text style={styles.headerSub}>Connect with traders</Text>
             </View>
             <View style={styles.tabBar}>
+                {renderTab('news', 'newspaper', 'News')}
                 {renderTab('social', 'logo-twitter', 'Feed')}
-                {renderTab('intelligence', 'analytics', 'Intelligence')}
+                {renderTab('intelligence', 'analytics', 'Signals')}
                 {renderTab('chat', 'chatbubbles', 'Chat')}
             </View>
         </>
     );
+
+    if (activeTab === 'news') {
+        // Lazy-load news on first open of this tab
+        if (!newsLoading && news.length === 0) {
+            setNewsLoading(true);
+            stockAPI.getMarketNews(30)
+                .then((d) => setNews(d.news || []))
+                .catch(() => { })
+                .finally(() => setNewsLoading(false));
+        }
+
+        const sentimentColor = (s?: string) => s === 'positive' ? '#059669' : s === 'negative' ? '#dc2626' : '#64748b';
+
+        return (
+            <View style={{ flex: 1, backgroundColor: '#f8fafc' }}>
+                <TabHeader />
+                {newsLoading ? (
+                    <ActivityIndicator size="large" color="#2563eb" style={{ marginTop: 40 }} />
+                ) : (
+                    <FlatList
+                        data={news}
+                        keyExtractor={(item, i) => item.url || String(i)}
+                        contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
+                        ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
+                        renderItem={({ item }) => (
+                            <TouchableOpacity
+                                style={{ backgroundColor: '#fff', borderRadius: 14, padding: 14, shadowColor: '#0f172a', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 1 }}
+                                onPress={() => item.url && Linking.openURL(item.url)}
+                                activeOpacity={0.8}
+                            >
+                                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6, gap: 6 }}>
+                                    {item.sentiment && (
+                                        <View style={{ backgroundColor: sentimentColor(item.sentiment) + '18', borderRadius: 8, paddingHorizontal: 7, paddingVertical: 2 }}>
+                                            <Text style={{ fontSize: 11, fontWeight: '700', color: sentimentColor(item.sentiment) }}>{item.sentiment.toUpperCase()}</Text>
+                                        </View>
+                                    )}
+                                    {item.source && (
+                                        <Text style={{ fontSize: 11, color: '#94a3b8' }}>{item.source}</Text>
+                                    )}
+                                </View>
+                                <Text style={{ fontSize: 14, fontWeight: '700', color: '#0f172a', lineHeight: 20 }} numberOfLines={3}>{item.title}</Text>
+                                {item.summary && (
+                                    <Text style={{ fontSize: 12, color: '#475569', marginTop: 6, lineHeight: 18 }} numberOfLines={2}>{item.summary}</Text>
+                                )}
+                            </TouchableOpacity>
+                        )}
+                    />
+                )}
+            </View>
+        );
+    }
 
     if (activeTab === 'social') {
         return (

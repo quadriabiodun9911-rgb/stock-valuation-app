@@ -52,7 +52,8 @@ const SearchScreen: React.FC<Props> = ({ navigation }) => {
 
             const searchResponse = await stockAPI.searchStocks(refinedQuery, 10);
             const results = searchResponse.results || [];
-            setCompanyResults(results);
+            const sorted = [...results].sort((a, b) => (b.market_cap ?? 0) - (a.market_cap ?? 0));
+            setCompanyResults(sorted);
 
             if (results.length === 0 && searchResults.length === 0) {
                 Alert.alert(
