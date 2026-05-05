@@ -44,6 +44,7 @@ const sections = [
         items: [
             { label: 'Commodities', icon: 'layers', screen: 'CommoditiesCrypto', color: '#d97706' },
             { label: 'Crypto', icon: 'logo-bitcoin', screen: 'CommoditiesCrypto', color: '#7c3aed' },
+            { label: 'Forex', icon: 'swap-horizontal', screen: 'CommoditiesCrypto', color: '#2563eb' },
         ],
     },
     {

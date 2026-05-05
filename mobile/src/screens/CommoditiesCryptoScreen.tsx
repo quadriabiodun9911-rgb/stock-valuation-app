@@ -17,7 +17,7 @@ interface Props {
     navigation: any;
 }
 
-type Tab = 'commodities' | 'crypto';
+type Tab = 'commodities' | 'crypto' | 'forex';
 
 interface MarketItem {
     symbol: string;
@@ -39,7 +39,7 @@ interface MarketData {
     items: MarketItem[];
 }
 
-// Commodity category colours
+// Category colours (commodities + crypto + forex)
 const CATEGORY_COLORS: Record<string, string> = {
     'Precious Metals': '#f59e0b',
     'Energy': '#ef4444',
@@ -55,6 +55,10 @@ const CATEGORY_COLORS: Record<string, string> = {
     'Oracle': '#0891b2',
     'DeFi': '#f97316',
     'Crypto': '#7c3aed',
+    'Major': '#2563eb',
+    'European': '#0891b2',
+    'Emerging Markets': '#16a34a',
+    'FX': '#2563eb',
     'Other': '#64748b',
 };
 
@@ -73,7 +77,7 @@ function PriceRow({ item, theme }: { item: MarketItem; theme: any }) {
             <View style={styles.rowLeft}>
                 <Text style={[styles.symbol, { color: theme.text }]}>{item.name}</Text>
                 <Text style={[styles.symbolCode, { color: theme.textSecondary }]}>
-                    {item.symbol}{item.unit ? `  ·  ${item.unit}` : ''}
+                    {item.symbol.replace('=X', '')}{item.unit ? `  ·  ${item.unit}` : ''}
                 </Text>
             </View>
             <View style={styles.rowRight}>
@@ -126,6 +130,7 @@ const CommoditiesCryptoScreen: React.FC<Props> = ({ navigation }) => {
     const [activeTab, setActiveTab] = useState<Tab>('commodities');
     const [commodityData, setCommodityData] = useState<MarketData | null>(null);
     const [cryptoData, setCryptoData] = useState<MarketData | null>(null);
+    const [fxData, setFxData] = useState<MarketData | null>(null);
     const [loading, setLoading] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -140,13 +145,18 @@ const CommoditiesCryptoScreen: React.FC<Props> = ({ navigation }) => {
         if (!silent) setLoading(true);
         setError(null);
         try {
-            const endpoint = tab === 'commodities' ? '/markets/commodities' : '/markets/crypto';
+            const endpoint = tab === 'commodities'
+                ? '/markets/commodities'
+                : tab === 'crypto'
+                    ? '/markets/crypto'
+                    : '/markets/fx';
             const res = await fetch(`${API_URL}${endpoint}`);
             if (!res.ok) throw new Error(`Server responded ${res.status}`);
             const json: MarketData = await res.json();
             if (!mountedRef.current) return;
             if (tab === 'commodities') setCommodityData(json);
-            else setCryptoData(json);
+            else if (tab === 'crypto') setCryptoData(json);
+            else setFxData(json);
         } catch (err: any) {
             if (mountedRef.current) setError(err.message ?? 'Failed to load data');
         } finally {
@@ -158,9 +168,10 @@ const CommoditiesCryptoScreen: React.FC<Props> = ({ navigation }) => {
     }, []);
 
     useEffect(() => {
-        // Load both tabs upfront so switching is instant
+        // Load all tabs upfront so switching is instant
         fetchData('commodities');
         fetchData('crypto', true);
+        fetchData('forex', true);
     }, [fetchData]);
 
     const onRefresh = useCallback(() => {
@@ -173,9 +184,10 @@ const CommoditiesCryptoScreen: React.FC<Props> = ({ navigation }) => {
         // Re-fetch if data is missing
         if (tab === 'commodities' && !commodityData) fetchData('commodities');
         if (tab === 'crypto' && !cryptoData) fetchData('crypto');
+        if (tab === 'forex' && !fxData) fetchData('forex');
     };
 
-    const currentData = activeTab === 'commodities' ? commodityData : cryptoData;
+    const currentData = activeTab === 'commodities' ? commodityData : activeTab === 'crypto' ? cryptoData : fxData;
     const categories = currentData ? Object.entries(currentData.categories) : [];
 
     return (
@@ -196,20 +208,24 @@ const CommoditiesCryptoScreen: React.FC<Props> = ({ navigation }) => {
 
             {/* Tabs */}
             <View style={[styles.tabBar, { backgroundColor: theme.card, borderBottomColor: theme.border }]}>
-                {(['commodities', 'crypto'] as Tab[]).map((tab) => (
+                {([
+                    { key: 'commodities', label: 'Commodities', icon: 'layers' },
+                    { key: 'crypto', label: 'Crypto', icon: 'logo-bitcoin' },
+                    { key: 'forex', label: 'Forex', icon: 'swap-horizontal' },
+                ] as { key: Tab; label: string; icon: any }[]).map(({ key, label, icon }) => (
                     <TouchableOpacity
-                        key={tab}
-                        style={[styles.tab, activeTab === tab && styles.tabActive]}
-                        onPress={() => onTabSwitch(tab)}
+                        key={key}
+                        style={[styles.tab, activeTab === key && styles.tabActive]}
+                        onPress={() => onTabSwitch(key)}
                     >
                         <Ionicons
-                            name={tab === 'commodities' ? 'layers' : 'logo-bitcoin'}
+                            name={icon}
                             size={16}
-                            color={activeTab === tab ? '#2563eb' : theme.textSecondary}
+                            color={activeTab === key ? '#2563eb' : theme.textSecondary}
                         />
-                        <Text style={[styles.tabLabel, { color: activeTab === tab ? '#2563eb' : theme.textSecondary },
-                        activeTab === tab && styles.tabLabelActive]}>
-                            {tab === 'commodities' ? 'Commodities' : 'Crypto'}
+                        <Text style={[styles.tabLabel, { color: activeTab === key ? '#2563eb' : theme.textSecondary },
+                        activeTab === key && styles.tabLabelActive]}>
+                            {label}
                         </Text>
                     </TouchableOpacity>
                 ))}
@@ -244,7 +260,7 @@ const CommoditiesCryptoScreen: React.FC<Props> = ({ navigation }) => {
                     {currentData && (
                         <View style={[styles.summaryStrip, { backgroundColor: theme.card, borderColor: theme.border }]}>
                             <Text style={[styles.summaryText, { color: theme.textSecondary }]}>
-                                {currentData.total} assets  ·  {Object.keys(currentData.categories).length} categories
+                                {currentData.total} {activeTab === 'forex' ? 'pairs' : 'assets'}  ·  {Object.keys(currentData.categories).length} categories
                             </Text>
                             <View style={styles.liveTag}>
                                 <View style={styles.liveDot} />
@@ -258,7 +274,9 @@ const CommoditiesCryptoScreen: React.FC<Props> = ({ navigation }) => {
                     ))}
 
                     <Text style={[styles.disclaimer, { color: theme.textMuted }]}>
-                        Prices sourced from market data providers. Delayed up to 15 min.
+                        {activeTab === 'forex'
+                            ? 'FX rates from market data providers. For reference only.'
+                            : 'Prices sourced from market data providers. Delayed up to 15 min.'}
                     </Text>
                 </ScrollView>
             )}

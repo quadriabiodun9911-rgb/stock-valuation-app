@@ -33,6 +33,28 @@ COMMODITIES: List[Dict[str, str]] = [
     {"symbol": "SB=F",  "name": "Sugar",         "unit": "USc/lb",  "category": "Agriculture"},
 ]
 
+FOREX: List[Dict[str, str]] = [
+    # Major pairs (vs USD)
+    {"symbol": "EURUSD=X", "name": "Euro",             "base": "EUR", "quote": "USD", "category": "Major"},
+    {"symbol": "GBPUSD=X", "name": "Pound Sterling",   "base": "GBP", "quote": "USD", "category": "Major"},
+    {"symbol": "USDJPY=X", "name": "Japanese Yen",     "base": "USD", "quote": "JPY", "category": "Major"},
+    {"symbol": "USDCHF=X", "name": "Swiss Franc",      "base": "USD", "quote": "CHF", "category": "Major"},
+    {"symbol": "AUDUSD=X", "name": "Australian Dollar","base": "AUD", "quote": "USD", "category": "Major"},
+    {"symbol": "USDCAD=X", "name": "Canadian Dollar",  "base": "USD", "quote": "CAD", "category": "Major"},
+    {"symbol": "NZDUSD=X", "name": "New Zealand Dollar","base": "NZD","quote": "USD", "category": "Major"},
+    # European
+    {"symbol": "EURGBP=X", "name": "EUR/GBP",          "base": "EUR", "quote": "GBP", "category": "European"},
+    {"symbol": "EURCHF=X", "name": "EUR/CHF",          "base": "EUR", "quote": "CHF", "category": "European"},
+    {"symbol": "GBPJPY=X", "name": "GBP/JPY",          "base": "GBP", "quote": "JPY", "category": "European"},
+    # Emerging Markets
+    {"symbol": "USDCNY=X", "name": "Chinese Yuan",     "base": "USD", "quote": "CNY", "category": "Emerging Markets"},
+    {"symbol": "USDINR=X", "name": "Indian Rupee",     "base": "USD", "quote": "INR", "category": "Emerging Markets"},
+    {"symbol": "USDBRL=X", "name": "Brazilian Real",   "base": "USD", "quote": "BRL", "category": "Emerging Markets"},
+    {"symbol": "USDMXN=X", "name": "Mexican Peso",     "base": "USD", "quote": "MXN", "category": "Emerging Markets"},
+    {"symbol": "USDZAR=X", "name": "South African Rand","base": "USD","quote": "ZAR", "category": "Emerging Markets"},
+    {"symbol": "USDNGN=X", "name": "Nigerian Naira",   "base": "USD", "quote": "NGN", "category": "Emerging Markets"},
+]
+
 CRYPTOS: List[Dict[str, str]] = [
     {"symbol": "BTC-USD",  "name": "Bitcoin",       "category": "Store of Value"},
     {"symbol": "ETH-USD",  "name": "Ethereum",      "category": "Smart Contracts"},
@@ -182,4 +204,41 @@ def get_crypto(symbol: str):
     result = _fetch_quote(symbol, meta)
     if result["price"] == 0 and result["error"]:
         raise HTTPException(status_code=404, detail=f"Could not fetch data for {symbol}: {result['error']}")
+    return result
+
+
+# ── FX endpoints ──────────────────────────────────────────────────
+
+@router.get("/fx")
+def get_all_fx():
+    """Return live rates for all tracked forex pairs."""
+    data = _fetch_many(FOREX)
+
+    categories: Dict[str, List] = {}
+    for item in data:
+        cat = item.get("category", "Other")
+        categories.setdefault(cat, []).append(item)
+
+    return {
+        "total": len(data),
+        "categories": categories,
+        "items": data,
+    }
+
+
+@router.get("/fx/{pair}")
+def get_fx_pair(pair: str):
+    """Return live rate for a single FX pair (e.g. EURUSD, EUR/USD, or EURUSD=X)."""
+    pair = pair.upper().replace("/", "").replace("-", "")
+    # normalise to yfinance format: EURUSD → EURUSD=X
+    if not pair.endswith("=X"):
+        pair = f"{pair}=X"
+    meta = next((f for f in FOREX if f["symbol"] == pair), None)
+    if not meta:
+        base = pair[:3]
+        quote = pair[3:6] if len(pair) >= 9 else "USD"
+        meta = {"symbol": pair, "name": f"{base}/{quote}", "base": base, "quote": quote, "category": "FX"}
+    result = _fetch_quote(pair, meta)
+    if result["price"] == 0 and result["error"]:
+        raise HTTPException(status_code=404, detail=f"Could not fetch rate for {pair}: {result['error']}")
     return result
