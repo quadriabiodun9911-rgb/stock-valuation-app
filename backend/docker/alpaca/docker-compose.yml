@@ -1,0 +1,15 @@
+version: '3.8'
+services:
+  alpaca-integration:
+    image: python:3.12-slim
+    container_name: stock-app-alpaca
+    working_dir: /app
+    volumes:
+      - ../../..:/app:cached
+    env_file: .env.alpaca
+    command: |
+      /bin/sh -c "pip install --no-cache-dir -r backend/requirements.txt && pip install --no-cache-dir -r backend/optional-requirements-alpaca.txt && pytest backend/tests -k alpaca"
+
+# Usage:
+# 1. Create `backend/.env.alpaca` from `backend/.env.example` and add Alpaca keys.
+# 2. Run: docker compose -f backend/docker/alpaca/docker-compose.yml up --build

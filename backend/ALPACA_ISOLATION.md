@@ -1,3 +1,27 @@
+**Alpaca Isolation**
+
+Purpose: keep `alpaca-trade-api` out of the main runtime `requirements.txt` so the project can upgrade core HTTP libraries safely.
+
+Quick steps for developers:
+
+- Install optional Alpaca deps locally when needed:
+
+  python -m pip install -r backend/optional-requirements-alpaca.txt
+
+- To run Alpaca integration tests locally using Docker:
+
+  1. Create `backend/.env.alpaca` with `APCA_API_KEY_ID` and `APCA_API_SECRET_KEY`.
+  2. Start the container:
+
+     docker compose -f backend/docker/alpaca/docker-compose.yml up --build
+
+- CI: We added a manual GitHub Actions workflow at `.github/workflows/alpaca-integration.yml`.
+  This workflow installs the optional requirements and runs tests that match `-k alpaca`.
+
+Notes:
+
+- Keep secrets out of PR logs; the workflow uses GitHub Secrets and is manual (`workflow_dispatch`).
+- When Alpaca or upstream libraries release compatibility with `urllib3>=2` and `websockets>=11`, we can move Alpaca back into main requirements.
 ALPACA dependency isolation
 ==========================
 
