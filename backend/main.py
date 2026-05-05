@@ -44,6 +44,7 @@ from briefing import router as briefing_router
 from ai_chat import router as ai_chat_router
 from assistive_ai import router as assistive_ai_router
 from referral import router as referral_router
+from commodities_crypto import router as commodities_crypto_router
 from ai_service import get_efficiency_report
 from returns_calculator import (
     calculate_holding_period_years,
@@ -225,6 +226,7 @@ app.include_router(briefing_router)
 app.include_router(ai_chat_router)
 app.include_router(assistive_ai_router)
 app.include_router(referral_router)
+app.include_router(commodities_crypto_router)
 
 # Pydantic models
 class StockSymbol(BaseModel):

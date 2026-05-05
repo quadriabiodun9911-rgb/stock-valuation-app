@@ -78,6 +78,7 @@ import EarningsCalendarScreen from './src/screens/EarningsCalendarScreen';
 import OptionsCalculatorScreen from './src/screens/OptionsCalculatorScreen';
 import ReferralScreen from './src/screens/ReferralScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
+import CommoditiesCryptoScreen from './src/screens/CommoditiesCryptoScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -193,6 +194,7 @@ function MainAppStack() {
             <Stack.Screen name="EarningsCalendar" component={EarningsCalendarScreen} options={{ headerShown: false }} />
             <Stack.Screen name="OptionsCalculator" component={OptionsCalculatorScreen} options={{ headerShown: false }} />
             <Stack.Screen name="Referral" component={ReferralScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="CommoditiesCrypto" component={CommoditiesCryptoScreen} options={{ headerShown: false }} />
         </Stack.Navigator>
     );
 }

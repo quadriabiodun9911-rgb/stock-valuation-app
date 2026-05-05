@@ -40,6 +40,13 @@ const sections = [
         ],
     },
     {
+        title: '🌍 Global Markets',
+        items: [
+            { label: 'Commodities', icon: 'layers', screen: 'CommoditiesCrypto', color: '#d97706' },
+            { label: 'Crypto', icon: 'logo-bitcoin', screen: 'CommoditiesCrypto', color: '#7c3aed' },
+        ],
+    },
+    {
         title: 'Portfolio & Planning',
         items: [
             { label: 'Dashboard', icon: 'grid', screen: 'Dashboard', color: '#0f172a' },
