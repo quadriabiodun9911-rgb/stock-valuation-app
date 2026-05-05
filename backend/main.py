@@ -22,6 +22,7 @@ import json
 import os
 import threading
 import time
+import pickle
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
 from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
@@ -615,16 +616,44 @@ class ValuationResult:
 # Common symbols to pre-warm on startup
 _WARM_UP_SYMBOLS = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA", "META", "JPM", "SPY", "QQQ"]
 
+# Disk cache path — persists for the lifetime of the Render container (~hours)
+_DISK_CACHE_PATH = Path(os.getenv("YFINANCE_DISK_CACHE", "/tmp/yfinance_cache.pkl"))
+
+
+def _load_disk_cache() -> dict:
+    """Load previously saved yfinance data from disk."""
+    try:
+        if _DISK_CACHE_PATH.exists():
+            with open(_DISK_CACHE_PATH, "rb") as fh:
+                data = pickle.load(fh)
+                logger.info("Loaded %d entries from disk cache %s", len(data), _DISK_CACHE_PATH)
+                return data
+    except Exception as exc:
+        logger.warning("Could not load disk cache: %s", exc)
+    return {}
+
+
+def _save_disk_cache(cache: dict) -> None:
+    """Persist current cache snapshot to disk (best-effort)."""
+    try:
+        with open(_DISK_CACHE_PATH, "wb") as fh:
+            pickle.dump(cache, fh)
+    except Exception as exc:
+        logger.warning("Could not save disk cache: %s", exc)
+
+
 class StockValuationService:
     def __init__(self):
-        self.cache = {}
-        # Default 30-min active cache; 24-hour stale fallback; 10-second retry backoff
+        # Restore from disk cache so data survives container restarts
+        _disk = _load_disk_cache()
+        self.cache: dict = _disk  # {cache_key: (data, timestamp)}
+        # 30-min active cache; 24-hour stale fallback; 5-min retry backoff on rate-limit
         self.cache_duration = int(os.getenv("MARKET_CACHE_TTL_SECONDS", "1800"))
         self.stale_cache_duration = int(
             os.getenv("MARKET_STALE_CACHE_TTL_SECONDS", "86400")
         )
         self.fetch_backoff_seconds = int(
-            os.getenv("MARKET_FETCH_BACKOFF_SECONDS", "10")
+            os.getenv("MARKET_FETCH_BACKOFF_SECONDS", "300")  # 5 min after rate-limit
         )
         self.last_failure = {}
         self.cache_lock = threading.Lock()
@@ -687,6 +716,8 @@ class StockValuationService:
                 with self.cache_lock:
                     self.cache[cache_key] = (data, current_time)
                     self.last_failure.pop(cache_key, None)
+                # Persist successful fetch to disk so future restarts have data
+                _save_disk_cache(dict(self.cache))
                 return data
             except Exception as e:
                 last_exc = e
@@ -706,14 +737,20 @@ class StockValuationService:
             self.last_failure[cache_key] = current_time
             cached_entry = self.cache.get(cache_key)
 
+        # On rate-limit: ALWAYS serve stale cache if any exists — never 503 the user
         if cached_entry:
             cached_data, cached_time = cached_entry
             cache_age = (current_time - cached_time).total_seconds()
-            if cache_age < self.stale_cache_duration:
+            err_str = str(last_exc).lower()
+            is_rate_limit = any(
+                kw in err_str
+                for kw in ("too many requests", "rate limit", "rate-limit", "429", "throttle")
+            )
+            # For rate-limit errors serve stale data indefinitely; otherwise respect stale TTL
+            if is_rate_limit or cache_age < self.stale_cache_duration:
                 logger.warning(
-                    "Using stale cached market data for %s after fetch failure: %s",
-                    symbol,
-                    last_exc,
+                    "Serving stale cached data for %s (age %.0fs) after fetch failure: %s",
+                    symbol, cache_age, last_exc,
                 )
                 return cached_data
 
@@ -1469,16 +1506,51 @@ valuation_service = StockValuationService()
 
 
 def _warm_up_cache():
-    """Pre-populate yfinance cache for common symbols on startup."""
+    """Pre-populate yfinance cache for common symbols on startup.
+
+    Unlike get_stock_data, this does NOT set last_failure on errors — we don't
+    want a proactive background fetch to block user-triggered requests.
+    If yfinance is rate-limited we simply skip; disk cache (loaded at init)
+    already provides stale data for valuation endpoints.
+    """
     logger.info("Starting cache warm-up for %d symbols...", len(_WARM_UP_SYMBOLS))
+    fetched = 0
     for sym in _WARM_UP_SYMBOLS:
+        cache_key = f"{sym}_1y"
+        # Skip if already in memory cache (loaded from disk)
+        with valuation_service.cache_lock:
+            already_cached = cache_key in valuation_service.cache
+        if already_cached:
+            logger.info("Cache warm-up: %s already cached (from disk)", sym)
+            continue
         try:
-            valuation_service.get_stock_data(sym)
+            stock = yf.Ticker(sym)
+            data = {
+                'info': stock.info,
+                'history': stock.history(period="1y"),
+                'financials': stock.financials,
+                'balance_sheet': stock.balance_sheet,
+                'cashflow': stock.cashflow,
+                'calendar': stock.calendar,
+                'recommendations': stock.recommendations,
+                'major_holders': stock.major_holders,
+                'institutional_holders': stock.institutional_holders,
+            }
+            now = datetime.now()
+            with valuation_service.cache_lock:
+                valuation_service.cache[cache_key] = (data, now)
+                valuation_service.last_failure.pop(cache_key, None)
+            fetched += 1
             logger.info("Cache warm-up: %s OK", sym)
         except Exception as exc:
-            logger.warning("Cache warm-up failed for %s: %s", sym, exc)
-        time.sleep(1)  # 1-second gap to avoid rate limiting
-    logger.info("Cache warm-up complete.")
+            # Do NOT touch last_failure — this is a best-effort background fetch
+            logger.warning("Cache warm-up skipped %s: %s", sym, exc)
+        time.sleep(2)  # 2-second gap between fetches
+    if fetched:
+        _save_disk_cache(dict(valuation_service.cache))
+        logger.info("Cache warm-up complete: %d/%d symbols fetched", fetched, len(_WARM_UP_SYMBOLS))
+    else:
+        logger.info("Cache warm-up complete: all symbols already in cache or skipped due to rate-limit")
 
 
 # Kick off warm-up in a daemon thread so it doesn't block startup
