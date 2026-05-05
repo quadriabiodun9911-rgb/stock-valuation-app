@@ -2160,12 +2160,33 @@ async def advanced_peer_comparison(symbol: str, include_ratios: bool = True):
         'Utilities': ['NEE', 'DUK', 'SO', 'D', 'AEP'],
     }
 
+    _SYMBOL_SECTOR: Dict[str, str] = {
+        'AAPL': 'Technology', 'MSFT': 'Technology', 'GOOGL': 'Technology', 'GOOG': 'Technology',
+        'META': 'Technology', 'NVDA': 'Technology', 'AMD': 'Technology', 'INTC': 'Technology',
+        'ORCL': 'Technology', 'CRM': 'Technology', 'ADBE': 'Technology', 'TSMC': 'Technology',
+        'QCOM': 'Technology', 'AVGO': 'Technology', 'NOW': 'Technology', 'SAP': 'Technology',
+        'AMZN': 'Consumer Cyclical', 'TSLA': 'Consumer Cyclical', 'HD': 'Consumer Cyclical',
+        'NFLX': 'Communication Services', 'DIS': 'Communication Services',
+        'T': 'Communication Services', 'VZ': 'Communication Services', 'CMCSA': 'Communication Services',
+        'SNAP': 'Communication Services', 'PINS': 'Communication Services',
+        'JNJ': 'Healthcare', 'PFE': 'Healthcare', 'ABBV': 'Healthcare', 'MRK': 'Healthcare',
+        'UNH': 'Healthcare', 'LLY': 'Healthcare', 'BMY': 'Healthcare',
+        'CI': 'Healthcare', 'CVS': 'Healthcare', 'HUM': 'Healthcare', 'CNC': 'Healthcare',
+        'JPM': 'Financial Services', 'BAC': 'Financial Services', 'WFC': 'Financial Services',
+        'C': 'Financial Services', 'GS': 'Financial Services', 'MS': 'Financial Services',
+        'USB': 'Financial Services',
+        'WMT': 'Consumer Defensive', 'COST': 'Consumer Defensive', 'TGT': 'Consumer Defensive',
+        'XOM': 'Energy', 'CVX': 'Energy', 'COP': 'Energy', 'BP': 'Energy', 'SHEL': 'Energy',
+        'F': 'Consumer Cyclical', 'GM': 'Consumer Cyclical', 'NIO': 'Consumer Cyclical',
+        'RIVN': 'Consumer Cyclical', 'PARA': 'Communication Services', 'WBD': 'Communication Services',
+    }
+
     try:
         sym = symbol.upper()
 
         # 1) Try hardcoded symbol-level peers first (no yfinance .info call needed)
         peers: List[str] = []
-        sector: str = ''
+        sector: str = _SYMBOL_SECTOR.get(sym, '')
         if sym in _SYMBOL_PEERS:
             peers = [p for p in _SYMBOL_PEERS[sym] if p != sym][:5]
 
@@ -2173,7 +2194,9 @@ async def advanced_peer_comparison(symbol: str, include_ratios: bool = True):
         if not peers:
             try:
                 base_data = valuation_service.get_stock_data(sym)
-                sector = base_data['info'].get('sector', '') or ''
+                yf_sector = base_data['info'].get('sector', '') or ''
+                if yf_sector and not sector:
+                    sector = yf_sector
                 candidates = _SECTOR_PEERS.get(sector, [])
                 peers = [p for p in candidates if p != sym][:5]
             except Exception:
