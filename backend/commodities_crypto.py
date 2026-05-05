@@ -51,8 +51,10 @@ CRYPTOS: List[Dict[str, str]] = [
 # ── Helpers ───────────────────────────────────────────────────────
 
 def _safe_float(val: Any, default: float = 0.0) -> float:
+    import math
     try:
-        return float(val) if val is not None else default
+        f = float(val) if val is not None else default
+        return default if (math.isnan(f) or math.isinf(f)) else f
     except (TypeError, ValueError):
         return default
 
