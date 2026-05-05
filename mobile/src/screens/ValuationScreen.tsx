@@ -581,6 +581,27 @@ const ValuationScreen: React.FC<Props> = ({ route, navigation }) => {
                                 {formatPercentage(dcfResult.upside_percentage)}
                             </Text>
                         </View>
+
+                        <View style={{
+                            marginTop: 12,
+                            padding: 10,
+                            backgroundColor: '#f0f4ff',
+                            borderRadius: 8,
+                            borderLeftWidth: 3,
+                            borderLeftColor: '#3b82f6',
+                        }}>
+                            <Text style={{ fontSize: 12, color: '#374151', lineHeight: 18 }}>
+                                {'💡 This model uses a '}
+                                <Text style={{ fontWeight: '600' }}>
+                                    {(dcfParams.growth_rate * 100).toFixed(0)}% growth rate
+                                </Text>
+                                {' and a '}
+                                <Text style={{ fontWeight: '600' }}>
+                                    {(dcfParams.discount_rate * 100).toFixed(0)}% discount rate
+                                </Text>
+                                {'. Change these above to match your own assumptions — the result will update.'}
+                            </Text>
+                        </View>
                     </View>
 
                     <View style={styles.detailsCard}>
@@ -684,6 +705,13 @@ const ValuationScreen: React.FC<Props> = ({ route, navigation }) => {
                                     {technicalResult.momentum_indicators.rsi > 70 ? 'Overbought' :
                                         technicalResult.momentum_indicators.rsi < 30 ? 'Oversold' : 'Neutral'}
                                 </Text>
+                                <Text style={{ fontSize: 10, color: '#6b7280', marginTop: 4, textAlign: 'center' }}>
+                                    {technicalResult.momentum_indicators.rsi > 70
+                                        ? 'May be priced too high — watch for a pullback'
+                                        : technicalResult.momentum_indicators.rsi < 30
+                                            ? 'May be undervalued — potential buying opportunity'
+                                            : 'Neither stretched nor depressed — balanced momentum'}
+                                </Text>
                             </View>
 
                             <View style={styles.indicatorCard}>
@@ -696,6 +724,11 @@ const ValuationScreen: React.FC<Props> = ({ route, navigation }) => {
                                 </Text>
                                 <Text style={styles.indicatorStatus}>
                                     {technicalResult.momentum_indicators.macd > 0 ? 'Bullish' : 'Bearish'}
+                                </Text>
+                                <Text style={{ fontSize: 10, color: '#6b7280', marginTop: 4, textAlign: 'center' }}>
+                                    {technicalResult.momentum_indicators.macd > 0
+                                        ? 'Short-term trend is rising faster than long-term'
+                                        : 'Short-term trend is falling behind long-term'}
                                 </Text>
                             </View>
                         </View>

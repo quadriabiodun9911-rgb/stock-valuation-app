@@ -55,10 +55,7 @@ const StockDetailScreen: React.FC<Props> = ({ route, navigation }) => {
     const briefRef = useRef<ViewShot>(null);
 
     useEffect(() => {
-        loadStockData();
-    }, [symbol]);
-
-    useEffect(() => {
+        // Reset per-symbol state
         setAssistiveBrief(null);
         setAssistiveLoading(false);
         setAssistiveFeedbackSent(false);
@@ -66,10 +63,11 @@ const StockDetailScreen: React.FC<Props> = ({ route, navigation }) => {
         setAssistiveFeedbackComment('');
         setNewsImpactBrief(null);
         setNewsImpactLoading(false);
-    }, [symbol]);
 
-    useEffect(() => {
+        // Fire all independent fetches in parallel so the screen fills fast
+        loadStockData();
         loadAnalysis();
+        loadPriceEpsSeries(priceEpsPeriod);
     }, [symbol]);
 
     useEffect(() => {
@@ -80,14 +78,16 @@ const StockDetailScreen: React.FC<Props> = ({ route, navigation }) => {
 
     useEffect(() => {
         loadPriceEpsSeries(priceEpsPeriod);
-    }, [symbol, priceEpsPeriod]);
+    }, [priceEpsPeriod]);
 
     const loadStockData = async () => {
         try {
             setLoading(true);
-            const info = await stockAPI.getStockInfo(symbol);
+            const [info] = await Promise.all([
+                stockAPI.getStockInfo(symbol),
+                loadGrowthMetrics(),
+            ]);
             setStockInfo(info);
-            loadGrowthMetrics();
             // Persist to recently viewed (max 5, newest first)
             try {
                 const raw = await AsyncStorage.getItem('recently_viewed');
@@ -519,9 +519,29 @@ const StockDetailScreen: React.FC<Props> = ({ route, navigation }) => {
                         {stockInfo.sector} • {stockInfo.industry}
                     </Text>
                 </View>
-                <Text style={styles.currentPrice}>
-                    {formatPrice(stockInfo.current_price)}
-                </Text>
+                <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={styles.currentPrice}>
+                        {formatPrice(stockInfo.current_price)}
+                    </Text>
+                    <TouchableOpacity
+                        onPress={() => navigation.navigate('PriceAlerts', { symbol, currentPrice: stockInfo.current_price })}
+                        style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            gap: 4,
+                            marginTop: 6,
+                            backgroundColor: '#eff6ff',
+                            paddingHorizontal: 10,
+                            paddingVertical: 5,
+                            borderRadius: 6,
+                            borderWidth: 1,
+                            borderColor: '#bfdbfe',
+                        }}
+                    >
+                        <Ionicons name="notifications-outline" size={13} color="#2563eb" />
+                        <Text style={{ fontSize: 12, color: '#2563eb', fontWeight: '600' }}>Set Alert</Text>
+                    </TouchableOpacity>
+                </View>
             </View>
 
             {/* Tabs */}
@@ -1061,6 +1081,28 @@ const StockDetailScreen: React.FC<Props> = ({ route, navigation }) => {
                                             <Ionicons name="sparkles" size={16} color="#fff" />
                                             <Text style={styles.assistiveChatButtonText}>Discuss in AI Chat</Text>
                                         </TouchableOpacity>
+
+                                        <TouchableOpacity
+                                            style={{
+                                                flexDirection: 'row',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                backgroundColor: '#f1f5f9',
+                                                borderRadius: 8,
+                                                paddingVertical: 10,
+                                                paddingHorizontal: 16,
+                                                marginTop: 8,
+                                                gap: 6,
+                                                borderWidth: 1,
+                                                borderColor: '#cbd5e1',
+                                            }}
+                                            onPress={shareBrief}
+                                        >
+                                            <Ionicons name="share-outline" size={16} color="#334155" />
+                                            <Text style={{ fontSize: 14, color: '#334155', fontWeight: '600' }}>
+                                                Share This Analysis
+                                            </Text>
+                                        </TouchableOpacity>
                                     </View>
                                 ) : (
                                     <TouchableOpacity
@@ -1169,6 +1211,13 @@ const StockDetailScreen: React.FC<Props> = ({ route, navigation }) => {
                                             {analysis.technical_analysis.rsi.toFixed(1)}
                                         </Text>
                                     </View>
+                                    <Text style={{ fontSize: 11, color: '#6b7280', marginBottom: 8, marginLeft: 2 }}>
+                                        {analysis.technical_analysis.rsi > 70
+                                            ? '⚠️ Approaching overbought — watch for a pullback'
+                                            : analysis.technical_analysis.rsi < 30
+                                                ? '✅ Approaching oversold — potential entry point'
+                                                : '↔️ Balanced momentum — no extreme reading'}
+                                    </Text>
                                     <View style={styles.technicalRow}>
                                         <Text style={styles.technicalLabel}>Support:</Text>
                                         <Text style={styles.technicalValue}>
