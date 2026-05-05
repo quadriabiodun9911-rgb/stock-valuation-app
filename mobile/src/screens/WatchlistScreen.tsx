@@ -12,7 +12,20 @@ import {
     Switch,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Notifications from 'expo-notifications';
 import { Market, MarketInfo, stockAPI } from '../services/api';
+
+const WATCHLIST_STORAGE_KEY = 'watchlist_items';
+
+// Configure notification presentation behaviour
+Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+        shouldShowAlert: true,
+        shouldPlaySound: true,
+        shouldSetBadge: false,
+    }),
+});
 
 interface Props {
     navigation: any;
@@ -47,6 +60,22 @@ const WatchlistScreen: React.FC<Props> = ({ navigation, route }) => {
         () => watchlist.map((item) => item.symbol).sort().join(','),
         [watchlist]
     );
+
+    // Load watchlist from AsyncStorage on mount
+    useEffect(() => {
+        (async () => {
+            try {
+                const stored = await AsyncStorage.getItem(WATCHLIST_STORAGE_KEY);
+                if (stored) setWatchlist(JSON.parse(stored));
+            } catch (_) { }
+        })();        // Request notification permission once
+        Notifications.requestPermissionsAsync().catch(() => { });
+    }, []);
+
+    // Persist watchlist whenever it changes (skip initial empty state)
+    useEffect(() => {
+        AsyncStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(watchlist)).catch(() => { });
+    }, [watchlist]);
 
     useEffect(() => {
         const incomingSymbol = route?.params?.addSymbol?.trim?.().toUpperCase();
@@ -148,6 +177,26 @@ const WatchlistScreen: React.FC<Props> = ({ navigation, route }) => {
                         item.dayMoveAlertEnabled &&
                         item.dayMoveAlertPct !== undefined &&
                         Math.abs(quote.change_pct) >= item.dayMoveAlertPct;
+
+                    // Fire local notification when alert first triggers
+                    if (priceAlertTriggered && !item.alertTriggered) {
+                        Notifications.scheduleNotificationAsync({
+                            content: {
+                                title: `Price Alert: ${item.symbol}`,
+                                body: `${item.symbol} is ${item.alertDirection === 'above' ? 'above' : 'below'} $${item.alertPrice?.toFixed(2)} — now at $${quote.price.toFixed(2)}`,
+                            },
+                            trigger: null,
+                        }).catch(() => { });
+                    }
+                    if (dayMoveTriggered && !item.dayMoveAlertTriggered) {
+                        Notifications.scheduleNotificationAsync({
+                            content: {
+                                title: `Day Move Alert: ${item.symbol}`,
+                                body: `${item.symbol} moved ${quote.change_pct >= 0 ? '+' : ''}${quote.change_pct.toFixed(2)}% today — triggered your ${item.dayMoveAlertPct}% alert.`,
+                            },
+                            trigger: null,
+                        }).catch(() => { });
+                    }
 
                     return {
                         ...item,

@@ -45,6 +45,10 @@ const PriceAlertsScreen: React.FC<Props> = ({ route, navigation }) => {
         const incomingSymbol = route?.params?.symbol;
         if (incomingSymbol) {
             setSymbol(String(incomingSymbol).toUpperCase());
+            const incomingPrice = route?.params?.currentPrice;
+            if (incomingPrice && Number(incomingPrice) > 0) {
+                setTargetPrice(String(Number(incomingPrice).toFixed(2)));
+            }
             setModalVisible(true);
         }
     }, [route?.params?.symbol]);

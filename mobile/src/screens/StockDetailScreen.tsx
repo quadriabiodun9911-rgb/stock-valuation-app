@@ -52,6 +52,7 @@ const StockDetailScreen: React.FC<Props> = ({ route, navigation }) => {
     const [newsImpactBrief, setNewsImpactBrief] = useState<AssistiveNewsImpactResponse | null>(null);
     const [newsImpactLoading, setNewsImpactLoading] = useState(false);
     const [showConfidenceTip, setShowConfidenceTip] = useState(false);
+    const [staleCache, setStaleCache] = useState(false);
     const briefRef = useRef<ViewShot>(null);
 
     useEffect(() => {
@@ -101,9 +102,28 @@ const StockDetailScreen: React.FC<Props> = ({ route, navigation }) => {
             } catch (_) {
                 // non-critical
             }
+            // Cache stock info for offline use
+            try {
+                await AsyncStorage.setItem(`stock_cache_${symbol}`, JSON.stringify(info));
+            } catch (_) {
+                // non-critical
+            }
         } catch (error: any) {
             console.error('Error loading stock data:', error);
             const msg: string = error?.message || '';
+
+            // Try to load cached data before showing error
+            try {
+                const cached = await AsyncStorage.getItem(`stock_cache_${symbol}`);
+                if (cached) {
+                    setStockInfo(JSON.parse(cached));
+                    setStaleCache(true);
+                    setLoading(false);
+                    return;
+                }
+            } catch (_) {
+                // no cache available
+            }
 
             if (msg.includes('NGX_NOT_SUPPORTED') || msg.toLowerCase().includes('nigerian')) {
                 Alert.alert(
@@ -510,6 +530,17 @@ const StockDetailScreen: React.FC<Props> = ({ route, navigation }) => {
 
     return (
         <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+            {staleCache && (
+                <View style={{ backgroundColor: '#fef3c7', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 8, gap: 8 }}>
+                    <Ionicons name="cloud-offline-outline" size={15} color="#92400e" />
+                    <Text style={{ fontSize: 12, color: '#92400e', flex: 1 }}>
+                        Showing cached data — connect to network for live prices.
+                    </Text>
+                    <TouchableOpacity onPress={() => { setStaleCache(false); loadStockData(); }}>
+                        <Text style={{ fontSize: 12, color: '#2563eb', fontWeight: '600' }}>Retry</Text>
+                    </TouchableOpacity>
+                </View>
+            )}
             {/* Header */}
             <View style={styles.header}>
                 <View style={styles.stockTitle}>
@@ -1080,6 +1111,33 @@ const StockDetailScreen: React.FC<Props> = ({ route, navigation }) => {
                                         >
                                             <Ionicons name="sparkles" size={16} color="#fff" />
                                             <Text style={styles.assistiveChatButtonText}>Discuss in AI Chat</Text>
+                                        </TouchableOpacity>
+
+                                        <TouchableOpacity
+                                            style={{
+                                                flexDirection: 'row',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                backgroundColor: '#eff6ff',
+                                                borderRadius: 8,
+                                                paddingVertical: 10,
+                                                paddingHorizontal: 16,
+                                                marginTop: 8,
+                                                gap: 6,
+                                                borderWidth: 1,
+                                                borderColor: '#bfdbfe',
+                                            }}
+                                            onPress={() =>
+                                                navigation.navigate('AIChat', {
+                                                    symbol,
+                                                    prefillMessage: `Is ${symbol} worth buying right now?`,
+                                                })
+                                            }
+                                        >
+                                            <Ionicons name="chatbubble-ellipses-outline" size={16} color="#2563eb" />
+                                            <Text style={{ fontSize: 13, color: '#2563eb', fontWeight: '600' }}>
+                                                Ask AI: Is {symbol} worth buying now?
+                                            </Text>
                                         </TouchableOpacity>
 
                                         <TouchableOpacity

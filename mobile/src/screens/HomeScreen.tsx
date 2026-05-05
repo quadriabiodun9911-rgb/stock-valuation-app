@@ -53,6 +53,7 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
     const [recommendationsLoading, setRecommendationsLoading] = useState(false);
     const [showStartHereCard, setShowStartHereCard] = useState(false);
     const [recentlyViewed, setRecentlyViewed] = useState<{ symbol: string; name: string; price: number }[]>([]);
+    const [watchlistItems, setWatchlistItems] = useState<{ symbol: string; lastPrice?: number; changePct?: number }[]>([]);
 
     const fadeAnim = useRef(new Animated.Value(0)).current;
 
@@ -68,9 +69,19 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
                 if (raw) setRecentlyViewed(JSON.parse(raw));
             } catch (_) { }
         };
+        const loadWatchlist = async () => {
+            try {
+                const raw = await AsyncStorage.getItem('watchlist_items');
+                if (raw) {
+                    const items: { symbol: string; lastPrice?: number; changePct?: number }[] = JSON.parse(raw);
+                    setWatchlistItems(items);
+                }
+            } catch (_) { }
+        };
         loadRecent();
+        loadWatchlist();
         // Re-load on every navigation focus event
-        const unsubscribe = navigation.addListener?.('focus', loadRecent);
+        const unsubscribe = navigation.addListener?.('focus', () => { loadRecent(); loadWatchlist(); });
         return unsubscribe;
     }, [navigation]);
 
@@ -407,6 +418,35 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
                                     </Text>
                                 </TouchableOpacity>
                             ))}
+                        </ScrollView>
+                    </View>
+                )}
+
+                {/* Watchlist Quick-Glance Row */}
+                {watchlistItems.length > 0 && (
+                    <View style={{ marginHorizontal: 16, marginTop: 16 }}>
+                        <Text style={{ color: '#94a3b8', fontSize: 11, fontWeight: '600', letterSpacing: 0.8, marginBottom: 8 }}>WATCHLIST</Text>
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                            {watchlistItems.map((item) => {
+                                const up = (item.changePct ?? 0) >= 0;
+                                return (
+                                    <TouchableOpacity
+                                        key={item.symbol}
+                                        style={{ backgroundColor: '#1e293b', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, marginRight: 10, minWidth: 90, alignItems: 'center' }}
+                                        onPress={() => navigation.navigate('StockDetail', { symbol: item.symbol })}
+                                    >
+                                        <Text style={{ color: '#f1f5f9', fontWeight: '700', fontSize: 13 }}>{item.symbol}</Text>
+                                        {item.lastPrice != null && (
+                                            <Text style={{ color: '#64748b', fontSize: 10, marginTop: 2 }}>${item.lastPrice.toFixed(2)}</Text>
+                                        )}
+                                        {item.changePct != null && (
+                                            <Text style={{ color: up ? '#10b981' : '#ef4444', fontSize: 10, fontWeight: '600' }}>
+                                                {up ? '+' : ''}{item.changePct.toFixed(2)}%
+                                            </Text>
+                                        )}
+                                    </TouchableOpacity>
+                                );
+                            })}
                         </ScrollView>
                     </View>
                 )}

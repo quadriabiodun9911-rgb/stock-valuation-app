@@ -226,6 +226,15 @@ const PortfolioTrackerScreen: React.FC<Props> = ({ navigation }) => {
                 )}
             </ScrollView>
 
+            {/* Quick Add FAB */}
+            <TouchableOpacity
+                style={styles.fab}
+                onPress={() => setAddModalVisible(true)}
+                activeOpacity={0.85}
+            >
+                <Ionicons name="add" size={28} color="#fff" />
+            </TouchableOpacity>
+
             {/* Add Holding Modal */}
             <Modal visible={addModalVisible} animationType="slide" transparent>
                 <View style={styles.modalOverlay}>
@@ -314,6 +323,22 @@ const styles = StyleSheet.create({
     cancelBtnText: { color: '#64748b', fontSize: 16 },
     addBtn: { backgroundColor: '#2563eb', paddingHorizontal: 24, paddingVertical: 10, borderRadius: 10 },
     addBtnText: { color: '#fff', fontWeight: '600', fontSize: 16 },
+    fab: {
+        position: 'absolute',
+        bottom: 28,
+        right: 20,
+        width: 56,
+        height: 56,
+        borderRadius: 28,
+        backgroundColor: '#2563eb',
+        alignItems: 'center',
+        justifyContent: 'center',
+        shadowColor: '#2563eb',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.4,
+        shadowRadius: 8,
+        elevation: 8,
+    },
 });
 
 export default PortfolioTrackerScreen;

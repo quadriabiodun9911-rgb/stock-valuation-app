@@ -26,6 +26,7 @@ const SUGGESTIONS = [
 
 const AIChatScreen = ({ navigation, route }: any) => {
     const symbolFromRoute: string | undefined = route?.params?.symbol;
+    const prefillMessage: string | undefined = route?.params?.prefillMessage;
     const [messages, setMessages] = useState<Message[]>([
         {
             id: '0',
@@ -37,7 +38,7 @@ const AIChatScreen = ({ navigation, route }: any) => {
             timestamp: new Date(),
         },
     ]);
-    const [input, setInput] = useState('');
+    const [input, setInput] = useState(prefillMessage || '');
     const [loading, setLoading] = useState(false);
     const listRef = useRef<FlatList>(null);
 
