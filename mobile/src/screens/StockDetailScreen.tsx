@@ -965,6 +965,42 @@ const StockDetailScreen: React.FC<Props> = ({ route, navigation }) => {
                         </View>
                     ) : analysis ? (
                         <View>
+                            {/* Quick Take — one-line verdict at the very top of the Analysis tab */}
+                            {(() => {
+                                const action = analysis.recommendation.action?.toLowerCase();
+                                const upside = analysis.valuations?.dcf?.upside ?? analysis.valuations?.comparable?.upside ?? null;
+                                const confidence = analysis.recommendation.confidence;
+                                let verdict = '';
+                                let color = '#64748b';
+                                let bg = '#f1f5f9';
+                                let icon: any = 'remove-circle-outline';
+                                if (action === 'buy') {
+                                    color = '#059669'; bg = '#d1fae5'; icon = 'trending-up';
+                                    verdict = upside != null && upside > 0
+                                        ? `Undervalued — ${upside.toFixed(0)}% upside to fair value`
+                                        : 'Looks undervalued — signals favour buyers';
+                                } else if (action === 'sell') {
+                                    color = '#dc2626'; bg = '#fee2e2'; icon = 'trending-down';
+                                    verdict = upside != null && upside < 0
+                                        ? `Overvalued — ${Math.abs(upside).toFixed(0)}% above fair value`
+                                        : 'Looks overvalued — risk outweighs reward';
+                                } else {
+                                    verdict = 'Fairly valued — watch for a clearer signal';
+                                }
+                                return (
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: bg, borderRadius: 12, marginHorizontal: 16, marginTop: 12, marginBottom: 4, paddingVertical: 12, paddingHorizontal: 14, gap: 10 }}>
+                                        <Ionicons name={icon} size={20} color={color} />
+                                        <View style={{ flex: 1 }}>
+                                            <Text style={{ fontSize: 15, fontWeight: '700', color }}>Quick Take</Text>
+                                            <Text style={{ fontSize: 13, color, marginTop: 2, lineHeight: 18 }}>{verdict}</Text>
+                                            {confidence != null && (
+                                                <Text style={{ fontSize: 11, color: '#64748b', marginTop: 3 }}>Confidence: {String(confidence)} · tap below for full reasoning</Text>
+                                            )}
+                                        </View>
+                                    </View>
+                                );
+                            })()}
+
                             <View style={styles.section}>
                                 <Text style={styles.sectionTitle}>What to do now</Text>
                                 <View style={styles.guidanceCard}>

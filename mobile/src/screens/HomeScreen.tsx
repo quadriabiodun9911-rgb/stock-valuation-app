@@ -213,6 +213,17 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
     const totalPL = portfolio?.summary?.total_real_profit ?? portfolio?.summary?.total_profit ?? 0;
     const totalPct = portfolio?.summary?.total_real_profit_pct ?? portfolio?.summary?.total_profit_pct ?? 0;
     const holdingsCount = portfolio?.positions?.length ?? 0;
+    const inflationDrag = portfolio?.summary?.total_inflation_impact ?? 0;
+
+    const portfolioInsight = useMemo(() => {
+        if (!portfolio || totalValue === 0) return null;
+        if (totalPct >= 5) return `You're beating inflation by ${(totalPct).toFixed(1)}% — keep the course.`;
+        if (totalPct > 0 && inflationDrag > 0 && totalPL < inflationDrag)
+            return `Inflation has offset $${inflationDrag.toFixed(0)} of your gains — consider rebalancing.`;
+        if (totalPct > 0) return `Up ${totalPct.toFixed(1)}% in real terms — you're on track.`;
+        if (totalPct < -10) return `Down ${Math.abs(totalPct).toFixed(1)}% — review your highest-risk positions first.`;
+        return `Down ${Math.abs(totalPct).toFixed(1)}% — market dips are normal; check your long-term thesis.`;
+    }, [portfolio, totalPct, totalPL, inflationDrag, totalValue]);
 
     const signal = useMemo(() => {
         if (!marketSummary?.quotes?.length) return null;
@@ -483,6 +494,13 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
                                         <Ionicons name="arrow-forward" size={14} color="rgba(255,255,255,0.9)" />
                                     </View>
                                 </View>
+                                {portfolioInsight && (
+                                    <View style={{ marginTop: 10, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 8, padding: 10 }}>
+                                        <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600', lineHeight: 18 }}>
+                                            {portfolioInsight}
+                                        </Text>
+                                    </View>
+                                )}
                             </>
                         ) : (
                             <View style={styles.emptyPortfolio}>
@@ -532,21 +550,6 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
                 {/* Quick Actions */}
                 <View style={styles.sectionHeader}>
                     <Text style={styles.sectionTitle}>What should I focus on today?</Text>
-                    <Text style={styles.sectionSubtitle}>Cut the noise and focus on the few actions that improve decisions.</Text>
-                </View>
-                <View style={[styles.card, { marginTop: 0, marginBottom: 12 }]}>
-                    <View style={styles.cardTitleRow}>
-                        <Ionicons name="compass" size={18} color="#2563eb" />
-                        <Text style={styles.cardTitle}>Decision Focus</Text>
-                    </View>
-                    <Text style={{ color: '#475569', fontSize: 13, lineHeight: 20 }}>
-                        Built for younger and older investors alike. Learn in plain language, make clearer investment decisions, and grow with a supportive community over time.
-                    </Text>
-                    <View style={styles.valuePropsRow}>
-                        <View style={styles.valuePropChip}><Text style={styles.valuePropText}>Easy Guidance</Text></View>
-                        <View style={styles.valuePropChip}><Text style={styles.valuePropText}>Grow Together</Text></View>
-                        <View style={styles.valuePropChip}><Text style={styles.valuePropText}>Financial Freedom</Text></View>
-                    </View>
                 </View>
 
                 {/* Recommended For You */}

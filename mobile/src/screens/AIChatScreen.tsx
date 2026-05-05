@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { stockAPI } from '../services/api';
 
 interface Message {
@@ -24,6 +25,9 @@ const SUGGESTIONS = [
     "Tell me about AMD",
 ];
 
+const AI_CHAT_HISTORY_KEY = 'ai_chat_history';
+const MAX_HISTORY_MESSAGES = 20; // 10 user/AI pairs
+
 const AIChatScreen = ({ navigation, route }: any) => {
     const symbolFromRoute: string | undefined = route?.params?.symbol;
     const prefillMessage: string | undefined = route?.params?.prefillMessage;
@@ -41,6 +45,27 @@ const AIChatScreen = ({ navigation, route }: any) => {
     const [input, setInput] = useState(prefillMessage || '');
     const [loading, setLoading] = useState(false);
     const listRef = useRef<FlatList>(null);
+    const historyLoadedRef = useRef(false);
+
+    // Load chat history from AsyncStorage on mount (skip if launched with a symbol context)
+    useEffect(() => {
+        if (symbolFromRoute || historyLoadedRef.current) return;
+        historyLoadedRef.current = true;
+        AsyncStorage.getItem(AI_CHAT_HISTORY_KEY).then((raw) => {
+            if (!raw) return;
+            try {
+                const stored: Omit<Message, 'timestamp'>[] = JSON.parse(raw);
+                if (stored.length > 0) {
+                    const restored: Message[] = stored.map((m, idx) => ({
+                        ...m,
+                        timestamp: new Date(),
+                        id: `history_${idx}`,
+                    }));
+                    setMessages(prev => [...prev, ...restored]);
+                }
+            } catch (_) { /* corrupted storage — ignore */ }
+        });
+    }, [symbolFromRoute]);
 
     const sendMessage = async (text?: string) => {
         const msg = (text || input).trim();
@@ -65,7 +90,16 @@ const AIChatScreen = ({ navigation, route }: any) => {
                 type: res.type,
                 timestamp: new Date(),
             };
-            setMessages(prev => [...prev, aiMsg]);
+            setMessages(prev => {
+                const updated = [...prev, aiMsg];
+                // Persist last MAX_HISTORY_MESSAGES (skip greeting id='0')
+                const toSave = updated
+                    .filter(m => m.id !== '0' && !m.id.startsWith('history_'))
+                    .slice(-MAX_HISTORY_MESSAGES)
+                    .map(({ id, text, isUser, type }) => ({ id, text, isUser, type }));
+                AsyncStorage.setItem(AI_CHAT_HISTORY_KEY, JSON.stringify(toSave)).catch(() => { });
+                return updated;
+            });
         } catch (e: any) {
             setMessages(prev => [...prev, {
                 id: (Date.now() + 1).toString(),

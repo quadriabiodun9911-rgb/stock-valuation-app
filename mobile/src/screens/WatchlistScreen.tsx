@@ -543,11 +543,18 @@ const WatchlistScreen: React.FC<Props> = ({ navigation, route }) => {
                 </View>
             ) : (
                 <View style={styles.emptyState}>
-                    <Ionicons name="bookmark-outline" size={64} color="#ccc" />
-                    <Text style={styles.emptyTitle}>No Stocks in Watchlist</Text>
+                    <Ionicons name="bookmark-outline" size={64} color="#cbd5e1" />
+                    <Text style={styles.emptyTitle}>Nothing here yet</Text>
                     <Text style={styles.emptyDescription}>
-                        Add stocks to track prices, alerts, and performance.
+                        Track your favourite stocks — monitor live prices and get notified when targets are hit.
                     </Text>
+                    <TouchableOpacity
+                        style={{ marginTop: 16, backgroundColor: '#2563eb', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 28, flexDirection: 'row', alignItems: 'center', gap: 8 }}
+                        onPress={() => navigation.navigate('Search')}
+                    >
+                        <Ionicons name="search" size={16} color="#fff" />
+                        <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Find a stock to add</Text>
+                    </TouchableOpacity>
                 </View>
             )}
         </ScrollView>
