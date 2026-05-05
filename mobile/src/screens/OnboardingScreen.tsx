@@ -132,6 +132,8 @@ const scorePersona = (answers: Record<string, string>): Persona => {
 const OnboardingScreen = ({ navigation }: any) => {
     const [currentIndex, setCurrentIndex] = useState(0);
     const [showQuestions, setShowQuestions] = useState(false);
+    const [showTryIt, setShowTryIt] = useState(false);
+    const [pendingProfile, setPendingProfile] = useState<PersonaProfile | null>(null);
     const [questionIndex, setQuestionIndex] = useState(0);
     const [answers, setAnswers] = useState<Record<string, string>>({});
     const scrollX = useRef(new Animated.Value(0)).current;
@@ -164,7 +166,9 @@ const OnboardingScreen = ({ navigation }: any) => {
             timeHorizon: nextAnswers.timeHorizon,
             monthlyBudget: nextAnswers.monthlyBudget,
         };
-        handleDone(profile);
+        // Show interactive "try it" step before finishing
+        setPendingProfile(profile);
+        setShowTryIt(true);
     };
 
     const handleNext = () => {
@@ -203,6 +207,48 @@ const OnboardingScreen = ({ navigation }: any) => {
             </View>
         </LinearGradient>
     );
+
+    if (showTryIt) {
+        const POPULAR = [
+            { symbol: 'AAPL', label: 'Apple', icon: '🍎' },
+            { symbol: 'TSLA', label: 'Tesla', icon: '⚡' },
+            { symbol: 'NVDA', label: 'NVIDIA', icon: '🖥️' },
+            { symbol: 'AMZN', label: 'Amazon', icon: '📦' },
+            { symbol: 'MSFT', label: 'Microsoft', icon: '🪟' },
+            { symbol: 'JNJ', label: 'J&J', icon: '💊' },
+        ];
+        const pickStock = async (symbol: string) => {
+            await handleDone(pendingProfile ?? undefined);
+            // Navigate to stock detail after login redirect is set — app will handle routing
+        };
+        return (
+            <View style={styles.container}>
+                <LinearGradient colors={['#0f172a', '#1e293b']} style={[styles.slide, styles.quizContainer]}>
+                    <View style={styles.quizHeader}>
+                        <Text style={styles.quizProgress}>Almost there!</Text>
+                        <Text style={styles.quizTitle}>Pick a stock to explore</Text>
+                        <Text style={styles.quizSubtitle}>Tap one and we'll show you its valuation when you open the app.</Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 12, marginTop: 8 }}>
+                        {POPULAR.map((s) => (
+                            <TouchableOpacity
+                                key={s.symbol}
+                                style={{ backgroundColor: '#1e3a5f', borderRadius: 14, paddingHorizontal: 20, paddingVertical: 16, alignItems: 'center', width: '42%' }}
+                                onPress={() => pickStock(s.symbol)}
+                            >
+                                <Text style={{ fontSize: 28 }}>{s.icon}</Text>
+                                <Text style={{ color: '#f1f5f9', fontWeight: '700', marginTop: 6 }}>{s.label}</Text>
+                                <Text style={{ color: '#64748b', fontSize: 12 }}>{s.symbol}</Text>
+                            </TouchableOpacity>
+                        ))}
+                    </View>
+                    <TouchableOpacity style={[styles.quizSkip, { marginTop: 24 }]} onPress={() => handleDone(pendingProfile ?? undefined)}>
+                        <Text style={styles.skipText}>Skip for now</Text>
+                    </TouchableOpacity>
+                </LinearGradient>
+            </View>
+        );
+    }
 
     if (showQuestions) {
         const currentQuestion = QUESTIONS[questionIndex];

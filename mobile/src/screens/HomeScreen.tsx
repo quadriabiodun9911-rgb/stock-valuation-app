@@ -52,12 +52,27 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
     const [recommendations, setRecommendations] = useState<ProfileRecommendation[]>([]);
     const [recommendationsLoading, setRecommendationsLoading] = useState(false);
     const [showStartHereCard, setShowStartHereCard] = useState(false);
+    const [recentlyViewed, setRecentlyViewed] = useState<{ symbol: string; name: string; price: number }[]>([]);
 
     const fadeAnim = useRef(new Animated.Value(0)).current;
 
     useEffect(() => {
         Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: true }).start();
     }, []);
+
+    // Load recently viewed from AsyncStorage whenever the screen is focused
+    useEffect(() => {
+        const loadRecent = async () => {
+            try {
+                const raw = await AsyncStorage.getItem('recently_viewed');
+                if (raw) setRecentlyViewed(JSON.parse(raw));
+            } catch (_) { }
+        };
+        loadRecent();
+        // Re-load on every navigation focus event
+        const unsubscribe = navigation.addListener?.('focus', loadRecent);
+        return unsubscribe;
+    }, [navigation]);
 
     useEffect(() => {
         const loadPersonaProfile = async () => {
@@ -372,6 +387,27 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
                                 <Ionicons name="chevron-forward" size={16} color="#cbd5e1" />
                             </TouchableOpacity>
                         ))}
+                    </View>
+                )}
+
+                {/* Recently Viewed */}
+                {recentlyViewed.length > 0 && (
+                    <View style={{ marginHorizontal: 16, marginTop: 16 }}>
+                        <Text style={{ color: '#94a3b8', fontSize: 11, fontWeight: '600', letterSpacing: 0.8, marginBottom: 8 }}>RECENTLY VIEWED</Text>
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexDirection: 'row' }}>
+                            {recentlyViewed.map((item) => (
+                                <TouchableOpacity
+                                    key={item.symbol}
+                                    style={{ backgroundColor: '#1e293b', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, marginRight: 10, minWidth: 90, alignItems: 'center' }}
+                                    onPress={() => navigation.navigate('StockDetail', { symbol: item.symbol })}
+                                >
+                                    <Text style={{ color: '#f1f5f9', fontWeight: '700', fontSize: 13 }}>{item.symbol}</Text>
+                                    <Text style={{ color: '#64748b', fontSize: 10, marginTop: 2 }} numberOfLines={1}>
+                                        {item.price > 0 ? `$${item.price.toFixed(2)}` : item.name}
+                                    </Text>
+                                </TouchableOpacity>
+                            ))}
+                        </ScrollView>
                     </View>
                 )}
 

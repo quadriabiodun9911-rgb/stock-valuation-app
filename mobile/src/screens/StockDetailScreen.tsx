@@ -11,6 +11,7 @@ import {
     TextInput,
     Image,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { LineChart } from 'react-native-chart-kit';
 import ViewShot from 'react-native-view-shot';
@@ -87,6 +88,19 @@ const StockDetailScreen: React.FC<Props> = ({ route, navigation }) => {
             const info = await stockAPI.getStockInfo(symbol);
             setStockInfo(info);
             loadGrowthMetrics();
+            // Persist to recently viewed (max 5, newest first)
+            try {
+                const raw = await AsyncStorage.getItem('recently_viewed');
+                const list: { symbol: string; name: string; price: number }[] = raw ? JSON.parse(raw) : [];
+                const filtered = list.filter(item => item.symbol !== symbol);
+                const updated = [
+                    { symbol, name: (info as any).company_name || symbol, price: (info as any).current_price || 0 },
+                    ...filtered,
+                ].slice(0, 5);
+                await AsyncStorage.setItem('recently_viewed', JSON.stringify(updated));
+            } catch (_) {
+                // non-critical
+            }
         } catch (error: any) {
             console.error('Error loading stock data:', error);
             const msg: string = error?.message || '';

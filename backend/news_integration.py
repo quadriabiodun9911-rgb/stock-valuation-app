@@ -267,9 +267,23 @@ async def get_stock_news(symbol: str, limit: int = 20):
 async def get_market_news(limit: int = 20):
     """Get general market news"""
     news_list = _get_news("stock market finance", limit)
+
+    # Fallback: fetch news for major proxies when generic query returns nothing
+    if not news_list:
+        fallback_symbols = ["AAPL", "MSFT", "SPY", "NVDA"]
+        seen_titles: set = set()
+        for sym in fallback_symbols:
+            if len(news_list) >= limit:
+                break
+            for item in _get_news(f"{sym} stock", 5, symbol=sym):
+                t = item.get("title", "")
+                if t not in seen_titles:
+                    seen_titles.add(t)
+                    news_list.append(item)
+
     return {
         "news_count": len(news_list),
-        "news": news_list,
+        "news": news_list[:limit],
         "last_updated": datetime.now(),
     }
 

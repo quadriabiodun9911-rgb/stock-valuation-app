@@ -100,6 +100,20 @@ app = FastAPI(
     version="2.0.0"
 )
 
+# Keep-alive: ping /health every 8 minutes so Render free tier doesn't sleep
+def _keep_alive_loop():
+    import time as _time
+    _time.sleep(60)  # initial delay to let the server fully start
+    while True:
+        try:
+            requests.get("http://localhost:8000/health", timeout=10)
+        except Exception:
+            pass
+        _time.sleep(480)  # 8 minutes
+
+_keep_alive_thread = threading.Thread(target=_keep_alive_loop, daemon=True)
+_keep_alive_thread.start()
+
 # CORS middleware
 ALLOWED_ORIGINS = [
     origin.strip()
@@ -2087,26 +2101,91 @@ async def stress_test_valuation(symbol: str):
 @app.get("/analysis/peer-comparison/{symbol}")
 async def advanced_peer_comparison(symbol: str, include_ratios: bool = True):
     """Advanced peer comparison with financial ratios"""
+    # Hardcoded symbol → sector peers (bypasses yfinance .info rate-limiting on Render)
+    _SYMBOL_PEERS: Dict[str, List[str]] = {
+        # Technology
+        'AAPL': ['MSFT', 'GOOGL', 'META', 'NVDA'],
+        'MSFT': ['AAPL', 'GOOGL', 'NVDA', 'ORCL'],
+        'GOOGL': ['META', 'MSFT', 'AAPL', 'NFLX'],
+        'GOOG':  ['META', 'MSFT', 'AAPL', 'NFLX'],
+        'META':  ['GOOGL', 'SNAP', 'PINS', 'MSFT'],
+        'NVDA':  ['AMD', 'INTC', 'QCOM', 'AVGO'],
+        'AMD':   ['NVDA', 'INTC', 'QCOM', 'AVGO'],
+        'INTC':  ['AMD', 'NVDA', 'QCOM', 'TSM'],
+        'ORCL':  ['MSFT', 'SAP', 'CRM', 'ADBE'],
+        'CRM':   ['ORCL', 'MSFT', 'SAP', 'NOW'],
+        'ADBE':  ['CRM', 'ORCL', 'MSFT', 'NOW'],
+        'TSMC':  ['NVDA', 'AMD', 'INTC', 'QCOM'],
+        # Consumer / E-commerce
+        'AMZN':  ['MSFT', 'GOOGL', 'AAPL', 'META'],
+        'TSLA':  ['F', 'GM', 'NIO', 'RIVN'],
+        'NFLX':  ['DIS', 'PARA', 'WBD', 'AMZN'],
+        # Healthcare
+        'JNJ':   ['PFE', 'ABBV', 'MRK', 'UNH'],
+        'PFE':   ['JNJ', 'ABBV', 'MRK', 'BMY'],
+        'ABBV':  ['JNJ', 'PFE', 'MRK', 'LLY'],
+        'MRK':   ['JNJ', 'PFE', 'ABBV', 'BMY'],
+        'UNH':   ['CI', 'CVS', 'HUM', 'CNC'],
+        'LLY':   ['ABBV', 'MRK', 'PFE', 'BMY'],
+        # Financials
+        'JPM':   ['BAC', 'WFC', 'C', 'GS'],
+        'BAC':   ['JPM', 'WFC', 'C', 'USB'],
+        'WFC':   ['JPM', 'BAC', 'C', 'USB'],
+        'C':     ['JPM', 'BAC', 'WFC', 'GS'],
+        'GS':    ['MS', 'JPM', 'BAC', 'C'],
+        'MS':    ['GS', 'JPM', 'BAC', 'C'],
+        # Communication
+        'DIS':   ['NFLX', 'PARA', 'WBD', 'CMCSA'],
+        'T':     ['VZ', 'TMUS', 'CMCSA'],
+        'VZ':    ['T', 'TMUS', 'CMCSA'],
+        # Retail / Consumer
+        'WMT':   ['COST', 'TGT', 'AMZN', 'HD'],
+        'COST':  ['WMT', 'TGT', 'HD', 'AMZN'],
+        'TGT':   ['WMT', 'COST', 'HD', 'AMZN'],
+        'HD':    ['LOW', 'WMT', 'TGT', 'AMZN'],
+        # Energy
+        'XOM':   ['CVX', 'BP', 'SHEL', 'COP'],
+        'CVX':   ['XOM', 'BP', 'SHEL', 'COP'],
+    }
+    _SECTOR_PEERS: Dict[str, List[str]] = {
+        'Technology': ['AAPL', 'MSFT', 'GOOGL', 'META', 'NVDA'],
+        'Healthcare': ['JNJ', 'PFE', 'ABBV', 'MRK', 'UNH'],
+        'Financial Services': ['JPM', 'BAC', 'WFC', 'C', 'GS'],
+        'Consumer Cyclical': ['AMZN', 'TSLA', 'HD', 'MCD', 'NKE'],
+        'Communication Services': ['GOOGL', 'META', 'DIS', 'NFLX', 'T'],
+        'Energy': ['XOM', 'CVX', 'COP', 'BP', 'SHEL'],
+        'Consumer Defensive': ['WMT', 'COST', 'PG', 'KO', 'PEP'],
+        'Industrials': ['BA', 'CAT', 'HON', 'GE', 'MMM'],
+        'Real Estate': ['PLD', 'AMT', 'EQIX', 'SPG', 'O'],
+        'Utilities': ['NEE', 'DUK', 'SO', 'D', 'AEP'],
+    }
+
     try:
-        # Get base company data
-        base_data = valuation_service.get_stock_data(symbol.upper())
-        sector = base_data['info'].get('sector', '')
-        
-        # Define sector peers (this would ideally come from a sector database)
-        sector_peers = {
-            'Technology': ['AAPL', 'MSFT', 'GOOGL', 'META', 'NVDA'],
-            'Healthcare': ['JNJ', 'PFE', 'ABBV', 'MRK', 'UNH'],
-            'Financial Services': ['JPM', 'BAC', 'WFC', 'C', 'GS'],
-            'Consumer Cyclical': ['AMZN', 'TSLA', 'HD', 'MCD', 'NKE'],
-            'Communication Services': ['GOOGL', 'META', 'DIS', 'NFLX', 'T']
-        }
-        
-        peers = sector_peers.get(sector, ['SPY', 'QQQ', 'DIA'])
-        peers = [p for p in peers if p != symbol.upper()][:5]  # Max 5 peers
-        
+        sym = symbol.upper()
+
+        # 1) Try hardcoded symbol-level peers first (no yfinance .info call needed)
+        peers: List[str] = []
+        sector: str = ''
+        if sym in _SYMBOL_PEERS:
+            peers = [p for p in _SYMBOL_PEERS[sym] if p != sym][:5]
+
+        # 2) If not in symbol map, try fetching sector from yfinance (best effort, may be empty)
+        if not peers:
+            try:
+                base_data = valuation_service.get_stock_data(sym)
+                sector = base_data['info'].get('sector', '') or ''
+                candidates = _SECTOR_PEERS.get(sector, [])
+                peers = [p for p in candidates if p != sym][:5]
+            except Exception:
+                pass
+
+        # 3) Final fallback: broad market indices as stand-ins
+        if not peers:
+            peers = ['SPY', 'QQQ', 'DIA', 'IWM']
+
         comparison_results = []
-        target_fcf = valuation_service.calculate_fcf_valuation(symbol.upper())
-        
+        target_fcf = valuation_service.calculate_fcf_valuation(sym)
+
         for peer in peers:
             try:
                 peer_fcf = valuation_service.calculate_fcf_valuation(peer)
@@ -2118,15 +2197,15 @@ async def advanced_peer_comparison(symbol: str, include_ratios: bool = True):
                     'fcf_margin': peer_fcf['fcf_margin'],
                     'fcf_yield': peer_fcf['fcf_yield']
                 }
-                
+
                 if include_ratios:
                     peer_ratios = valuation_service.calculate_financial_ratios(peer, peer_fcf)
                     peer_data['ratios'] = peer_ratios
-                
+
                 comparison_results.append(peer_data)
-            except:
+            except Exception:
                 continue
-        
+
         # Calculate peer averages
         if comparison_results:
             peer_avg = {
@@ -2137,9 +2216,9 @@ async def advanced_peer_comparison(symbol: str, include_ratios: bool = True):
             }
         else:
             peer_avg = {}
-        
+
         return {
-            "symbol": symbol.upper(),
+            "symbol": sym,
             "sector": sector,
             "target_company": {
                 "intrinsic_value": target_fcf['intrinsic_value'],
@@ -2155,7 +2234,7 @@ async def advanced_peer_comparison(symbol: str, include_ratios: bool = True):
                 "fcf_yield_percentile": sum(1 for p in comparison_results if p['fcf_yield'] < target_fcf['fcf_yield']) / len(comparison_results) * 100 if comparison_results else 0
             }
         }
-        
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
